@@ -54,14 +54,13 @@ def filter_articles(articles: list[RawArticle]) -> list[dict]:
     """
     result: list[dict] = []
     for art in articles:
-        title_matches   = _matches_field(art.title)
-        content_matches = _matches(art)           # título + snippet
+        content_matches = _matches(art)   # título + snippet
 
-        # Aceita se: 1 match no título, OU 2+ matches no conteúdo todo
-        if not title_matches and len(content_matches) < 2:
+        # Aceita se tiver ao menos 1 keyword em qualquer campo
+        if not content_matches:
             continue
 
-        matched = content_matches or title_matches
+        matched = content_matches
         result.append({
             "url":              art.url,
             "domain":           art.domain,
