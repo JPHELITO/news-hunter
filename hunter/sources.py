@@ -20,37 +20,26 @@ SOURCES = [
 
     # ══ FEEDS RSS DIRETOS ═════════════════════════════════════════════════════
 
-    # Mining.com — temáticos (100% relevante, sem filtro)
-    {"label": "Mining.com",      "url": "https://www.mining.com/topics/iron-ore/feed/",  "filter": False},
-    {"label": "Mining.com",      "url": "https://www.mining.com/topics/steel/feed/",     "filter": False},
-    {"label": "Mining.com",      "url": "https://www.mining.com/topics/coal/feed/",      "filter": True},
-    {"label": "Mining.com",      "url": "https://www.mining.com/topics/nickel/feed/",    "filter": True},
-    {"label": "Mining.com",      "url": "https://www.mining.com/topics/copper/feed/",    "filter": True},
-    {"label": "Mining.com",      "url": "https://www.mining.com/topics/lithium/feed/",   "filter": True},
+    # Mining.com — feed principal com filtro de keywords
+    {"label": "Mining.com",      "url": "https://www.mining.com/feed/",                  "filter": True},
 
-    # SteelOrbis
-    {"label": "SteelOrbis",      "url": "https://www.steelorbis.com/rss/rss.asp",        "filter": False},
+    # SteelOrbis — feed corrigido
+    {"label": "SteelOrbis",      "url": "https://www.steelorbis.com/steel-news/rss/",   "filter": False},
 
-    # Mining Weekly (África do Sul — cobertura global)
-    {"label": "Mining Weekly",   "url": "https://www.miningweekly.com/rss.xml",          "filter": True},
-
-    # World Steel Association
-    {"label": "World Steel",     "url": "https://www.worldsteel.org/rss.xml",            "filter": False},
-
-    # Paper Advance
-    {"label": "Paper Advance",   "url": "https://www.paperadvance.com/rss",              "filter": True},
-
-    # Tissue Online
-    {"label": "Tissue Online",   "url": "https://www.tissueonline.com.br/feed/",         "filter": True},
+    # Mining Weekly — URL corrigida
+    {"label": "Mining Weekly",   "url": "https://www.miningweekly.com/rss-feed/rss.xml","filter": True},
 
     # Portal Celulose
-    {"label": "Portal Celulose", "url": "https://portalcelulose.com.br/feed/",           "filter": False},
+    {"label": "Portal Celulose", "url": "https://portalcelulose.com.br/feed/",          "filter": False},
+
+    # Tissue Online
+    {"label": "Tissue Online",   "url": "https://www.tissueonline.com.br/feed/",        "filter": True},
 
     # InfoMoney
-    {"label": "InfoMoney",       "url": "https://www.infomoney.com.br/feed/",            "filter": True},
+    {"label": "InfoMoney",       "url": "https://www.infomoney.com.br/feed/",           "filter": True},
 
     # Exame
-    {"label": "Exame",           "url": "https://exame.com/feed/",                       "filter": True},
+    {"label": "Exame",           "url": "https://exame.com/feed/",                      "filter": True},
 
     # Folha de S.Paulo — Mercado
     {"label": "Folha de S.Paulo","url": "https://feeds.folha.uol.com.br/mercado/rss091.xml", "filter": True},

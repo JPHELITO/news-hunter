@@ -140,7 +140,7 @@ def _fetch_one(source: dict) -> list[RawArticle]:
                 articles[idx].url = resolved
                 articles[idx].domain = urlparse(resolved).netloc.replace("www.", "")
 
-    log.info("Feed OK [%s] → %d items", label, len(articles))
+    log.info("Feed OK [%s] -> %d items", label, len(articles))
     return articles
 
 
