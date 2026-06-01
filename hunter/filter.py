@@ -1,12 +1,39 @@
-"""Keyword filtering — aplica apenas em feeds marcados com filter=True."""
+"""Keyword filtering para o News Hunter."""
 from __future__ import annotations
 
 import re
-import unicodedata
 from functools import lru_cache
 
 from .config import ALL_KEYWORDS
 from .fetcher import RawArticle
+
+# ── Blocklist — títulos com essas palavras são descartados independente de keywords ──
+# Evita agro, cripto e outros setores que jamais são relevantes para S&M / P&P.
+_TITLE_BLOCKLIST = frozenset([
+    # Agro off-topic
+    "milho", "soja", "trigo", "café", "cacau", "açúcar", "sucrose",
+    "boi gordo", "frango", "suíno", "porco", "arroz", "laranja",
+    "cana-de-açúcar", "algodão", "agronegócio", "grãos",
+    "corn", "wheat", "soybean", "sugar cane", "poultry",
+    # Cripto / finanças fora do escopo
+    "bitcoin", "ethereum", "cripto", "criptomoeda", "blockchain",
+    "nft", "token", "defi", "web3",
+    # Petróleo (a menos que combinado com keywords nossos — o blocklist é só no título)
+    "petróleo", "crude oil", "offshore drilling",
+    "refinery oil", "oil spill",
+    # Outros claramente fora
+    "dark horse", "horse racing", "casino", "lottery",
+    "futebol", "football", "basketball", "soccer",
+])
+
+# ── Fontes genéricas — exigem keyword no TÍTULO (não apenas no snippet) ────────
+# Evita que artigos de agro ou finanças gerais passem por menção tangencial.
+_BROAD_SOURCES = frozenset([
+    "Folha de S.Paulo", "Folha de São Paulo",
+    "Exame", "InfoMoney", "G1", "CNN Brasil",
+    "O Globo", "Agência Brasil",
+    "Google News", "Google Notícias",
+])
 
 
 def _normalize(text: str) -> str:
@@ -54,11 +81,23 @@ def filter_articles(articles: list[RawArticle]) -> list[dict]:
     """
     result: list[dict] = []
     for art in articles:
+        title_lower = art.title.lower()
+
+        # 1. Blocklist: descarta imediatamente se o TÍTULO contém palavra off-topic
+        if any(w in title_lower for w in _TITLE_BLOCKLIST):
+            continue
+
         content_matches = _matches(art)   # título + snippet
 
-        # Aceita se tiver ao menos 1 keyword em qualquer campo
+        # 2. Sem nenhuma keyword → descarta
         if not content_matches:
             continue
+
+        # 3. Fontes genéricas (Folha, Exame, InfoMoney…) exigem keyword no TÍTULO
+        #    para evitar artigos que só mencionam "cobre" num parágrafo de agro
+        if art.source_name in _BROAD_SOURCES:
+            if not _matches_field(art.title):
+                continue
 
         matched = content_matches
         result.append({

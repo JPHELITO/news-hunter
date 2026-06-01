@@ -17,6 +17,43 @@ from .sources import SOURCES
 
 log = logging.getLogger(__name__)
 
+# Fontes reconhecidas no Google News — usam o nome original do artigo.
+# Qualquer outra publica­ção usa o label configurado em sources.py.
+_KNOWN_SOURCES = frozenset([
+    # Agências e jornais internacionais
+    "Reuters", "Bloomberg", "Bloomberg Línea", "Financial Times",
+    "The Wall Street Journal", "WSJ", "Associated Press", "AP",
+    # Commodity news
+    "S&P Global", "S&P Global Commodity Insights", "Platts",
+    "Fastmarkets", "Argus", "Argus Media",
+    "Kallanish", "Kallanish Commodities", "Kallanish Steel",
+    "MEPS International", "MEPS",
+    "AMM", "American Metal Market",
+    "Steel Times International",
+    # Mineração / siderurgia
+    "Mining.com", "Mining Weekly", "Mining Technology",
+    "SteelOrbis", "Steel Orbis",
+    "Mysteel", "Shanghai Metals Market", "SMM",
+    "GMK Center", "EUROMETAL",
+    "Metal Bulletin",
+    # Celulose / papel
+    "ICIS", "Risi", "Fisher International",
+    "Paper Advance", "Tissue Online", "Tissue World",
+    # Brasileiros
+    "Valor Econômico", "Estadão", "O Estado de S. Paulo",
+    "Folha de S.Paulo", "Folha de São Paulo",
+    "InfoMoney", "Exame", "Money Times",
+    "CNN Brasil", "G1", "O Globo",
+    "Agência Brasil", "Reuters Brasil",
+    # Associações
+    "World Steel Association",
+    "IBRAM", "Ibá", "ANM", "Instituto Aço Brasil",
+    "AISI", "CISA", "CEPI",
+    # Outros relevantes
+    "Business Wire", "PR Newswire", "GlobeNewswire",
+    "Macroaxis", "Seeking Alpha",
+])
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; NewsHunter/1.0; +https://github.com/JPHELITO)",
     "Accept": "application/rss+xml, application/xml, text/xml, */*",
@@ -107,8 +144,10 @@ def _fetch_one(source: dict) -> list[RawArticle]:
         )[:400]
 
         # Source name: para Google News, usar o campo source do item
+        # mas só se for uma fonte reconhecida — senão usa o label configurado
         if is_gnews:
-            src_name = getattr(getattr(entry, "source", None), "title", None) or label
+            raw_src = getattr(getattr(entry, "source", None), "title", None) or ""
+            src_name = raw_src if raw_src in _KNOWN_SOURCES else label
         else:
             src_name = label
 
