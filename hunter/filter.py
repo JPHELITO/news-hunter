@@ -24,6 +24,14 @@ def _keyword_pattern() -> re.Pattern:
     return re.compile(pattern, re.IGNORECASE)
 
 
+def _matches_field(text: str) -> list[str]:
+    """Retorna keywords que batem em um campo específico (ex: só o título)."""
+    haystack = _normalize(text)
+    pat = _keyword_pattern()
+    found = set(m.group(0).lower() for m in pat.finditer(haystack))
+    return sorted(found)
+
+
 def _matches(article: RawArticle) -> list[str]:
     """Retorna lista de keywords que bateram no título + snippet."""
     haystack = _normalize(f"{article.title} {article.snippet}")
@@ -34,30 +42,34 @@ def _matches(article: RawArticle) -> list[str]:
 
 def filter_articles(articles: list[RawArticle]) -> list[dict]:
     """
-    Aplica filtro de keywords onde necessário e converte para dict
-    pronto para o Supabase.
+    Filtra todos os artigos por keyword — sem exceções.
 
-    - needs_filter=False → aceita sempre (Google News já filtrou pela query)
-    - needs_filter=True  → só aceita se tiver keyword match
+    Mesmo fontes Google News (pre-filtradas por query) precisam bater
+    ao menos um keyword no título ou snippet. Isso elimina artigos
+    tangencialmente relacionados que as queries trazem por coincidência.
+
+    Regra:
+      - Ao menos 1 keyword deve aparecer no TÍTULO   (match forte)
+      - OU ao menos 2 keywords devem aparecer no título+snippet (match composto)
     """
     result: list[dict] = []
     for art in articles:
-        if art.needs_filter:
-            matched = _matches(art)
-            if not matched:
-                continue
-        else:
-            # Ainda coleta quais keywords batem (informativo)
-            matched = _matches(art)
+        title_matches   = _matches_field(art.title)
+        content_matches = _matches(art)           # título + snippet
 
+        # Aceita se: 1 match no título, OU 2+ matches no conteúdo todo
+        if not title_matches and len(content_matches) < 2:
+            continue
+
+        matched = content_matches or title_matches
         result.append({
-            "url": art.url,
-            "domain": art.domain,
-            "source_name": art.source_name,
-            "title": art.title,
-            "snippet": art.snippet,
-            "published_at": art.published_at.isoformat() if art.published_at else None,
-            "found_at": art.found_at.isoformat(),
+            "url":              art.url,
+            "domain":           art.domain,
+            "source_name":      art.source_name,
+            "title":            art.title,
+            "snippet":          art.snippet,
+            "published_at":     art.published_at.isoformat() if art.published_at else None,
+            "found_at":         art.found_at.isoformat(),
             "matched_keywords": matched,
         })
 
