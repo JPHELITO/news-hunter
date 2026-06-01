@@ -1,0 +1,38 @@
+name: News Hunter — sync every 5 min
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:   # permite rodar manualmente a qualquer hora
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4   # mata se travar antes do próximo ciclo
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip            # cache do pip entre runs → startup < 10s
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run hunter
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python hunt.py
+
+      - name: Concurrency guard
+        if: always()
+        run: echo "Run complete"
+
+concurrency:
+  group: news-hunter
+  cancel-in-progress: true   # cancela run anterior se ainda estiver rodando
