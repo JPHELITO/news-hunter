@@ -135,13 +135,12 @@ def _fetch_one(source: dict) -> list[RawArticle]:
 
         published_at = _parse_date(entry)
 
-        # Janela rigorosa: ARTIGOS SEM published_at SÃO REJEITADOS.
-        # Sem data não temos como saber se a notícia é fresca — descartamos.
-        # Isso evita que notícias velhas (publicadas há horas/dias) apareçam
-        # como recém-descobertas e poluam o feed.
-        if not published_at:
-            continue
-        if published_at < cutoff:
+        # Janela por published_at quando disponível.
+        # Sem data: aceita (Google News omite em ~50% dos casos). Como o
+        # filtro principal é keywords + assume-se que o RSS lista apenas
+        # itens recentes, a falta de data é tratada como "data desconhecida
+        # mas recente". O dashboard usa published_at OR found_at como ref.
+        if published_at and published_at < cutoff:
             continue
 
         snippet = _strip_html(

@@ -178,6 +178,6 @@ ALL_KEYWORDS = list(set(
 ))
 
 # Configurações
-WINDOW_HOURS   = 4   # apenas notícias publicadas nas últimas 4 horas
+WINDOW_HOURS   = 12   # janela balanceada — volume × frescor
 SUPABASE_TABLE = "news_articles"
 MAX_PER_SOURCE = 50
