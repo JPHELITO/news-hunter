@@ -35,6 +35,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0   # histórico completo para git pull funcionar
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -45,7 +48,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Hunt every 5 minutes for ~5h30min
+      - name: Hunt every 5 minutes for ~5h30min (auto-updating)
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -54,15 +57,29 @@ jobs:
           set +e   # não aborta o loop se uma iteração falhar
           deadline=$(( $(date +%s) + 19800 ))   # 5h30min em segundos
           i=0
+          last_sha=""
           while [ "$(date +%s)" -lt "$deadline" ]; do
             i=$((i + 1))
             echo "============================================================"
             echo "▶ Iteration $i — $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
             echo "============================================================"
+
+            # Self-update: pega o código mais recente antes de cada iteração
+            git fetch origin master --quiet 2>&1 | head -5
+            new_sha=$(git rev-parse origin/master)
+            if [ "$new_sha" != "$last_sha" ]; then
+              echo "↻ Code updated: $new_sha — pulling and reinstalling deps"
+              git reset --hard origin/master
+              # Reinstala deps se requirements.txt mudou
+              if [ -n "$last_sha" ] && ! git diff --quiet "$last_sha" "$new_sha" -- requirements.txt; then
+                pip install -r requirements.txt --quiet
+              fi
+              last_sha="$new_sha"
+            fi
+
             start=$(date +%s)
             python hunt.py || echo "⚠ hunt.py failed at iter $i — continuing"
             elapsed=$(( $(date +%s) - start ))
-            # Dorme 300s menos o tempo que o hunt levou (mínimo 30s para evitar spam)
             sleep_for=$(( 300 - elapsed ))
             if [ "$sleep_for" -lt 30 ]; then sleep_for=30; fi
             echo "✓ Iteration $i done in ${elapsed}s — sleeping ${sleep_for}s"
