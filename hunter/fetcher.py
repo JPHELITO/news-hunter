@@ -135,8 +135,13 @@ def _fetch_one(source: dict) -> list[RawArticle]:
 
         published_at = _parse_date(entry)
 
-        # Filtra por janela de tempo (quando data disponível)
-        if published_at and published_at < cutoff:
+        # Janela rigorosa: ARTIGOS SEM published_at SÃO REJEITADOS.
+        # Sem data não temos como saber se a notícia é fresca — descartamos.
+        # Isso evita que notícias velhas (publicadas há horas/dias) apareçam
+        # como recém-descobertas e poluam o feed.
+        if not published_at:
+            continue
+        if published_at < cutoff:
             continue
 
         snippet = _strip_html(
