@@ -1,0 +1,50 @@
+name: News Hunter — Playwright (Platts + Fastmarkets, 30 min)
+# Roda a cada 30 min com Playwright para buscar headlines de Platts e Fastmarkets.
+# Usa container com Chromium pré-instalado — sem step de install.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.52.0-jammy
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-pw-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write session files from secrets
+        env:
+          PLATTS_STATE_JSON:       ${{ secrets.PLATTS_STATE_JSON }}
+          FASTMARKETS_STATE_JSON:  ${{ secrets.FASTMARKETS_STATE_JSON }}
+          FASTMARKETS_CREDENTIALS: ${{ secrets.FASTMARKETS_CREDENTIALS }}
+        run: |
+          mkdir -p /tmp/cookies
+          [ -n "$PLATTS_STATE_JSON" ]       && echo "$PLATTS_STATE_JSON"       > /tmp/cookies/platts_state.json
+          [ -n "$FASTMARKETS_STATE_JSON" ]  && echo "$FASTMARKETS_STATE_JSON"  > /tmp/cookies/fastmarkets_state.json
+          [ -n "$FASTMARKETS_CREDENTIALS" ] && echo "$FASTMARKETS_CREDENTIALS" > /tmp/cookies/fastmarkets_credentials.json
+
+      - name: Run hunter with Playwright
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          COOKIES_DIR:          /tmp/cookies
+        run: python hunt.py --playwright
+
+concurrency:
+  group: news-hunter-playwright
+  cancel-in-progress: true
