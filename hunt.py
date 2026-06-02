@@ -29,7 +29,7 @@ def main() -> None:
 
     from hunter.fetcher import fetch_all
     from hunter.filter import filter_articles
-    from hunter.sync import push_articles
+    from hunter.sync import push_articles, record_run
 
     log.info("=== News Hunter start (playwright=%s) ===", args.playwright)
 
@@ -66,6 +66,10 @@ def main() -> None:
 
     pushed = push_articles(articles_filtered)
     log.info("Supabase: %d artigos enviados", pushed)
+
+    # Registra o run independente de ter trazido novidades —
+    # o dashboard usa este timestamp para "sincronizado há X min".
+    record_run(pushed)
 
     log.info("=== News Hunter done ===")
 
