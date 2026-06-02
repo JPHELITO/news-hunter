@@ -5,15 +5,19 @@ filter=False → feed/query já é temático → aceita tudo
 filter=True  → feed genérico → aplica keyword matching
 """
 
-# Helper para Google News queries (EN e PT)
+# Helper para Google News queries (EN e PT) — com filtro de tempo nativo
+# O operador `when:Nh` força o Google News a retornar APENAS artigos das
+# últimas N horas. Sem isso, o RSS retorna por relevância (não cronológico)
+# e mistura artigos de dias atrás com os de minutos.
+_GN_WHEN = "when:6h"
+
 def _gn_en(query: str) -> str:
-    return f"https://news.google.com/rss/search?q={query}&hl=en&gl=US&ceid=US:en"
+    q = f"{query}+{_GN_WHEN}"
+    return f"https://news.google.com/rss/search?q={q}&hl=en&gl=US&ceid=US:en"
 
 def _gn_pt(query: str) -> str:
-    return f"https://news.google.com/rss/search?q={query}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
-
-def _gn_en_site(query: str, site: str) -> str:
-    return _gn_en(f"{query}+site:{site}")
+    q = f"{query}+{_GN_WHEN}"
+    return f"https://news.google.com/rss/search?q={q}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
 
 
 SOURCES = [

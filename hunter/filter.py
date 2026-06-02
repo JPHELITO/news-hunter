@@ -35,6 +35,27 @@ _BROAD_SOURCES = frozenset([
     "Google News", "Google Notícias",
 ])
 
+# ── Page-index detection — Google News retorna URLs de páginas-índice (não
+# artigos): "Mineração - Valor Econômico", "Últimas notícias", "Vídeos",
+# "B3SA3 - Ações hoje". Reconhecíveis por padrões de título genérico.
+_PAGE_INDEX_TITLE_PATTERNS = [
+    re.compile(r"^(últimas notícias|ultimas noticias|vídeos|videos|home|notícias|noticias)", re.IGNORECASE),
+    re.compile(r"^[A-Z]{2,5}\s*\|\s*[A-Z]{4,5}\d?\b", re.IGNORECASE),  # "B3 | B3SA3"
+    re.compile(r"^[A-Z][a-zA-Zçãõá-úñ]+\s+\-\s+(Valor Econômico|Estadão|Folha)", re.IGNORECASE),
+    re.compile(r"^(ações hoje|cotações|bolsa hoje)", re.IGNORECASE),
+]
+
+def _is_page_index(title: str) -> bool:
+    """True se o título parece ser uma página-índice, não um artigo real."""
+    if not title or len(title) < 15:
+        return True
+    if title.count(" ") < 2:  # títulos curtos demais para serem notícia
+        return True
+    for pat in _PAGE_INDEX_TITLE_PATTERNS:
+        if pat.search(title):
+            return True
+    return False
+
 
 def _normalize(text: str) -> str:
     """Lowercase apenas. Sem NFD strip — evita falsos positivos com acentos."""
@@ -82,6 +103,10 @@ def filter_articles(articles: list[RawArticle]) -> list[dict]:
     result: list[dict] = []
     for art in articles:
         title_lower = art.title.lower()
+
+        # 0. Page-index detection: descarta páginas de listagem do Google News
+        if _is_page_index(art.title):
+            continue
 
         # 1. Blocklist: descarta imediatamente se o TÍTULO contém palavra off-topic
         if any(w in title_lower for w in _TITLE_BLOCKLIST):

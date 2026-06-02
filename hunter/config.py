@@ -178,6 +178,6 @@ ALL_KEYWORDS = list(set(
 ))
 
 # Configurações
-WINDOW_HOURS   = 12   # janela balanceada — volume × frescor
+WINDOW_HOURS   = 6   # safety net — Google News já filtra na origem (when:6h)
 SUPABASE_TABLE = "news_articles"
 MAX_PER_SOURCE = 50
