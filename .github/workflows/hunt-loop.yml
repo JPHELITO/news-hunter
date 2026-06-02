@@ -17,7 +17,12 @@ name: Hunt Loop — 5min real cadence (self-restarting)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"   # rede de segurança: ressuscita a cada 6h se quebrar
+    # Rede de segurança: a cada 1h um novo run é disparado.
+    # Se já houver um loop em andamento, este novo fica pending e será
+    # descartado quando o atual ainda estiver rodando (concurrency group).
+    # Garante que, em qualquer cenário de falha/cancelamento, o sistema
+    # volte a rodar em <= 1h sem intervenção manual.
+    - cron: "*/30 * * * *"
 
 permissions:
   contents: read
