@@ -34,7 +34,12 @@ jobs:
           FASTMARKETS_CREDENTIALS: ${{ secrets.FASTMARKETS_CREDENTIALS }}
         run: |
           mkdir -p /tmp/cookies
-          [ -n "$PLATTS_STATE_JSON" ]       && echo "$PLATTS_STATE_JSON"       > /tmp/cookies/platts_state.json
+          # PLATTS: armazenado como gzip+base64 (arquivo grande)
+          if [ -n "$PLATTS_STATE_JSON" ]; then
+            echo "$PLATTS_STATE_JSON" | base64 -d | gunzip > /tmp/cookies/platts_state.json \
+              || echo "$PLATTS_STATE_JSON" > /tmp/cookies/platts_state.json
+          fi
+          # FASTMARKETS: JSON direto (arquivo pequeno)
           [ -n "$FASTMARKETS_STATE_JSON" ]  && echo "$FASTMARKETS_STATE_JSON"  > /tmp/cookies/fastmarkets_state.json
           [ -n "$FASTMARKETS_CREDENTIALS" ] && echo "$FASTMARKETS_CREDENTIALS" > /tmp/cookies/fastmarkets_credentials.json
 
