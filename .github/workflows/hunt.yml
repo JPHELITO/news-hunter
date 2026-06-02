@@ -1,9 +1,12 @@
-name: News Hunter — sync every 5 min
+name: News Hunter — manual/backup
+
+# Cadência real de 5 min agora é mantida pelo workflow `hunt-loop.yml`
+# (loop self-restarting). Este aqui fica como disparo manual de emergência.
+# O cron */5 foi removido porque o GitHub Actions atrasa scheduled runs em
+# horários de baixa carga (observado: gaps de 5-13h em vez de 5 min).
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch:   # permite rodar manualmente a qualquer hora
+  workflow_dispatch:   # apenas manual
 
 jobs:
   hunt:

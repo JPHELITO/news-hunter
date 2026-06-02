@@ -1,0 +1,79 @@
+name: Hunt Loop — 5min real cadence (self-restarting)
+# Solução para o problema do scheduled cron do GitHub Actions, que em horários
+# de baixa carga atrasa runs por horas. Este workflow roda em loop contínuo
+# chamando hunt.py a cada 5 min real, garantindo cadência precisa.
+#
+# Como funciona:
+#   1. Um único job roda por até 5h50min, fazendo loop com sleep 300s
+#   2. Antes de terminar, dispara a si mesmo via gh workflow run
+#   3. O run subsequente continua o ciclo — corrente contínua sem gaps
+#
+# Backups:
+#   - schedule */6h: caso o auto-restart falhe, ressuscita em <= 6h
+#   - hunt.yml (cron */5): segue ativo como rede de segurança secundária
+#
+# Custo: repos públicos têm minutos ilimitados no GitHub Actions free tier.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"   # rede de segurança: ressuscita a cada 6h se quebrar
+
+permissions:
+  contents: read
+  actions: write             # necessário para gh workflow run via GITHUB_TOKEN
+
+concurrency:
+  group: hunt-loop
+  cancel-in-progress: false  # nunca cancela um loop em andamento
+
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355     # 5h55min — margem antes do limite de 6h
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Hunt every 5 minutes for ~5h30min
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+        run: |
+          set +e   # não aborta o loop se uma iteração falhar
+          deadline=$(( $(date +%s) + 19800 ))   # 5h30min em segundos
+          i=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            i=$((i + 1))
+            echo "============================================================"
+            echo "▶ Iteration $i — $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            echo "============================================================"
+            start=$(date +%s)
+            python hunt.py || echo "⚠ hunt.py failed at iter $i — continuing"
+            elapsed=$(( $(date +%s) - start ))
+            # Dorme 300s menos o tempo que o hunt levou (mínimo 30s para evitar spam)
+            sleep_for=$(( 300 - elapsed ))
+            if [ "$sleep_for" -lt 30 ]; then sleep_for=30; fi
+            echo "✓ Iteration $i done in ${elapsed}s — sleeping ${sleep_for}s"
+            sleep "$sleep_for"
+          done
+          echo "Loop window reached — preparing self-restart"
+
+      - name: Self-restart the loop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Triggering next hunt-loop run..."
+          gh workflow run hunt-loop.yml --ref ${{ github.ref_name }}
+          echo "✓ Next run scheduled"
