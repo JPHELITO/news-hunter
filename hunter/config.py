@@ -178,6 +178,6 @@ ALL_KEYWORDS = list(set(
 ))
 
 # Configurações
-WINDOW_HOURS   = 12   # só notícias publicadas nas últimas 12h
+WINDOW_HOURS   = 24
 SUPABASE_TABLE = "news_articles"
 MAX_PER_SOURCE = 50
