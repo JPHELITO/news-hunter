@@ -23,17 +23,8 @@ SOURCES = [
     # Mining.com — feed principal com filtro de keywords
     {"label": "Mining.com",      "url": "https://www.mining.com/feed/",                  "filter": True},
 
-    # SteelOrbis — feed corrigido
-    {"label": "SteelOrbis",      "url": "https://www.steelorbis.com/steel-news/rss/",   "filter": False},
-
-    # Mining Weekly — URL corrigida
-    {"label": "Mining Weekly",   "url": "https://www.miningweekly.com/rss-feed/rss.xml","filter": True},
-
     # Portal Celulose
     {"label": "Portal Celulose", "url": "https://portalcelulose.com.br/feed/",          "filter": False},
-
-    # Tissue Online
-    {"label": "Tissue Online",   "url": "https://www.tissueonline.com.br/feed/",        "filter": True},
 
     # InfoMoney
     {"label": "InfoMoney",       "url": "https://www.infomoney.com.br/feed/",           "filter": True},
@@ -93,7 +84,6 @@ SOURCES = [
     {"label": "SMM",             "url": _gn_en("site:metal.com+steel"),                "filter": True},
     {"label": "SMM",             "url": _gn_en("site:metal.com+nickel"),               "filter": True},
     {"label": "Kallanish",       "url": _gn_en("site:kallanish.com+steel"),            "filter": True},
-    {"label": "MEPS",            "url": _gn_en("site:meps.co.uk+steel"),               "filter": True},
     {"label": "ICIS",            "url": _gn_en("site:icis.com+pulp"),                  "filter": True},
 
     # ══ GOOGLE NEWS — G1 / CNN / Money Times ══════════════════════════════════

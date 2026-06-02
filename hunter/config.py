@@ -159,7 +159,6 @@ PULP_PAPER = [
 
 # ── Regulatório & Setorial ────────────────────────────────────────────────────
 REGULATORY = [
-    "cimento", "indústria cimenteira",
     "ABRAMAT",
     "ANFAVEA", "aço automotivo",
     "construction steel", "aço construção",
@@ -181,4 +180,4 @@ ALL_KEYWORDS = list(set(
 # Configurações
 WINDOW_HOURS   = 48
 SUPABASE_TABLE = "news_articles"
-MAX_PER_SOURCE = 30
+MAX_PER_SOURCE = 50
