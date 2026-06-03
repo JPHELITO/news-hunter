@@ -46,7 +46,9 @@ QUOTES_LIST = [
 # Commodities — apenas as que têm contrato futuro líquido no Yahoo Finance
 COMMODITIES_LIST = [
     # (code, name, unit, query_symbol)
-    ("IRON_ORE",  "Iron Ore 62% (TIO)", "USD/t",   "TIO=F"),
+    # IRON_ORE: SGX 62% Fines CFR China (proxy) — será substituído pelo Platts 61%
+    # via extensão do platts_scraper assim que tivermos a URL/símbolo.
+    ("IRON_ORE",  "Iron Ore 62% (SGX)", "USD/t",   "TIO=F"),
     ("COPPER",    "Copper",             "USD/lb",  "HG=F"),
     ("GOLD",      "Gold",               "USD/oz",  "GC=F"),
     ("SILVER",    "Silver",             "USD/oz",  "SI=F"),
