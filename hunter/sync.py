@@ -14,10 +14,9 @@ log = logging.getLogger(__name__)
 BATCH_SIZE = 100  # máximo por request
 RUNS_TABLE  = "hunter_runs"
 
-# Campos adicionados pelo news_take_classifier que NÃO existem ainda na tabela
-# news_articles. São enviados via PATCH separado para não quebrar o INSERT principal.
-# Após rodar a migration SQL, este set pode ser esvaziado — o push principal
-# já incluirá todos os campos automaticamente.
+# Campos do news_take_classifier que existem na tabela news_articles
+# (migration SQL já rodada). O push_articles inclui todos eles no INSERT;
+# push_take_fields faz PATCH para atualizar artigos já existentes no banco.
 _TAKE_FIELDS = frozenset({
     "take", "take_reason", "take_sector", "take_region",
     "take_topics", "take_covered_companies", "take_confidence",
@@ -109,10 +108,7 @@ def push_articles(articles: list[dict]) -> int:
 
     total_new = 0
     for i in range(0, len(articles), BATCH_SIZE):
-        # Remove campos do take_classifier que ainda não existem no schema do Supabase.
-        # Após rodar a migration SQL, esvaziar _TAKE_FIELDS para incluí-los no INSERT.
-        batch = [{k: v for k, v in art.items() if k not in _TAKE_FIELDS}
-                 for art in articles[i : i + BATCH_SIZE]]
+        batch = list(articles[i : i + BATCH_SIZE])
         try:
             resp = requests.post(endpoint, json=batch, headers=headers, timeout=20)
             if resp.ok:
