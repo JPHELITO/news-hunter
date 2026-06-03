@@ -64,12 +64,28 @@ def main() -> None:
     articles_filtered = filter_articles(articles_raw)
     log.info("Após filtro: %d artigos relevantes", len(articles_filtered))
 
+    # NOVO: classifica cada artigo (sector/sentiment/news_type/tickers)
+    from hunter.classify import classify_article_dict
+    for art in articles_filtered:
+        classify_article_dict(art)
+    log.info("Classificação aplicada em %d artigos", len(articles_filtered))
+
     pushed = push_articles(articles_filtered)
     log.info("Supabase: %d artigos enviados", pushed)
 
     # Registra o run independente de ter trazido novidades —
     # o dashboard usa este timestamp para "sincronizado há X min".
     record_run(pushed)
+
+    # NOVO: atualiza cotações, commodities e indicadores macro
+    try:
+        from hunter.prices import update_quotes, update_commodities, update_macro
+        q = update_quotes()
+        c = update_commodities()
+        m = update_macro()
+        log.info("Preços: quotes=%d, commodities=%d, macro=%d", q, c, m)
+    except Exception as e:
+        log.warning("Atualização de preços falhou: %s", e)
 
     log.info("=== News Hunter done ===")
 
