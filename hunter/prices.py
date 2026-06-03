@@ -46,8 +46,8 @@ QUOTES_LIST = [
 # Commodities — apenas as que têm contrato futuro líquido no Yahoo Finance
 COMMODITIES_LIST = [
     # (code, name, unit, query_symbol)
-    # IRON_ORE: SGX 62% Fines CFR China (proxy) — será substituído pelo Platts 61%
-    # via extensão do platts_scraper assim que tivermos a URL/símbolo.
+    # IRON_ORE: fallback SGX 62% via Yahoo. Substituído por Platts IODEX quando
+    # --playwright está ativo e collect_platts_headlines() capturou IODBZ00.
     ("IRON_ORE",  "Iron Ore 62% (SGX)", "USD/t",   "TIO=F"),
     ("COPPER",    "Copper",             "USD/lb",  "HG=F"),
     ("GOLD",      "Gold",               "USD/oz",  "GC=F"),
@@ -264,6 +264,27 @@ def update_commodities() -> int:
             "change_pct": d.get("change_pct"),
         })
     return _supa_upsert("commodities", rows)
+
+
+def update_iron_ore_platts(platts_prices: dict) -> int:
+    """Sobrescreve IRON_ORE com o preço real do Platts IODEX (IODBZ00).
+
+    Chamado apenas quando --playwright está ativo e o scraper capturou preço.
+    Se IODBZ00 não estiver disponível, retorna 0 sem modificar nada.
+    """
+    price_data = platts_prices.get("IODBZ00")
+    if not price_data or price_data.get("price") is None:
+        log.info("platts prices: IODBZ00 não disponível — mantendo fallback Yahoo")
+        return 0
+    row = {
+        "code":       "IRON_ORE",
+        "name":       "Iron Ore IODEX (Platts)",
+        "unit":       "USD/t",
+        "price":      price_data["price"],
+        "change_pct": price_data.get("change_pct"),
+    }
+    log.info("platts prices: atualizando IRON_ORE com IODEX Platts = %s", price_data["price"])
+    return _supa_upsert("commodities", [row])
 
 
 def update_macro() -> int:

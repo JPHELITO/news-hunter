@@ -38,9 +38,10 @@ def main() -> None:
     log.info("RSS: %d artigos brutos", len(articles_raw))
 
     # Playwright: Platts + Fastmarkets (opcional)
+    platts_prices: dict = {}
     if args.playwright:
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        from hunter.platts_scraper import collect_platts_headlines
+        from hunter.platts_scraper import collect_platts_headlines, get_platts_prices
         from hunter.fastmarkets_scraper import collect_fastmarkets_headlines
 
         pw_results = []
@@ -57,6 +58,10 @@ def main() -> None:
                     pw_results.extend(items)
                 except Exception as e:
                     log.warning("%s scraper falhou: %s", name, e)
+
+        # Captura preços IODEX coletados como side-effect da sessão Platts
+        platts_prices = get_platts_prices()
+        log.info("Platts prices capturados: %s", list(platts_prices.keys()))
 
         articles_raw.extend(pw_results)
         log.info("Total com Playwright: %d artigos brutos", len(articles_raw))
@@ -77,12 +82,15 @@ def main() -> None:
     # o dashboard usa este timestamp para "sincronizado há X min".
     record_run(pushed)
 
-    # NOVO: atualiza cotações, commodities e indicadores macro
+    # Atualiza cotações, commodities e indicadores macro
     try:
-        from hunter.prices import update_quotes, update_commodities, update_macro
+        from hunter.prices import update_quotes, update_commodities, update_macro, update_iron_ore_platts
         q = update_quotes()
         c = update_commodities()
         m = update_macro()
+        # Sobrescreve IRON_ORE com Platts IODEX real quando disponível
+        if platts_prices:
+            update_iron_ore_platts(platts_prices)
         log.info("Preços: quotes=%d, commodities=%d, macro=%d", q, c, m)
     except Exception as e:
         log.warning("Atualização de preços falhou: %s", e)
