@@ -69,11 +69,17 @@ def main() -> None:
     articles_filtered = filter_articles(articles_raw)
     log.info("Após filtro: %d artigos relevantes", len(articles_filtered))
 
-    # NOVO: classifica cada artigo (sector/sentiment/news_type/tickers)
+    # Classifica sector/sentiment/tickers (módulo existente)
     from hunter.classify import classify_article_dict
     for art in articles_filtered:
         classify_article_dict(art)
-    log.info("Classificação aplicada em %d artigos", len(articles_filtered))
+    log.info("Classificação básica aplicada em %d artigos", len(articles_filtered))
+
+    # Classifica take/region/topics/covered_companies (novo classificador de mercado)
+    from hunter.news_take_classifier import classify_article_take
+    for art in articles_filtered:
+        classify_article_take(art)
+    log.info("Take classificado em %d artigos", len(articles_filtered))
 
     pushed = push_articles(articles_filtered)
     log.info("Supabase: %d artigos enviados", pushed)
