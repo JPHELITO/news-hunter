@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -11,7 +12,17 @@ from .config import SUPABASE_TABLE
 log = logging.getLogger(__name__)
 
 BATCH_SIZE = 100  # máximo por request
-RUNS_TABLE = "hunter_runs"
+RUNS_TABLE  = "hunter_runs"
+
+# Campos adicionados pelo news_take_classifier que NÃO existem ainda na tabela
+# news_articles. São enviados via PATCH separado para não quebrar o INSERT principal.
+# Após rodar a migration SQL, este set pode ser esvaziado — o push principal
+# já incluirá todos os campos automaticamente.
+_TAKE_FIELDS = frozenset({
+    "take", "take_reason", "take_sector", "take_region",
+    "take_topics", "take_covered_companies", "take_confidence",
+    "take_matched_rules", "include_in_report", "exclusion_reason",
+})
 
 
 def record_run(articles_new: int) -> bool:
@@ -98,7 +109,10 @@ def push_articles(articles: list[dict]) -> int:
 
     total_new = 0
     for i in range(0, len(articles), BATCH_SIZE):
-        batch = articles[i : i + BATCH_SIZE]
+        # Remove campos do take_classifier que ainda não existem no schema do Supabase.
+        # Após rodar a migration SQL, esvaziar _TAKE_FIELDS para incluí-los no INSERT.
+        batch = [{k: v for k, v in art.items() if k not in _TAKE_FIELDS}
+                 for art in articles[i : i + BATCH_SIZE]]
         try:
             resp = requests.post(endpoint, json=batch, headers=headers, timeout=20)
             if resp.ok:
@@ -121,3 +135,80 @@ def push_articles(articles: list[dict]) -> int:
             log.warning("Supabase request falhou: %s", e)
 
     return total_new
+
+
+def push_take_fields(articles: list[dict]) -> int:
+    """PATCH take classification fields nos artigos já inseridos no Supabase.
+
+    Usa requests PATCH individuais em paralelo (um por artigo).
+    Se as colunas ainda não existirem no schema (antes da migration SQL),
+    loga um aviso e retorna 0 sem quebrar nada.
+
+    SQL de migração necessário (rodar uma vez no Supabase SQL Editor):
+    ──────────────────────────────────────────────────────────────────
+    ALTER TABLE news_articles
+      ADD COLUMN IF NOT EXISTS take                   text,
+      ADD COLUMN IF NOT EXISTS take_reason            text,
+      ADD COLUMN IF NOT EXISTS take_sector            text,
+      ADD COLUMN IF NOT EXISTS take_region            text,
+      ADD COLUMN IF NOT EXISTS take_topics            text,
+      ADD COLUMN IF NOT EXISTS take_covered_companies text,
+      ADD COLUMN IF NOT EXISTS take_confidence        float8,
+      ADD COLUMN IF NOT EXISTS take_matched_rules     text,
+      ADD COLUMN IF NOT EXISTS include_in_report      boolean,
+      ADD COLUMN IF NOT EXISTS exclusion_reason       text;
+    ──────────────────────────────────────────────────────────────────
+    """
+    supa_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not supa_url or not key:
+        return 0
+    if not articles:
+        return 0
+
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+    def _patch_one(art: dict) -> bool:
+        article_url = art.get("url", "")
+        if not article_url:
+            return False
+        take_data = {k: art.get(k) for k in _TAKE_FIELDS if k in art}
+        if not take_data:
+            return False
+        endpoint = (
+            f"{supa_url}/rest/v1/{SUPABASE_TABLE}"
+            f"?url=eq.{requests.utils.quote(article_url, safe='')}"
+        )
+        try:
+            r = requests.patch(endpoint, json=take_data, headers=headers, timeout=10)
+            if not r.ok and r.status_code == 400 and "does not exist" in r.text:
+                return None  # sinaliza: migration SQL ainda não foi rodada
+            return r.ok
+        except Exception as e:
+            log.debug("push_take_fields patch falhou: %s", e)
+            return False
+
+    count = 0
+    migration_needed = False
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        results = list(ex.map(_patch_one, articles))
+
+    for res in results:
+        if res is None:
+            migration_needed = True
+        elif res:
+            count += 1
+
+    if migration_needed:
+        log.warning(
+            "push_take_fields: colunas de take não existem no Supabase. "
+            "Rode o SQL de migração descrito na docstring desta função."
+        )
+    else:
+        log.info("push_take_fields: %d/%d artigos atualizados com take fields", count, len(articles))
+    return count

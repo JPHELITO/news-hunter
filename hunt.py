@@ -29,7 +29,7 @@ def main() -> None:
 
     from hunter.fetcher import fetch_all
     from hunter.filter import filter_articles
-    from hunter.sync import push_articles, record_run
+    from hunter.sync import push_articles, push_take_fields, record_run
 
     log.info("=== News Hunter start (playwright=%s) ===", args.playwright)
 
@@ -87,6 +87,10 @@ def main() -> None:
     # Registra o run independente de ter trazido novidades —
     # o dashboard usa este timestamp para "sincronizado há X min".
     record_run(pushed)
+
+    # PATCH take fields separadamente (colunas não fazem parte do INSERT principal
+    # enquanto a migration SQL não for rodada no Supabase).
+    push_take_fields(articles_filtered)
 
     # Atualiza cotações, commodities e indicadores macro
     try:
