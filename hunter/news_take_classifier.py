@@ -203,6 +203,17 @@ _OFF_TOPIC_RE = re.compile(
     r")(?!\w)", re.I,
 )
 
+# Notícia policial / crime: pega carona em palavra de commodity ou nome de
+# cidade (ex: "roubo ... em Alumínio" — cidade de SP). Excluído sem empresa coberta.
+_CRIME_RE = re.compile(
+    r"(?<!\w)("
+    r"roubo|roubar|roubad|assalt|quadrilha|furto|furtad|tiroteio|balead|"
+    r"latrocinio|homicidio|sequestr|traficant|trafico de|delegacia|"
+    r"policia militar|policiais|operacao policial|preso em flagrante|"
+    r"chacina|esfaque|estupro|feminicidio"
+    r")(?!\w)", re.I,
+)
+
 # Tópicos que reduzem prioridade / excluem em Steel/Mining
 _LOW_PRIORITY_TOPICS_STEEL = frozenset(["billet", "wire_rod", "plate", "pig_iron"])
 
@@ -395,6 +406,10 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
 
     # 2. Conteúdo fora de escopo (cripto/esporte/política) sem empresa coberta
     if _OFF_TOPIC_RE.search(norm) and not covered:
+        return True, "irrelevant_region"
+
+    # 2b. Notícia policial/crime (commodity ou cidade só de carona) sem empresa coberta
+    if _CRIME_RE.search(norm) and not covered:
         return True, "irrelevant_region"
 
     # 3. Sem tópicos reconhecidos e sem empresa coberta → baixa relevância

@@ -425,6 +425,23 @@ class TestAmbiguousAliasFalsePositives:
         r = classify_take("Gold-backed stablecoin token launches on blockchain", {})
         assert r["include_in_report"] is False
 
+    def test_crime_city_aluminio_excluded(self):
+        """'em Alumínio' (cidade de SP) numa notícia policial → excluído."""
+        r = classify_take(
+            "Roubo a farmacia tem perseguicao e 3 mortos em tiroteio com a "
+            "Policia Militar na Rodovia Raposo Tavares, em Aluminio", {})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "irrelevant_region"
+
+    def test_crime_quadrilha_excluded(self):
+        r = classify_take("Quadrilha suspeita de roubar Ozempic em farmacias e alvo de operacao", {})
+        assert r["include_in_report"] is False
+
+    def test_legit_aluminum_market_still_included(self):
+        """Notícia real de mercado de alumínio CONTINUA incluída."""
+        r = classify_take("Aluminium prices rise on smelter cuts in China", {})
+        assert r["include_in_report"] is True
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Integração: classify_article_take
