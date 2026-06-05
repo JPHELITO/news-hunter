@@ -118,7 +118,7 @@ def fetch_all() -> list[RawArticle]:
     """Busca todos os feeds RSS + scrapers HTML em paralelo."""
     all_articles: list[RawArticle] = []
 
-    # 1) Scrapers HTML (CNN, Estadão, ANM, ANTAQ, SMM, SteelRadar)
+    # 1) Scrapers HTML (CNN, Estadão, ANM, ANTAQ, SMM, SteelRadar, IBRAM, Aço Brasil)
     try:
         from .html_scrapers import collect_html_sources
         html_items = collect_html_sources()
@@ -126,6 +126,15 @@ def fetch_all() -> list[RawArticle]:
         log.info("HTML scrapers: %d artigos", len(html_items))
     except Exception as e:
         log.warning("HTML scrapers falharam: %s", e)
+
+    # 1b) Reuters via sitemap (sem RSS; site é 401)
+    try:
+        from .reuters_scraper import collect_reuters_headlines
+        reuters_items = collect_reuters_headlines()
+        all_articles.extend(reuters_items)
+        log.info("Reuters: %d artigos", len(reuters_items))
+    except Exception as e:
+        log.warning("Reuters scraper falhou: %s", e)
 
     # 2) Feeds RSS
     with ThreadPoolExecutor(max_workers=6) as ex:
