@@ -14,9 +14,14 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import Iterable
 
 import requests
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 log = logging.getLogger(__name__)
 
@@ -53,11 +58,11 @@ QUOTES_LIST = [
 ]
 
 # Commodities — apenas as que têm contrato futuro líquido no Yahoo Finance
+# IRON_ORE NÃO está aqui: é gerido pelo Platts (update_iron_ore_platts, 30min)
+# com Yahoo SGX só como fallback quando o Platts fica velho (update_iron_ore_fallback).
+# Antes, o Yahoo no loop de 5min brigava com o Platts e revertia pra SGX.
 COMMODITIES_LIST = [
     # (code, name, unit, query_symbol)
-    # IRON_ORE: fallback SGX 62% via Yahoo. Substituído por Platts IODEX quando
-    # --playwright está ativo e collect_platts_headlines() capturou IODBZ00.
-    ("IRON_ORE",  "Iron Ore 62% (SGX)", "USD/t",   "TIO=F"),
     ("COPPER",    "Copper",             "USD/lb",  "HG=F"),
     ("GOLD",      "Gold",               "USD/oz",  "GC=F"),
     ("SILVER",    "Silver",             "USD/oz",  "SI=F"),
@@ -288,27 +293,74 @@ def update_commodities() -> int:
             "price":      d.get("price"),
             "change_pct": d.get("change_pct"),
         })
+    # IRON_ORE não está no Yahoo list — Platts é o dono. Yahoo SGX só como
+    # fallback quando o Platts está velho (>2h) ou ausente.
+    update_iron_ore_fallback()
     return _supa_upsert("commodities", rows)
+
+
+_IRON_ORE_PLATTS_NAME = "Iron Ore IODEX (Platts)"
+_PLATTS_MAX_AGE_S = 2 * 3600  # 2h: além disso, Yahoo SGX assume como fallback
 
 
 def update_iron_ore_platts(platts_prices: dict) -> int:
     """Sobrescreve IRON_ORE com o preço real do Platts IODEX (IODBZ00).
 
-    Chamado apenas quando --playwright está ativo e o scraper capturou preço.
+    Chamado quando --playwright capturou preço (hunt-playwright, 30 min).
     Se IODBZ00 não estiver disponível, retorna 0 sem modificar nada.
     """
     price_data = platts_prices.get("IODBZ00")
     if not price_data or price_data.get("price") is None:
-        log.info("platts prices: IODBZ00 não disponível — mantendo fallback Yahoo")
+        log.info("platts prices: IODBZ00 não disponível — mantendo valor atual")
         return 0
     row = {
         "code":       "IRON_ORE",
-        "name":       "Iron Ore IODEX (Platts)",
+        "name":       _IRON_ORE_PLATTS_NAME,
         "unit":       "USD/t",
         "price":      price_data["price"],
         "change_pct": price_data.get("change_pct"),
+        "updated_at": _now_iso(),
     }
     log.info("platts prices: atualizando IRON_ORE com IODEX Platts = %s", price_data["price"])
+    return _supa_upsert("commodities", [row])
+
+
+def update_iron_ore_fallback() -> int:
+    """Yahoo SGX 62% como FALLBACK para IRON_ORE — só escreve quando o valor
+    atual do Platts está velho (>2h) ou ausente. Evita que o loop de 5 min
+    sobrescreva um preço Platts fresco."""
+    supa_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if supa_url and key:
+        try:
+            r = requests.get(
+                f"{supa_url}/rest/v1/commodities?select=name,updated_at&code=eq.IRON_ORE",
+                headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=8,
+            )
+            rows = r.json() if r.ok else []
+            if rows:
+                name = rows[0].get("name") or ""
+                ua = rows[0].get("updated_at")
+                if _IRON_ORE_PLATTS_NAME in name and ua:
+                    age = (datetime.now(timezone.utc) -
+                           datetime.fromisoformat(ua.replace("Z", "+00:00"))).total_seconds()
+                    if age < _PLATTS_MAX_AGE_S:
+                        return 0  # Platts fresco → não sobrescreve
+        except Exception as e:
+            log.debug("iron ore fallback check falhou: %s", e)
+
+    d = _fetch_yahoo_chart("TIO=F")
+    if not d or d.get("price") is None:
+        return 0
+    row = {
+        "code":       "IRON_ORE",
+        "name":       "Iron Ore 62% (SGX)",
+        "unit":       "USD/t",
+        "price":      d["price"],
+        "change_pct": d.get("change_pct"),
+        "updated_at": _now_iso(),
+    }
+    log.info("iron ore fallback: Platts velho/ausente → Yahoo SGX = %s", d["price"])
     return _supa_upsert("commodities", [row])
 
 
