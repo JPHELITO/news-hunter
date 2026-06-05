@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -63,13 +64,29 @@ def _parse_lastmod(s: str | None):
         return None
 
 
+def _localname(tag: str) -> str:
+    """Remove o namespace do tag XML (ex: '{http://...}loc' → 'loc')."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _iter_xml_children(content: bytes, parent_local: str):
+    """Itera elementos <parent_local> e devolve dict de filhos por nome local.
+    Usa ElementTree (stdlib) — sem depender de lxml."""
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        return
+    for el in root:
+        if _localname(el.tag) != parent_local:
+            continue
+        fields: dict[str, str] = {}
+        for child in el:
+            fields[_localname(child.tag)] = (child.text or "").strip()
+        yield fields
+
+
 def collect_reuters_headlines() -> list[RawArticle]:
     """Ponto de entrada — retorna RawArticle list (Reuters, via sitemap)."""
-    try:
-        from bs4 import BeautifulSoup
-    except ImportError:
-        return []
-
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=WINDOW_HOURS)
     out: list[RawArticle] = []
@@ -81,7 +98,7 @@ def collect_reuters_headlines() -> list[RawArticle]:
             log.warning("Reuters sitemap-index HTTP %d (provável bloqueio Cloudflare/IP)",
                         ri.status_code)
             return []
-        submaps = [l.get_text() for l in BeautifulSoup(ri.content, "xml").find_all("loc")][:_SUBMAPS]
+        submaps = [f["loc"] for f in _iter_xml_children(ri.content, "sitemap") if "loc" in f][:_SUBMAPS]
     except Exception as e:
         log.warning("Reuters sitemap-index falhou: %s", e)
         return []
@@ -91,16 +108,13 @@ def collect_reuters_headlines() -> list[RawArticle]:
             r = requests.get(sm, headers=_HEADERS, timeout=_TIMEOUT)
             if r.status_code != 200:
                 continue
-            for u in BeautifulSoup(r.content, "xml").find_all("url"):
-                loc_el = u.find("loc")
-                if not loc_el:
-                    continue
-                loc = loc_el.get_text().strip()
+            for f in _iter_xml_children(r.content, "url"):
+                loc = f.get("loc", "")
                 if not loc or loc in seen or ".jpg" in loc or ".png" in loc:
                     continue
                 if not _RELEVANT_KW.search(loc):
                     continue
-                pub = _parse_lastmod(u.find("lastmod").get_text() if u.find("lastmod") else None)
+                pub = _parse_lastmod(f.get("lastmod"))
                 if pub and pub < cutoff:
                     continue
                 title = _title_from_slug(loc)

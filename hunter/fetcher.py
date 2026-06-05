@@ -31,15 +31,14 @@ _KNOWN_SOURCES = frozenset([
     "S&P Platts", "Fastmarkets",
 ])
 
-# UA de navegador completo — WAFs (Globo/UOL) bloqueiam bot-UA óbvio a partir
-# de IP de datacenter (GitHub Actions). Headers ricos reduzem bloqueio.
+# UA de navegador — WAFs bloqueiam bot-UA óbvio. Accept padrão de navegador
+# (não RSS-específico) — alguns WAFs devolvem 415 a Accept estranho.
+# Sem Accept-Encoding/Cache-Control manuais (requests cuida; evitam 415).
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/rss+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate",
-    "Cache-Control": "no-cache",
 }
 TIMEOUT = 15  # segundos por request
 
