@@ -27,8 +27,8 @@ SOURCES = [
     # ══ BRASIL — Setoriais (RSS oficiais) ═════════════════════════════════════
     {"label": "Portal Celulose",       "url": "https://portalcelulose.com.br/feed/",             "filter": False},
     {"label": "Siderurgia Brasil",     "url": "https://siderurgiabrasil.com.br/feed/",           "filter": False},
-    {"label": "Instituto Aço Brasil",  "url": "https://acobrasil.org.br/site/feed/",             "filter": False},
-    {"label": "IBRAM",                 "url": "https://ibram.org.br/feed/",                      "filter": False},
     {"label": "Ibá",                   "url": "https://iba.org/feed/",                           "filter": False},
     {"label": "ABTCP",                 "url": "https://newspulpaper.com/feed/",                  "filter": False},
+    # Instituto Aço Brasil e IBRAM: RSS morto/congelado → movidos para
+    # html_scrapers.py (scraping da página de notícias).
 ]

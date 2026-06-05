@@ -82,7 +82,31 @@ HTML_SOURCES = [
         "selector": "a[href*='/haber/']",
         "needs_filter": False,   # site 100% dedicado a steel; conteúdo em turco
     },
+    {
+        # RSS oficial está congelado (171 dias) → scraper da página de notícias.
+        "label": "IBRAM",
+        "page_url": "https://ibram.org.br/noticias/",
+        "domain": "ibram.org.br",
+        "selector": "a[href*='/noticia/']",   # singular = artigo (plural = categoria)
+        "needs_filter": False,                 # fonte setorial de mineração
+    },
+    {
+        # RSS oficial está morto → scraper. Âncoras sem texto → título via slug.
+        "label": "Instituto Aço Brasil",
+        "page_url": "https://acobrasil.org.br/site/noticias/",
+        "domain": "acobrasil.org.br",
+        "selector": "a[href*='/site/noticia/']",
+        "needs_filter": False,                 # fonte setorial de siderurgia
+        "title_from_slug": True,
+    },
 ]
+
+
+def _title_from_url(href: str) -> str:
+    """Deriva um título legível do slug da URL (fontes com âncora sem texto)."""
+    slug = href.rstrip("/").split("/")[-1]
+    words = slug.replace("-", " ").replace("_", " ").strip()
+    return words[:1].upper() + words[1:] if words else ""
 
 
 def _scrape_source(src: dict) -> list[RawArticle]:
@@ -110,9 +134,6 @@ def _scrape_source(src: dict) -> list[RawArticle]:
     base = url
 
     for a in links[:60]:  # limite por página
-        title = a.get_text(strip=True)
-        if not title or len(title) < 12:
-            continue
         href = a.get("href", "").strip()
         if not href:
             continue
@@ -121,6 +142,14 @@ def _scrape_source(src: dict) -> list[RawArticle]:
             href = urljoin(base, href)
         elif not href.startswith("http"):
             continue
+
+        title = a.get_text(strip=True)
+        # Fallback: título derivado do slug quando a âncora não tem texto
+        if (not title or len(title) < 12) and src.get("title_from_slug"):
+            title = _title_from_url(href)
+        if not title or len(title) < 12:
+            continue
+
         # Dedup local (mesma URL pode aparecer no menu + grid)
         if href in seen_urls:
             continue
