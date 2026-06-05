@@ -30,8 +30,11 @@ _TITLE_BLOCKLIST = frozenset([
 # Evita que artigos de agro ou finanças gerais passem por menção tangencial.
 _BROAD_SOURCES = frozenset([
     "Folha de S.Paulo", "Folha de São Paulo",
-    "Exame", "InfoMoney", "G1", "CNN Brasil",
+    "Exame", "InfoMoney", "G1", "G1 Economia", "CNN Brasil",
     "O Globo", "Agência Brasil",
+    # Notícia geral (esporte/política/entretenimento misturados) — exigem
+    # keyword no TÍTULO para não vazar futebol/política via menção tangencial.
+    "Metrópoles", "UOL Economia", "Veja", "Money Times",
     "Google News", "Google Notícias",
 ])
 
@@ -64,11 +67,15 @@ def _normalize(text: str) -> str:
 
 @lru_cache(maxsize=1)
 def _keyword_pattern() -> re.Pattern:
-    """Regex combinada para todos os keywords. Compilada uma vez."""
-    escaped = [re.escape(kw.lower()) for kw in ALL_KEYWORDS]
-    # Sem \b para keywords com acentos (ex: "aço", "minério") — word boundary
-    # do Python não funciona bem com unicode. Usamos busca simples.
-    pattern = "|".join(escaped)
+    """Regex combinada para todos os keywords. Compilada uma vez.
+
+    Usa fronteira de palavra unicode-safe (?<!\\w) ... (?!\\w) para evitar
+    casar keyword DENTRO de outra palavra (ex: 'aura' em 'restaurante',
+    'rani' em palavras aleatórias, 'app' em 'application'). Keywords
+    ordenadas por tamanho desc → as longas casam antes das curtas.
+    """
+    escaped = [re.escape(kw.lower()) for kw in sorted(ALL_KEYWORDS, key=len, reverse=True)]
+    pattern = r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)"
     return re.compile(pattern, re.IGNORECASE)
 
 
