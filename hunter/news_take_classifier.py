@@ -198,12 +198,20 @@ _DOWN_WORDS = frozenset([
 # Termos de exclusão automática (tipo de conteúdo)
 _EXCLUDE_CONTENT_TYPES = frozenset(["rationale"])
 
-# Conteúdo claramente fora de escopo: cripto, esporte, entretenimento, política
+# Cripto "hard" — nomes de moeda/token que NUNCA são da nossa cobertura.
+# Excluído SEMPRE, mesmo que um alias ambíguo (ex: 'vale') case de carona.
+_HARD_CRYPTO_RE = re.compile(
+    r"(?<!\w)("
+    r"bitcoin|btc|ethereum|hyperliquid|altcoin|memecoin|dogecoin|shiba|"
+    r"solana|stablecoin|criptomoeda|cryptocurrency"
+    r")(?!\w)", re.I,
+)
+
+# Conteúdo fora de escopo: cripto leve, esporte, entretenimento, política
 # local. Excluído quando não há empresa coberta no texto.
 _OFF_TOPIC_RE = re.compile(
     r"(?<!\w)("
-    r"bitcoin|ethereum|cripto|crypto|hyperliquid|altcoin|stablecoin|"
-    r"nft|blockchain|web3|defi|memecoin|dogecoin|solana|"
+    r"cripto|crypto|nft|blockchain|web3|defi|"
     r"futebol|futbol|mundial|copa do mundo|world cup|shakira|"
     r"jogador|jogadores|selecao|partida|estadio|"
     r"eleic|election|elecciones|amlo|cnte|tepjf"
@@ -484,10 +492,16 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
         return True, "rationale_news"
 
     norm = normalize_text(text)
+
+    # 1b. Cripto "hard" (nome de moeda) → exclui SEMPRE, mesmo com empresa de
+    # carona via alias ambíguo ('vale a pena' num artigo de bitcoin).
+    if _HARD_CRYPTO_RE.search(norm):
+        return True, "irrelevant_region"
+
     topics = detect_topics(text)
     covered = detect_covered_companies(text)
 
-    # 2. Conteúdo fora de escopo (cripto/esporte/política) sem empresa coberta
+    # 2. Conteúdo fora de escopo (cripto leve/esporte/política) sem empresa coberta
     if _OFF_TOPIC_RE.search(norm) and not covered:
         return True, "irrelevant_region"
 
