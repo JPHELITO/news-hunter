@@ -13,11 +13,20 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Iterable
 
 import requests
 
 log = logging.getLogger(__name__)
+
+# Yahoo bloqueia/rate-limita IPs de datacenter (ex: GitHub Actions) com 429/401.
+# Rotacionamos entre os dois hosts e fazemos retry com backoff.
+_YAHOO_HOSTS = [
+    "https://query1.finance.yahoo.com",
+    "https://query2.finance.yahoo.com",
+]
+_YAHOO_RETRIES = 3
 
 # ───────────────────────────────────────────────────────────────────────────
 # Listas de instrumentos
@@ -118,33 +127,49 @@ def fetch_brapi(tickers: Iterable[str]) -> dict[str, dict]:
 
 
 def _fetch_yahoo_chart(symbol: str) -> dict | None:
-    """Yahoo v8 chart endpoint — não exige auth. Retorna price + change."""
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        results = data.get("chart", {}).get("result") or []
-        if not results:
-            return None
-        meta = results[0].get("meta", {})
-        price = meta.get("regularMarketPrice")
-        prev = meta.get("chartPreviousClose") or meta.get("previousClose")
-        if price is None:
-            return None
-        change_abs = None
-        change_pct = None
-        if prev not in (None, 0):
-            change_abs = round(price - prev, 4)
-            change_pct = round((price - prev) / abs(prev) * 100, 3)
-        return {
-            "price": price,
-            "change_abs": change_abs,
-            "change_pct": change_pct,
-        }
-    except Exception as e:
-        log.debug("yahoo chart %s falhou: %s", symbol, e)
-        return None
+    """Yahoo v8 chart endpoint — não exige auth. Retorna price + change.
+
+    Resiliente a bloqueio de IP (GitHub Actions): rotaciona hosts query1/query2,
+    faz retry com backoff em 429/401/erros de rede.
+    """
+    last_status = None
+    last_err = None
+    for attempt in range(_YAHOO_RETRIES):
+        host = _YAHOO_HOSTS[attempt % len(_YAHOO_HOSTS)]
+        url = f"{host}/v8/finance/chart/{symbol}"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            last_status = r.status_code
+            if r.status_code in (429, 401, 403):
+                # Rate-limited / bloqueado → backoff e tenta outro host
+                time.sleep(1.2 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            data = r.json()
+            results = data.get("chart", {}).get("result") or []
+            if not results:
+                return None
+            meta = results[0].get("meta", {})
+            price = meta.get("regularMarketPrice")
+            prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+            if price is None:
+                return None
+            change_abs = None
+            change_pct = None
+            if prev not in (None, 0):
+                change_abs = round(price - prev, 4)
+                change_pct = round((price - prev) / abs(prev) * 100, 3)
+            return {
+                "price": price,
+                "change_abs": change_abs,
+                "change_pct": change_pct,
+            }
+        except Exception as e:
+            last_err = e
+            time.sleep(0.5 * (attempt + 1))
+    log.warning("yahoo chart %s falhou após %d tentativas (status=%s, err=%s)",
+                symbol, _YAHOO_RETRIES, last_status, last_err)
+    return None
 
 
 def fetch_yahoo(symbols: Iterable[str]) -> dict[str, dict]:
