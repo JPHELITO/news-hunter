@@ -70,6 +70,25 @@ def _parse_date(entry) -> Optional[datetime]:
     return None
 
 
+def _http_get(url: str) -> tuple[int, bytes]:
+    """GET com fallback curl_cffi quando 403.
+
+    Cloudflare bloqueia o TLS fingerprint do `requests` a partir de IP de
+    datacenter (ex: Mining.com 403 no GitHub Actions). curl_cffi imita o TLS
+    do Chrome e costuma passar. Se não estiver instalado, retorna o 403.
+    """
+    resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    if resp.status_code == 403:
+        try:
+            from curl_cffi import requests as creq
+            r2 = creq.get(url, impersonate="chrome", timeout=TIMEOUT)
+            log.info("curl_cffi fallback [%s]: HTTP %d", url, r2.status_code)
+            return r2.status_code, r2.content
+        except Exception as e:
+            log.debug("curl_cffi indisponível/falhou: %s", e)
+    return resp.status_code, resp.content
+
+
 def _fetch_one(source: dict) -> list[RawArticle]:
     """Busca e parseia um único feed RSS. Retorna lista de RawArticle."""
     label = source["label"]
@@ -77,12 +96,12 @@ def _fetch_one(source: dict) -> list[RawArticle]:
     needs_filter = source.get("filter", True)
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        if resp.status_code != 200:
+        status, content = _http_get(url)
+        if status != 200:
             # Bloqueio (403/401/429) aparece aqui — diagnóstico no log do GitHub.
-            log.warning("Feed BLOQUEADO/ERRO [%s] HTTP %d: %s", label, resp.status_code, url)
+            log.warning("Feed BLOQUEADO/ERRO [%s] HTTP %d: %s", label, status, url)
             return []
-        feed = feedparser.parse(resp.content)
+        feed = feedparser.parse(content)
     except Exception as e:
         log.warning("Feed EXCEÇÃO [%s] %s: %s", label, url, e)
         return []
