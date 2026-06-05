@@ -54,6 +54,75 @@ def _article_url(article_id: str, content_type: str = "News") -> str:
     return f"https://core.spglobal.com/#platts/insightsArticle?articleID={article_id}&insightsType={ct}"
 
 
+def _parse_price(text: str) -> float | None:
+    """Converte texto de preço para float, lidando com vírgula decimal (103,35)
+    e separador de milhar (1.234,56 ou 1,234.56)."""
+    if not text:
+        return None
+    t = text.strip().replace(" ", "")
+    # Remove qualquer símbolo de moeda / sufixo
+    t = re.sub(r"[^\d.,\-]", "", t)
+    if not t:
+        return None
+    has_comma = "," in t
+    has_dot = "." in t
+    try:
+        if has_comma and has_dot:
+            # O último separador é o decimal
+            if t.rfind(",") > t.rfind("."):
+                t = t.replace(".", "").replace(",", ".")   # 1.234,56 → 1234.56
+            else:
+                t = t.replace(",", "")                      # 1,234.56 → 1234.56
+        elif has_comma:
+            # Só vírgula → decimal europeu/brasileiro (103,35 → 103.35)
+            t = t.replace(",", ".")
+        return float(t)
+    except (ValueError, TypeError):
+        return None
+
+
+# JS para ler preços direto da tabela AG-Grid renderizada (DOM).
+# Mais robusto que interceptar rede — lê exatamente o que está na tela.
+_DOM_PRICE_JS = """
+() => {
+  const targets = ['IODBZ00','IOPRM00','IODFE00'];
+  const out = {};
+  let priceColId = null;
+  // Descobre o col-id da coluna "Price" pelo cabeçalho
+  document.querySelectorAll('.ag-header-cell, [role="columnheader"]').forEach(h => {
+    const t = (h.textContent||'').trim().toLowerCase();
+    if (!priceColId && (t === 'price' || t === 'bid' || t === 'value' || t === 'last')) {
+      priceColId = h.getAttribute('col-id');
+    }
+  });
+  const rows = document.querySelectorAll('.ag-row, [role="row"]');
+  rows.forEach(row => {
+    let sym = null;
+    const cells = row.querySelectorAll('.ag-cell, [role="gridcell"], td');
+    cells.forEach(c => {
+      const t = (c.textContent||'').trim();
+      if (targets.includes(t)) sym = t;
+    });
+    if (!sym) return;
+    let priceText = null;
+    if (priceColId) {
+      const pc = row.querySelector('[col-id="'+priceColId+'"]');
+      if (pc) priceText = (pc.textContent||'').trim();
+    }
+    if (!priceText) {
+      // Fallback: primeira célula numérica da linha
+      cells.forEach(c => {
+        const t = (c.textContent||'').trim();
+        if (!priceText && /^-?\\d{1,4}([.,]\\d{1,3})?$/.test(t)) priceText = t;
+      });
+    }
+    if (priceText) out[sym] = priceText;
+  });
+  return {prices: out, rowCount: rows.length};
+}
+"""
+
+
 def _extract_prices(data, out: dict) -> None:
     """Busca recursivamente preços dos símbolos _PRICE_SYMBOLS em qualquer resposta JSON."""
     if isinstance(data, dict):
@@ -204,16 +273,44 @@ def _scrape() -> list[RawArticle]:
 
             log.info("platts_scraper: %d headlines coletados", len(results))
 
-            # Navega ao workspace com watchlist de Iron Ore para capturar preços IODEX
+            # Navega ao workspace com watchlist de Iron Ore para capturar preços IODEX.
+            # Método primário: ler a tabela AG-Grid renderizada (DOM).
+            # Fallback: interceptação de rede (price_buf já preenchido via on_response).
             try:
                 page.evaluate(
                     "window.location.hash = "
                     "'#platts/workspace?workspace=New%20Workspace&type=private'"
                 )
-                page.wait_for_timeout(10_000)
-                log.info("platts_scraper: preços capturados: %s", list(price_buf.keys()))
+                page.wait_for_timeout(12_000)  # tempo para a grid renderizar + dados chegarem
+
+                # Tenta ler do DOM até 3x (a grid pode demorar a popular)
+                dom_prices = {}
+                row_count = 0
+                for attempt in range(3):
+                    try:
+                        res = page.evaluate(_DOM_PRICE_JS)
+                        dom_prices = res.get("prices", {}) if isinstance(res, dict) else {}
+                        row_count = res.get("rowCount", 0) if isinstance(res, dict) else 0
+                        if dom_prices:
+                            break
+                        page.wait_for_timeout(4_000)
+                    except Exception as e:
+                        log.debug("platts_scraper: DOM read attempt %d falhou: %s", attempt, e)
+                        page.wait_for_timeout(4_000)
+
+                log.info("platts_scraper: DOM grid rows=%d, símbolos lidos=%s",
+                         row_count, list(dom_prices.keys()))
+
+                # Parseia e mescla no price_buf (DOM tem prioridade sobre rede)
+                for sym, raw in dom_prices.items():
+                    val = _parse_price(raw)
+                    if val is not None:
+                        price_buf[sym] = {"price": val}
+                        log.info("platts_scraper: %s = %s (DOM)", sym, val)
+
+                log.info("platts_scraper: preços finais capturados: %s", list(price_buf.keys()))
             except Exception as e:
-                log.debug("platts_scraper: workspace navigation error: %s", e)
+                log.warning("platts_scraper: workspace navigation error: %s", e)
 
         except Exception as e:
             log.warning("platts_scraper: erro na navegação: %s", e)
