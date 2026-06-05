@@ -162,11 +162,15 @@ _UP_WORDS = frozenset([
     # EN
     "up", "rise", "rises", "rising", "rose", "risen", "increase", "increases", "increasing",
     "higher", "stronger", "strong", "gains", "gain", "firm", "firmer", "rebound",
-    "recovery", "recover", "improve", "improves", "improving", "improved",
-    "jump", "jumps", "surge", "surges", "climb", "climbs", "climbing",
-    "growth", "grow", "grows", "growing", "boost", "rally", "advance",
+    "recovery", "recover", "recovers", "recovered", "recovering",
+    "improve", "improves", "improving", "improved",
+    "jump", "jumps", "jumped", "surge", "surges", "surged",
+    "climb", "climbs", "climbing", "climbed",
+    "growth", "grow", "grows", "growing", "grew", "boost", "boosts", "boosted",
+    "rally", "rallies", "advance", "advances", "advanced", "accelerate", "accelerates",
     "expand", "expands", "expanding", "expansion", "positive", "record",
-    "beat", "beats", "exceed", "exceeds", "above",
+    "beat", "beats", "exceed", "exceeds", "above", "strengthen", "strengthens",
+    "strengthening", "robust", "resilient", "outperform", "outperforms",
     # PT
     "sobe", "subiu", "alta", "aumento", "maior", "maiores", "melhora", "melhor",
     "recuperacao", "avanco", "forte", "fortalecendo", "crescimento",
@@ -178,10 +182,13 @@ _DOWN_WORDS = frozenset([
     "down", "fall", "falls", "falling", "fell", "fallen", "decrease", "decreases",
     "decreasing", "lower", "weaker", "weak", "decline", "declines", "declining",
     "drop", "drops", "dropping", "dropped", "soften", "softer", "soft",
-    "slump", "slumping", "plunge", "plunges", "tumble", "tumbles", "retreat",
+    "slump", "slumps", "slumped", "slumping", "plunge", "plunges", "plunged",
+    "tumble", "tumbles", "tumbled", "retreat", "retreats", "retreated",
     "cut", "cuts", "cutting", "reduce", "reduces", "reducing", "reduced",
-    "contraction", "contract", "contracts", "shrink", "shrinks", "below",
-    "miss", "misses", "loss", "losses",
+    "contraction", "contract", "contracts", "shrink", "shrinks", "shrank", "below",
+    "miss", "misses", "loss", "losses", "ease", "eases", "easing", "eased",
+    "weaken", "weakens", "weakened", "weakening", "subdued", "sluggish",
+    "underperform", "underperforms", "pressured",
     # PT
     "cai", "caiu", "queda", "reducao", "menor", "menores", "piora", "fraco",
     "enfraquecendo", "recuo", "baixa", "retrocesso", "declinio", "colapso",
@@ -331,16 +338,92 @@ def _main_clause_direction(norm: str) -> tuple[int, int]:
     introduzidas por 'as', 'because', 'driven by', 'amid', etc.
     Evita que 'supply increases' cancele 'scrap prices fall'.
     """
-    # Divide na primeira conjunção subordinativa relevante
-    main = re.split(
-        r"\b((?:^|\s)(?:as|because|due to|driven by|amid|following|thanks to|"
-        r"boosted by|supported by|on the back of)\s)",
-        norm, maxsplit=1, flags=re.I
-    )[0]
-    tokens = set(re.findall(r"\b\w+\b", main))
+    tokens = set(re.findall(r"\b\w+\b", _primary_clause(norm)))
     pos = len(tokens & _UP_WORDS)
     neg = len(tokens & _DOWN_WORDS)
     return pos, neg
+
+
+# Conectivos que separam cláusulas. Capturados (grupo) para sabermos qual é.
+_CLAUSE_SPLIT_RE = re.compile(
+    r"\b(while|but|whereas|although|however|yet|even as|meanwhile|"
+    r"as|because|due to|driven by|amid|following|thanks to|boosted by|"
+    r"supported by|on the back of|after|"
+    r"mas|porem|enquanto|embora|contudo|entretanto|"
+    r"porque|devido a|impulsionado|impulsionada|puxado por|puxada por|"
+    r"por conta de)\b",
+    re.I,
+)
+# Conectivos CAUSAIS: a cláusula que vem DEPOIS é só o motivo → descartada.
+_CAUSAL_CONNECTIVES = frozenset({
+    "as", "because", "due to", "driven by", "amid", "following", "thanks to",
+    "boosted by", "supported by", "on the back of", "after",
+    "porque", "devido a", "impulsionado", "impulsionada", "puxado por",
+    "puxada por", "por conta de",
+})
+
+
+def _retained_clauses(norm: str) -> list[str]:
+    """Divide em cláusulas pelos conectivos. Descarta a cláusula que vem após
+    um conectivo CAUSAL (é o motivo, não sinal). Mantém as contrastivas
+    ('while', 'but', 'mas') — os dois lados carregam sinal próprio."""
+    parts = _CLAUSE_SPLIT_RE.split(norm)
+    clauses = [parts[0]]
+    i = 1
+    while i < len(parts):
+        conn = parts[i].lower().strip()
+        clause = parts[i + 1] if i + 1 < len(parts) else ""
+        if conn not in _CAUSAL_CONNECTIVES:
+            clauses.append(clause)
+        i += 2
+    return [c for c in clauses if c.strip()]
+
+
+def _primary_clause(norm: str) -> str:
+    """Compat: texto das cláusulas retidas (sem subordinadas causais)."""
+    return " ".join(_retained_clauses(norm))
+
+
+def _direction_positions(text: str) -> tuple[list[int], list[int]]:
+    """Posições (char) das palavras de direção up e down."""
+    ups, downs = [], []
+    for m in re.finditer(r"\w+", text):
+        w = m.group(0)
+        if w in _UP_WORDS:
+            ups.append(m.start())
+        elif w in _DOWN_WORDS:
+            downs.append(m.start())
+    return ups, downs
+
+
+def _topic_direction_map(norm: str, topics: set[str], window: int = 60) -> dict[str, int]:
+    """Direção (+1/-1/0) de cada tópico, calculada DENTRO de cada cláusula —
+    a palavra de direção mais próxima do tópico na MESMA cláusula. Isola
+    'iron ore fell | met coal rose': cada tópico recebe sua própria direção
+    sem vazamento entre cláusulas. Primeira cláusula a definir o tópico vence.
+    """
+    out: dict[str, int] = {}
+    for clause in _retained_clauses(norm):
+        ups, downs = _direction_positions(clause)
+        if not ups and not downs:
+            continue
+        for pat, topic in TOPIC_NORMALIZATION:
+            if topic not in topics or topic in out:
+                continue
+            best_dir, best_dist = 0, window + 1
+            for m in pat.finditer(clause):
+                tpos = m.start()
+                for pos in ups:
+                    dist = abs(pos - tpos)
+                    if dist < best_dist:
+                        best_dist, best_dir = dist, +1
+                for pos in downs:
+                    dist = abs(pos - tpos)
+                    if dist < best_dist:
+                        best_dist, best_dir = dist, -1
+            if best_dist <= window:
+                out[topic] = best_dir
+    return out
 
 
 def _is_rationale(text: str, source: str = "") -> bool:
@@ -480,6 +563,15 @@ def _classify_sector(topics: list[str], covered: list[str], norm_text: str = "")
         if _PP_TEXT_RE.search(norm_text):
             pp_score += 1
 
+    # Setores dedicados copper/gold: tema puramente de cobre ou ouro, sem
+    # aço/minério de ferro/celulose. Mais informativo que "steel_mining".
+    _steel_iron = topic_set & (_STEEL_TOPICS | {"iron_ore", "pellets", "sinter"})
+    if not _steel_iron and pp_score == 0:
+        if "copper" in topic_set and "gold" not in topic_set:
+            return "copper"
+        if "gold" in topic_set and "copper" not in topic_set:
+            return "gold"
+
     if pp_score > 0 and pp_score >= steel_score and pp_score >= mining_score:
         return "pulp_paper"
     if steel_score > 0 and steel_score >= mining_score:
@@ -516,10 +608,27 @@ def _compute_take(
     topic_set = set(topics)
     has_covered = bool(covered)
 
-    # Direção global (todos os sinais no texto)
-    pos_dir, neg_dir = _count_direction(norm)
-    # Direção da cláusula principal (ignora subordinadas como "as supply increases")
-    pos_main, neg_main = _main_clause_direction(norm)
+    # Cláusula primária (descarta subordinada causal "as supply rose").
+    primary = _primary_clause(norm)
+    # Tópicos presentes nas cláusulas retidas — só esses geram sinal de take.
+    # (um tópico só na subordinada causal é contexto/motivo, não sinal próprio.)
+    primary_topics = {t for pat, t in TOPIC_NORMALIZATION if pat.search(primary)}
+    # Direção ANCORADA ao tópico — passa o norm ORIGINAL (com conectivos) para
+    # que _topic_direction_map divida em cláusulas e isole cada direção.
+    tdir = _topic_direction_map(norm, primary_topics)
+    # Fallback global da cláusula primária.
+    pos_p = len(set(re.findall(r"\w+", primary)) & _UP_WORDS)
+    neg_p = len(set(re.findall(r"\w+", primary)) & _DOWN_WORDS)
+
+    def d(topic: str) -> int:
+        """Direção do tópico. 0 se o tópico não está na cláusula primária
+        (está só na subordinada causal → é motivo, não sinal)."""
+        if topic not in primary_topics:
+            return 0
+        v = tdir.get(topic, 0)
+        if v != 0:
+            return v
+        return (pos_p > neg_p) - (pos_p < neg_p)  # +1/-1/0 pelo sinal global
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -539,72 +648,69 @@ def _compute_take(
                 0.55,
                 rules)
 
-    # ── Regras de custo-input — usam cláusula principal para evitar conflito ──
-    # Quando um custo-input dispara, a regra de demanda é suprimida.
-    _cost_input_fired = False
-
-    # ── REGRA 1: met coal ─────────────────────────────────────────────────────
+    # ── REGRA 1: met coal (custo-insumo) ──────────────────────────────────────
     if "met_coal" in topic_set:
-        if pos_main > neg_main:
+        dd = d("met_coal")
+        if dd > 0:
             add(-1, "Alta de met coal pressiona custos das siderúrgicas.", "met_coal_up_neg")
-            _cost_input_fired = True
-        elif neg_main > pos_main:
+        elif dd < 0:
             add(+1, "Queda de met coal reduz custos das siderúrgicas.", "met_coal_down_pos")
-            _cost_input_fired = True
         else:
             add(0, "Movimentação de met coal detectada; direção incerta.", "met_coal_neutral", conf=0.50)
 
-    # ── REGRA 2: scrap ────────────────────────────────────────────────────────
+    # ── REGRA 2: scrap (custo-insumo) ─────────────────────────────────────────
     if "scrap" in topic_set:
-        if pos_main > neg_main:
+        dd = d("scrap")
+        if dd > 0:
             add(-1, "Alta de scrap pressiona custos.", "scrap_up_neg")
-            _cost_input_fired = True
-        elif neg_main > pos_main:
+        elif dd < 0:
             add(+1, "Queda de scrap reduz custos.", "scrap_down_pos")
-            _cost_input_fired = True
 
-    # ── REGRA 3: OCC ─────────────────────────────────────────────────────────
+    # ── REGRA 3: OCC (custo-insumo) ──────────────────────────────────────────
     if "occ" in topic_set:
-        if pos_main > neg_main:
+        dd = d("occ")
+        if dd > 0:
             add(-1, "Alta de OCC pressiona custos de papel/embalagens.", "occ_up_neg")
-            _cost_input_fired = True
-        elif neg_main > pos_main:
+        elif dd < 0:
             add(+1, "Queda de OCC reduz custos de papel/embalagens.", "occ_down_pos")
-            _cost_input_fired = True
 
-    # ── REGRA 4: demanda — suprimida quando custo-input disparou ─────────────
-    if "demand" in topic_set and not _cost_input_fired:
-        if pos_dir > neg_dir:
+    # ── REGRA 4: demanda ─────────────────────────────────────────────────────
+    if "demand" in topic_set:
+        dd = d("demand")
+        if dd > 0:
             add(+1, "Demanda mais forte indica melhora de mercado.", "demand_up_pos")
-        elif neg_dir > pos_dir:
+        elif dd < 0:
             add(-1, "Demanda mais fraca ou em queda pressiona o mercado.", "demand_down_neg")
 
     # ── REGRA 5: inventários ─────────────────────────────────────────────────
     if "inventories" in topic_set:
-        if neg_dir > pos_dir:
+        dd = d("inventories")
+        if dd < 0:
             add(+1, "Queda de estoques sugere mercado mais apertado.", "inventories_down_pos")
-        elif pos_dir > neg_dir:
+        elif dd > 0:
             add(-1, "Alta de estoques sugere excesso de oferta ou demanda fraca.", "inventories_up_neg")
 
     # ── REGRA 6: utilização de capacidade (AISI/US) ───────────────────────────
     if "utilization" in topic_set:
-        if pos_dir > neg_dir:
+        dd = d("utilization")
+        if dd > 0:
             add(+1, "Utilização de capacidade em alta é sinal positivo de mercado.", "utilization_up_pos")
-        elif neg_dir > pos_dir:
+        elif dd < 0:
             add(-1, "Utilização de capacidade em queda é sinal negativo.", "utilization_down_neg")
 
-    # ── REGRA 7: preços de produtos (HRC, iron ore, pulp, etc.) ──────────────
-    _product_topics = topic_set & (
-        {"hrc", "crc", "rebar", "flat_steel", "structural", "slab",
-         "iron_ore", "pellets", "copper", "gold", "pulp", "paper", "tissue", "containerboard"}
-    )
+    # ── REGRA 7: preços de produtos vendidos (HRC, iron ore, pulp, etc.) ─────
+    _PRODUCT_TOPICS = {"hrc", "crc", "rebar", "flat_steel", "structural", "slab",
+                       "iron_ore", "pellets", "copper", "gold", "pulp", "paper",
+                       "tissue", "containerboard"}
+    _product_topics = topic_set & _PRODUCT_TOPICS
     if _product_topics and "prices" in topic_set:
-        if pos_dir > neg_dir:
-            product_str = ", ".join(_product_topics)
-            add(+1, f"Alta de preços de {product_str} beneficia produtores.", "product_price_up_pos")
-        elif neg_dir > pos_dir:
-            product_str = ", ".join(_product_topics)
-            add(-1, f"Queda de preços de {product_str} é negativa para produtores.", "product_price_down_neg")
+        # Direção do preço = direção do produto; se neutro, herda de 'prices'.
+        for prod in sorted(_product_topics):
+            pd = d(prod) or d("prices")
+            if pd > 0:
+                add(+1, f"Alta de preços de {prod} beneficia produtores.", f"price_{prod}_up_pos")
+            elif pd < 0:
+                add(-1, f"Queda de preços de {prod} é negativa para produtores.", f"price_{prod}_down_neg")
 
     # ── REGRA 8: capacidade de terceiros ─────────────────────────────────────
     if "capacity" in topic_set and not has_covered:
@@ -621,22 +727,24 @@ def _compute_take(
 
     # ── REGRA 10: Turkish rebar exports ──────────────────────────────────────
     if _mentions_turkish_rebar(norm) and "exports" in topic_set:
-        if pos_dir > neg_dir:
+        dd = d("exports")
+        if dd > 0:
             add(-1, "Aumento de exportações de rebar turco eleva competição global.", "turkish_rebar_exports_up_neg")
-        elif neg_dir > pos_dir:
+        elif dd < 0:
             add(+1, "Queda de exportações de rebar turco reduz pressão competitiva.", "turkish_rebar_exports_down_pos")
 
     # ── REGRA 11: exports genéricos de empresa coberta ────────────────────────
-    if "exports" in topic_set and has_covered:
-        if pos_dir > neg_dir:
+    if "exports" in topic_set and has_covered and not _mentions_turkish_rebar(norm):
+        if d("exports") > 0:
             add(+1, f"Aumento de exportações/vendas de empresa coberta ({', '.join(covered)}).",
                 "covered_exports_up_pos", conf=0.65)
 
     # ── REGRA 12: supply/oferta ───────────────────────────────────────────────
     if "supply" in topic_set:
-        if pos_dir > neg_dir:
+        dd = d("supply")
+        if dd > 0:
             add(-1, "Aumento de oferta pode pressionar preços.", "supply_up_neg", conf=0.60)
-        elif neg_dir > pos_dir:
+        elif dd < 0:
             add(+1, "Redução de oferta pode sustentar preços.", "supply_down_pos", conf=0.60)
 
     # ── REGRA 13: empresa coberta sem regra específica ────────────────────────

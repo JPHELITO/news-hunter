@@ -444,6 +444,62 @@ class TestAmbiguousAliasFalsePositives:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Direção ancorada ao tópico — frases multi-tópico com direções opostas
+# ─────────────────────────────────────────────────────────────────────────────
+class TestTopicAnchoredDirection:
+
+    def test_iron_down_metcoal_up_double_negative(self):
+        """Minério cai + met coal sobe = dois sinais negativos = '-'."""
+        r = classify_take("Iron ore prices fell while met coal costs rose", {})
+        assert r["take"] == "-"
+
+    def test_iron_up_metcoal_down_double_positive(self):
+        r = classify_take("Iron ore prices rose while met coal costs fell", {})
+        assert r["take"] == "+"
+
+    def test_causal_subordinate_ignored_metcoal(self):
+        """'as supply increases' é causa, não sinal: só met coal cai conta."""
+        r = classify_take("Met coal prices fall sharply as supply increases", {})
+        assert r["take"] == "+"
+
+    def test_causal_subordinate_ignored_scrap(self):
+        r = classify_take("Scrap prices surge driven by strong demand", {})
+        assert r["take"] == "-"
+
+    def test_genuine_conflict_neutral(self):
+        """HRC sobe (+) vs scrap custo sobe (-) = conflito real = '='."""
+        r = classify_take("HRC prices rise but scrap costs jump", {})
+        assert r["take"] == "="
+
+    def test_demand_recovers_causal(self):
+        r = classify_take("China steel demand recovers as iron ore inventories fall", {})
+        assert r["take"] == "+"
+
+    def test_utilization_eases_negative(self):
+        r = classify_take("US steel capability utilization eases for third week", {})
+        assert r["take"] == "-"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Setores copper / gold dedicados (spec)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestCopperGoldSectors:
+
+    def test_copper_sector(self):
+        r = classify_take("Copper prices rise on Chinese demand and supply tightness", {})
+        assert r["sector"] == "copper"
+
+    def test_gold_sector(self):
+        r = classify_take("Gold prices climb to record on safe-haven demand", {})
+        assert r["sector"] == "gold"
+
+    def test_iron_ore_not_copper_sector(self):
+        """Minério de ferro continua steel_mining, não copper."""
+        r = classify_take("Iron ore prices rise in China", {})
+        assert r["sector"] == "steel_mining"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Integração: classify_article_take
 # ─────────────────────────────────────────────────────────────────────────────
 class TestClassifyArticleTake:
