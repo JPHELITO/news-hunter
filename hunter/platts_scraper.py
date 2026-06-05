@@ -20,8 +20,10 @@ from .fetcher import RawArticle
 
 log = logging.getLogger(__name__)
 
-# Símbolos de preço que queremos capturar do workspace Platts
-_PRICE_SYMBOLS = {"IODBZ00", "IOPRM00", "IODFE00"}
+# Símbolos de preço que queremos capturar do workspace Platts:
+#   IODBZ00 = Iron Ore 61% (IODEX CFR China) | STHRZ02 = HRC China
+#   STCBM00 = Rebar Turkey                    | PLVHA00 = Asian Met Coal
+_PRICE_SYMBOLS = {"IODBZ00", "STHRZ02", "STCBM00", "PLVHA00"}
 
 # Cache de preços preenchido pelo _scrape() como efeito colateral.
 # Lido pelo thread principal após join via get_platts_prices().
@@ -85,7 +87,7 @@ def _parse_price(text: str) -> float | None:
 # Mais robusto que interceptar rede — lê exatamente o que está na tela.
 _DOM_PRICE_JS = """
 () => {
-  const targets = ['IODBZ00','IOPRM00','IODFE00'];
+  const targets = ['IODBZ00','STHRZ02','STCBM00','PLVHA00'];
   const out = {};
   let priceColId = null;
   // Descobre o col-id da coluna "Price" pelo cabeçalho
@@ -349,10 +351,11 @@ def collect_platts_headlines() -> list[RawArticle]:
 
 
 def get_platts_prices() -> dict[str, dict]:
-    """Retorna preços IODEX capturados durante a última sessão Playwright.
+    """Retorna preços Platts capturados durante a última sessão Playwright.
 
     Deve ser chamado após collect_platts_headlines() completar.
-    Chaves: 'IODBZ00' (IODEX 62% CFR China), 'IOPRM00' (65%), 'IODFE00' (58%).
+    Chaves: 'IODBZ00' (Iron Ore 61%), 'STHRZ02' (HRC China),
+            'STCBM00' (Rebar Turkey), 'PLVHA00' (Asian Met Coal).
     Valores: {'price': float}.
     """
     return dict(_platts_prices)

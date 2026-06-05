@@ -57,18 +57,26 @@ QUOTES_LIST = [
     ("GMEXICOB.MX", "Grupo México",    "mining", "BMV",  "yahoo", "GMEXICOB.MX"),
 ]
 
-# Commodities — apenas as que têm contrato futuro líquido no Yahoo Finance
-# IRON_ORE NÃO está aqui: é gerido pelo Platts (update_iron_ore_platts, 30min)
-# com Yahoo SGX só como fallback quando o Platts fica velho (update_iron_ore_fallback).
-# Antes, o Yahoo no loop de 5min brigava com o Platts e revertia pra SGX.
+# Commodities Yahoo — só Copper e Gold (benchmark global, atualiza a cada 5min).
+# As 4 de aço/minério vêm do Platts (PLATTS_COMMODITIES, hunt-playwright 30min).
 COMMODITIES_LIST = [
     # (code, name, unit, query_symbol)
-    ("COPPER",    "Copper",             "USD/lb",  "HG=F"),
-    ("GOLD",      "Gold",               "USD/oz",  "GC=F"),
-    ("SILVER",    "Silver",             "USD/oz",  "SI=F"),
-    ("OIL_BRENT", "Brent Crude",        "USD/bbl", "BZ=F"),
-    ("OIL_WTI",   "WTI Crude",          "USD/bbl", "CL=F"),
+    ("COPPER",    "Copper",  "USD/lb",  "HG=F"),
+    ("GOLD",      "Gold",    "USD/oz",  "GC=F"),
 ]
+
+# Commodities Platts — capturadas da watchlist do workspace (símbolo → meta).
+# code = chave na tabela commodities; o scraper devolve {símbolo: {'price': float}}.
+PLATTS_COMMODITIES = {
+    # platts_symbol: (code, name, unit)
+    "IODBZ00": ("IRON_ORE",     "Iron Ore 61%",    "USD/dmt"),
+    "STHRZ02": ("HRC_CHINA",    "HRC China",       "USD/t"),
+    "STCBM00": ("REBAR_TURKEY", "Rebar Turkey",    "USD/t"),
+    "PLVHA00": ("MET_COAL",     "Asian Met Coal",  "USD/t"),
+}
+
+# Ordem de exibição no dashboard (códigos)
+COMMODITIES_ORDER = ["IRON_ORE", "HRC_CHINA", "REBAR_TURKEY", "MET_COAL", "COPPER", "GOLD"]
 
 # Macro Indicators
 MACRO_YAHOO = [
@@ -293,37 +301,36 @@ def update_commodities() -> int:
             "price":      d.get("price"),
             "change_pct": d.get("change_pct"),
         })
-    # IRON_ORE NÃO é tocado aqui — é exclusivamente do Platts IODEX
-    # (update_iron_ore_platts, hunt-playwright 30min). O Yahoo TIO=F dá valor
-    # errado (~161 vs ~101 real), então não serve nem de fallback. Se o Platts
-    # cair, o último valor Platts (correto) persiste até a sessão ser renovada.
+    # As 4 commodities Platts (Iron Ore 61%, HRC China, Rebar Turkey, Met Coal)
+    # são geridas por update_platts_commodities (hunt-playwright 30min) — não
+    # tocadas aqui. Se o Platts cair, o último valor persiste até renovar a sessão.
     return _supa_upsert("commodities", rows)
 
 
-_IRON_ORE_PLATTS_NAME = "Iron Ore IODEX (Platts)"
-_PLATTS_MAX_AGE_S = 2 * 3600  # 2h: além disso, Yahoo SGX assume como fallback
+def update_platts_commodities(platts_prices: dict) -> int:
+    """Grava as commodities Platts (IODBZ00/STHRZ02/STCBM00/PLVHA00) na tabela.
 
-
-def update_iron_ore_platts(platts_prices: dict) -> int:
-    """Sobrescreve IRON_ORE com o preço real do Platts IODEX (IODBZ00).
-
-    Chamado quando --playwright capturou preço (hunt-playwright, 30 min).
-    Se IODBZ00 não estiver disponível, retorna 0 sem modificar nada.
+    Chamado quando --playwright capturou preços (hunt-playwright, 30 min).
+    Mapeia cada símbolo → (code, name, unit) via PLATTS_COMMODITIES.
+    Símbolos ausentes são pulados (mantém valor anterior).
     """
-    price_data = platts_prices.get("IODBZ00")
-    if not price_data or price_data.get("price") is None:
-        log.info("platts prices: IODBZ00 não disponível — mantendo valor atual")
-        return 0
-    row = {
-        "code":       "IRON_ORE",
-        "name":       _IRON_ORE_PLATTS_NAME,
-        "unit":       "USD/t",
-        "price":      price_data["price"],
-        "change_pct": price_data.get("change_pct"),
-        "updated_at": _now_iso(),
-    }
-    log.info("platts prices: atualizando IRON_ORE com IODEX Platts = %s", price_data["price"])
-    return _supa_upsert("commodities", [row])
+    rows = []
+    for symbol, (code, name, unit) in PLATTS_COMMODITIES.items():
+        d = platts_prices.get(symbol)
+        if not d or d.get("price") is None:
+            log.info("platts: %s (%s) não capturado — mantém valor atual", symbol, name)
+            continue
+        rows.append({
+            "code":       code,
+            "name":       name,
+            "unit":       unit,
+            "price":      d["price"],
+            "change_pct": d.get("change_pct"),
+            "updated_at": _now_iso(),
+        })
+    if rows:
+        log.info("platts commodities: %s", {r["name"]: r["price"] for r in rows})
+    return _supa_upsert("commodities", rows)
 
 
 
