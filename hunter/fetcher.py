@@ -31,11 +31,17 @@ _KNOWN_SOURCES = frozenset([
     "S&P Platts", "Fastmarkets",
 ])
 
+# UA de navegador completo — WAFs (Globo/UOL) bloqueiam bot-UA óbvio a partir
+# de IP de datacenter (GitHub Actions). Headers ricos reduzem bloqueio.
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; NewsHunter/1.0; +https://github.com/JPHELITO)",
-    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/rss+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
+    "Cache-Control": "no-cache",
 }
-TIMEOUT = 12  # segundos por request
+TIMEOUT = 15  # segundos por request
 
 
 @dataclass
@@ -73,10 +79,19 @@ def _fetch_one(source: dict) -> list[RawArticle]:
 
     try:
         resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            # Bloqueio (403/401/429) aparece aqui — diagnóstico no log do GitHub.
+            log.warning("Feed BLOQUEADO/ERRO [%s] HTTP %d: %s", label, resp.status_code, url)
+            return []
         feed = feedparser.parse(resp.content)
     except Exception as e:
-        log.warning("Feed error [%s] %s: %s", label, url, e)
+        log.warning("Feed EXCEÇÃO [%s] %s: %s", label, url, e)
+        return []
+
+    n_entries = len(feed.entries)
+    if n_entries == 0:
+        log.warning("Feed VAZIO [%s] HTTP 200 mas 0 entradas (possível bloqueio de conteúdo): %s",
+                    label, url)
         return []
 
     from datetime import timedelta
@@ -110,7 +125,12 @@ def _fetch_one(source: dict) -> list[RawArticle]:
             needs_filter=needs_filter,
         ))
 
-    log.info("Feed OK [%s] -> %d items", label, len(articles))
+    # Se o feed tinha entradas mas TODAS caíram fora da janela, sinaliza —
+    # ajuda a distinguir "bloqueio" de "feed sem novidades recentes".
+    if not articles and n_entries:
+        log.info("Feed [%s] %d entradas, 0 dentro da janela de %dh", label, n_entries, WINDOW_HOURS)
+    else:
+        log.info("Feed OK [%s] -> %d items (de %d entradas)", label, len(articles), n_entries)
     return articles
 
 
