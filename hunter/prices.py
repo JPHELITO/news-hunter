@@ -293,9 +293,10 @@ def update_commodities() -> int:
             "price":      d.get("price"),
             "change_pct": d.get("change_pct"),
         })
-    # IRON_ORE não está no Yahoo list — Platts é o dono. Yahoo SGX só como
-    # fallback quando o Platts está velho (>2h) ou ausente.
-    update_iron_ore_fallback()
+    # IRON_ORE NÃO é tocado aqui — é exclusivamente do Platts IODEX
+    # (update_iron_ore_platts, hunt-playwright 30min). O Yahoo TIO=F dá valor
+    # errado (~161 vs ~101 real), então não serve nem de fallback. Se o Platts
+    # cair, o último valor Platts (correto) persiste até a sessão ser renovada.
     return _supa_upsert("commodities", rows)
 
 
@@ -325,43 +326,6 @@ def update_iron_ore_platts(platts_prices: dict) -> int:
     return _supa_upsert("commodities", [row])
 
 
-def update_iron_ore_fallback() -> int:
-    """Yahoo SGX 62% como FALLBACK para IRON_ORE — só escreve quando o valor
-    atual do Platts está velho (>2h) ou ausente. Evita que o loop de 5 min
-    sobrescreva um preço Platts fresco."""
-    supa_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
-    if supa_url and key:
-        try:
-            r = requests.get(
-                f"{supa_url}/rest/v1/commodities?select=name,updated_at&code=eq.IRON_ORE",
-                headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=8,
-            )
-            rows = r.json() if r.ok else []
-            if rows:
-                name = rows[0].get("name") or ""
-                ua = rows[0].get("updated_at")
-                if _IRON_ORE_PLATTS_NAME in name and ua:
-                    age = (datetime.now(timezone.utc) -
-                           datetime.fromisoformat(ua.replace("Z", "+00:00"))).total_seconds()
-                    if age < _PLATTS_MAX_AGE_S:
-                        return 0  # Platts fresco → não sobrescreve
-        except Exception as e:
-            log.debug("iron ore fallback check falhou: %s", e)
-
-    d = _fetch_yahoo_chart("TIO=F")
-    if not d or d.get("price") is None:
-        return 0
-    row = {
-        "code":       "IRON_ORE",
-        "name":       "Iron Ore 62% (SGX)",
-        "unit":       "USD/t",
-        "price":      d["price"],
-        "change_pct": d.get("change_pct"),
-        "updated_at": _now_iso(),
-    }
-    log.info("iron ore fallback: Platts velho/ausente → Yahoo SGX = %s", d["price"])
-    return _supa_upsert("commodities", [row])
 
 
 def update_macro() -> int:
