@@ -378,6 +378,55 @@ class TestClassifyTakeAdditional:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Aliases ambíguos — falsos positivos ('vale' = verbo PT, etc.)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestAmbiguousAliasFalsePositives:
+
+    def test_vale_verb_not_detected(self):
+        """'vale a pena' (verbo) NÃO deve detectar a empresa VALE."""
+        assert detect_covered_companies("Esse investimento vale a pena?") == []
+
+    def test_crypto_vale_excluded(self):
+        """Cripto que usa 'vale' como verbo → excluído, sem VALE."""
+        r = classify_take("Hyperliquid (HYPE) disparou 200% e ainda vale a pena", {})
+        assert "VALE" not in r["covered_companies_mentioned"]
+        assert r["include_in_report"] is False
+
+    def test_bitcoin_excluded(self):
+        r = classify_take("Bitcoin sobe e analistas dizem que vale comprar", {})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "irrelevant_region"
+
+    def test_soccer_excluded(self):
+        r = classify_take("Un Mundial caotico se acerca al silbatazo inicial", {})
+        assert r["include_in_report"] is False
+
+    def test_politics_excluded(self):
+        r = classify_take("AMLO critica carta sobre elecciones en Mexico", {})
+        assert r["include_in_report"] is False
+
+    def test_vale_ticker_still_detected(self):
+        """Vale legítimo (ticker) CONTINUA detectado."""
+        assert "VALE" in detect_covered_companies("Vale (VALE3) ve demanda forte na China")
+
+    def test_vale_with_mining_context_detected(self):
+        """'Vale' + contexto de mineração CONTINUA detectado."""
+        assert "VALE" in detect_covered_companies("A nova aposta da Vale: minerio de ferro")
+
+    def test_vale_english_quarterly_detected(self):
+        assert "VALE" in detect_covered_companies("Gerdau and Vale post strong quarterly results")
+
+    def test_texas_tx_not_ternium(self):
+        """'TX' (Texas) sem contexto NÃO deve virar TERNIUM."""
+        assert "TERNIUM" not in detect_covered_companies("Storm hits Texas TX power grid")
+
+    def test_crypto_with_gold_topic_excluded(self):
+        """Cripto que menciona 'gold' (tópico) ainda é excluído como off-topic."""
+        r = classify_take("Gold-backed stablecoin token launches on blockchain", {})
+        assert r["include_in_report"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Integração: classify_article_take
 # ─────────────────────────────────────────────────────────────────────────────
 class TestClassifyArticleTake:

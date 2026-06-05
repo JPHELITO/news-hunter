@@ -191,6 +191,18 @@ _DOWN_WORDS = frozenset([
 # Termos de exclusão automática (tipo de conteúdo)
 _EXCLUDE_CONTENT_TYPES = frozenset(["rationale"])
 
+# Conteúdo claramente fora de escopo: cripto, esporte, entretenimento, política
+# local. Excluído quando não há empresa coberta no texto.
+_OFF_TOPIC_RE = re.compile(
+    r"(?<!\w)("
+    r"bitcoin|ethereum|cripto|crypto|hyperliquid|altcoin|stablecoin|"
+    r"nft|blockchain|web3|defi|memecoin|dogecoin|solana|"
+    r"futebol|futbol|mundial|copa do mundo|world cup|shakira|"
+    r"jogador|jogadores|selecao|partida|estadio|"
+    r"eleic|election|elecciones|amlo|cnte|tepjf"
+    r")(?!\w)", re.I,
+)
+
 # Tópicos que reduzem prioridade / excluem em Steel/Mining
 _LOW_PRIORITY_TOPICS_STEEL = frozenset(["billet", "wire_rod", "plate", "pig_iron"])
 
@@ -222,17 +234,50 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+# Aliases que coincidem com palavras comuns (PT/EN) e geram falso-positivo:
+#   'vale'  → verbo "valer" ("vale a pena", "vale comprar")
+#   'tx'    → "TX" = Texas
+#   'aura'  → palavra comum ("aura de mercado")
+# Só contam como menção à empresa se houver contexto setorial/financeiro no texto.
+_AMBIGUOUS_ALIAS_WORDS = frozenset({"vale", "tx", "aura"})
+
+# Contexto que confirma que a menção é realmente à empresa
+_COMPANY_CONTEXT_RE = re.compile(
+    r"(?<!\w)("
+    r"vale3|cmin3|ggbr4|usim5|csna3|suzb3|rani3|klbn11|aura33|"          # tickers BR
+    r"minerio|mineradora|mineracao|ferro|pelota|niquel|cobre|ouro|"       # mineração
+    r"aco|siderurg|steel|iron|mining|mineral|smelter|"                    # steel/mining
+    r"celulose|pulp|paper|papel|"                                         # P&P
+    r"acoes|acao|bolsa|b3|dividendo|balanco|resultado|trimestre|"         # finanças BR
+    r"shares|stock|equity|earnings|quarter|production|producao|"          # finanças EN
+    r"exports?|exportac|demanda|demand|capacidade|capacity"               # mercado
+    r")", re.I,
+)
+
+
 def detect_covered_companies(text: str) -> list[str]:
-    """Retorna lista de nomes canônicos de empresas cobertas mencionadas no texto."""
+    """Retorna nomes canônicos de empresas cobertas mencionadas no texto.
+
+    Aliases ambíguos (ex: 'vale' = verbo em PT) só contam se houver contexto
+    setorial/financeiro — evita falsos positivos com cripto/política/geral.
+    """
     norm = normalize_text(text)
+    has_context = bool(_COMPANY_CONTEXT_RE.search(norm))
     found: list[str] = []
     for canonical, aliases in COVERED_COMPANY_ALIASES.items():
+        strong = False   # alias inequívoco (ticker, nome completo)
+        weak = False     # alias ambíguo (palavra comum)
         for alias in aliases:
             # Evita palavra dentro de palavra (ex: "csn" em "csn mineracao" e "csna3")
             pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
             if re.search(pattern, norm):
-                found.append(canonical)
-                break
+                if alias in _AMBIGUOUS_ALIAS_WORDS:
+                    weak = True
+                else:
+                    strong = True
+                    break
+        if strong or (weak and has_context):
+            found.append(canonical)
     return found
 
 
@@ -348,7 +393,11 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     topics = detect_topics(text)
     covered = detect_covered_companies(text)
 
-    # 2. Sem tópicos reconhecidos e sem empresa coberta → baixa relevância
+    # 2. Conteúdo fora de escopo (cripto/esporte/política) sem empresa coberta
+    if _OFF_TOPIC_RE.search(norm) and not covered:
+        return True, "irrelevant_region"
+
+    # 3. Sem tópicos reconhecidos e sem empresa coberta → baixa relevância
     if not topics and not covered:
         return True, "no_market_take_detected"
 

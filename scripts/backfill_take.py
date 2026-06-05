@@ -51,12 +51,17 @@ def _headers():
     }
 
 
-def fetch_batch(offset: int) -> list[dict]:
-    """Busca artigos sem take classificado."""
+def fetch_batch(offset: int, reclassify_all: bool = False) -> list[dict]:
+    """Busca artigos para classificar.
+
+    reclassify_all=False → só os que ainda não têm take (take IS NULL).
+    reclassify_all=True  → todos, re-classificando (usa offset p/ paginar).
+    """
+    take_filter = "" if reclassify_all else "&take=is.null"
     url = (
         f"{SUPA_URL}/rest/v1/news_articles"
         f"?select=url,title,snippet,source_name"
-        f"&take=is.null"
+        f"{take_filter}"
         f"&order=found_at.desc"
         f"&limit={PAGE_SIZE}&offset={offset}"
     )
@@ -108,17 +113,23 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true",
                         help="Classifica mas não salva no Supabase")
+    parser.add_argument("--all", action="store_true",
+                        help="Re-classifica TODOS os artigos (não só os sem take). "
+                             "Use após mudar as regras do classificador.")
     args = parser.parse_args()
 
     if not SUPA_URL or not SUPA_KEY:
         log.error("SUPABASE_URL e SUPABASE_SERVICE_KEY precisam estar no .env")
         sys.exit(1)
 
+    reclassify_all = args.all
+    log.info("Modo: %s", "RE-CLASSIFICAR TUDO" if reclassify_all else "apenas take IS NULL")
+
     total = 0
     offset = 0
 
     while True:
-        batch = fetch_batch(offset)
+        batch = fetch_batch(offset, reclassify_all)
         if not batch:
             break
 
@@ -132,18 +143,15 @@ def main():
 
         log.info("Acumulado: %d artigos", total)
 
-        if args.dry_run:
-            # Em dry-run, offset não avança (artigos não foram atualizados)
+        # Quando re-classificando tudo (ou em dry-run), os artigos continuam no
+        # result set → avança o offset. No modo padrão, o PATCH os tira do filtro
+        # take IS NULL, então mantém offset=0.
+        if reclassify_all or args.dry_run:
             offset += len(batch)
-            if len(batch) < PAGE_SIZE:
-                break
-        else:
-            # Com PATCH feito, os artigos saem do filtro take=is.null
-            # → sempre busca offset=0 até não restar nada
-            if len(batch) < PAGE_SIZE:
-                break
+        if len(batch) < PAGE_SIZE:
+            break
 
-    log.info("=== Backfill take concluído: %d artigos classificados ===", total)
+    log.info("=== Backfill take concluído: %d artigos processados ===", total)
 
 
 if __name__ == "__main__":
