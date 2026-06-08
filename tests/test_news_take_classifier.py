@@ -501,6 +501,39 @@ class TestGabaritoLearnings:
         r = classify_take("Pulp prices increase by $50/t in Asia; other grade pricing flat", {})
         assert r["take"] == "+"
 
+    # ── Players da indústria (não cobertos) entram no relatório ───────────────
+    def test_industry_player_mining_included(self):
+        r = classify_take("Fortescue spends more on green energy, keeps shipment forecast steady", {})
+        assert r["include_in_report"] is True
+        assert r["sector"] == "steel_mining"
+
+    def test_industry_player_pp_included(self):
+        r = classify_take("Fire destroys Kimberly-Clark distribution center in California", {})
+        assert r["include_in_report"] is True
+        assert r["sector"] == "pulp_paper"
+
+    def test_industry_player_not_in_covered(self):
+        """Player de indústria NÃO entra em covered_companies (sem take company-specific)."""
+        r = classify_take("BHP loses bid to appeal Brazil dam disaster ruling", {})
+        assert r["include_in_report"] is True
+        assert "BHP" not in r["covered_companies_mentioned"]
+
+    # ── Notícia de tarifa/comércio entra (tariffs no setor steel) ─────────────
+    def test_tariff_news_included(self):
+        r = classify_take("Metals industry backs new US tariff actions, but clash on targets", {})
+        assert r["include_in_report"] is True
+        assert r["sector"] == "steel_mining"
+
+    def test_antidumping_included(self):
+        r = classify_take("UK recommends extending antidumping duties on welded pipes from China", {})
+        assert r["include_in_report"] is True
+
+    # ── Vale resgatada por contexto operacional (mines/operations) ────────────
+    def test_vale_operational_context_detected(self):
+        r = classify_take("Vale expects to resume operations at Fabrica, Viga mines in few weeks", {})
+        assert "VALE" in r["covered_companies_mentioned"]
+        assert r["include_in_report"] is True
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Aliases ambíguos — falsos positivos ('vale' = verbo PT, etc.)

@@ -80,12 +80,32 @@ COVERED_COMPANY_ALIASES: dict[str, list[str]] = {
     ],
 }
 
-# Empresas relevantes de P&P que NÃO são cobertas (usadas para contexto)
-PP_COMPARABLE_COMPANIES = frozenset([
-    "upm", "stora enso", "storaenso", "sappi", "resolute", "domtar",
-    "international paper", "westrock", "smurfit kappa", "nine dragons",
-    "app", "asia pulp", "april", "eldorado", "valmet",
-])
+# Players da indústria que NÃO são da cobertura, mas cujas notícias o analista
+# inclui no relatório (peers/comparáveis). Mapeiam para um setor → quando
+# mencionados, a notícia ENTRA (mesmo sem tópico) e herda o setor. NÃO acionam a
+# lógica de take "company-specific" (essa fica só para empresas cobertas).
+# Nomes ambíguos (ex.: "april" mês, "resolute" adjetivo) deliberadamente fora.
+INDUSTRY_PLAYERS: dict[str, str] = {
+    # Steel & Mining (não cobertos)
+    "bhp": "steel_mining", "rio tinto": "steel_mining", "fortescue": "steel_mining",
+    "anglo american": "steel_mining", "glencore": "steel_mining",
+    "first quantum": "steel_mining", "freeport": "steel_mining",
+    "nucor": "steel_mining", "us steel": "steel_mining", "u s steel": "steel_mining",
+    "cleveland-cliffs": "steel_mining", "cleveland cliffs": "steel_mining",
+    "arcelormittal": "steel_mining", "arcelor mittal": "steel_mining",
+    "baowu": "steel_mining", "nippon steel": "steel_mining", "posco": "steel_mining",
+    "tata steel": "steel_mining", "hbis": "steel_mining", "simandou": "steel_mining",
+    # Pulp & Paper (não cobertos)
+    "kimberly-clark": "pulp_paper", "kimberly clark": "pulp_paper",
+    "bracell": "pulp_paper", "celulosa argentina": "pulp_paper",
+    "solenis": "pulp_paper", "global cellulose fibers": "pulp_paper",
+    "asia pulp": "pulp_paper", "indah kiat": "pulp_paper",
+    "upm": "pulp_paper", "stora enso": "pulp_paper", "storaenso": "pulp_paper",
+    "sappi": "pulp_paper", "domtar": "pulp_paper", "international paper": "pulp_paper",
+    "westrock": "pulp_paper", "smurfit": "pulp_paper", "mondi": "pulp_paper",
+    "metsa": "pulp_paper", "nine dragons": "pulp_paper", "eldorado": "pulp_paper",
+    "valmet": "pulp_paper", "georgia-pacific": "pulp_paper", "essity": "pulp_paper",
+}
 
 # Mapa: termo normalizado → tópico canônico
 TOPIC_NORMALIZATION: list[tuple[re.Pattern, str]] = []
@@ -313,7 +333,9 @@ _COMPANY_CONTEXT_RE = re.compile(
     r"celulose|pulp|paper|papel|"                                         # P&P
     r"acoes|acao|bolsa|b3|dividendo|balanco|resultado|trimestre|"         # finanças BR
     r"shares|stock|equity|earnings|quarter|production|producao|"          # finanças EN
-    r"exports?|exportac|demanda|demand|capacidade|capacity"               # mercado
+    r"exports?|exportac|demanda|demand|capacidade|capacity|"              # mercado
+    r"mine|mines|output|shipments?|operations|operacao|shutdown|"         # operacional
+    r"tailings|barragem|dam|port|porto|refinery|refinaria"               # ativos/instalações
     r")", re.I,
 )
 
@@ -341,6 +363,21 @@ def detect_covered_companies(text: str) -> list[str]:
                     break
         if strong or (weak and has_context):
             found.append(canonical)
+    return found
+
+
+def detect_industry_players(text: str) -> dict[str, str]:
+    """Players da indústria (não cobertos) mencionados → {nome: setor}.
+
+    Usado só para a decisão de INCLUSÃO e dica de setor — não entra em
+    covered_companies_mentioned nem aciona take company-specific.
+    """
+    norm = normalize_text(text)
+    found: dict[str, str] = {}
+    for name, sector in INDUSTRY_PLAYERS.items():
+        pattern = r"(?<!\w)" + re.escape(name) + r"(?!\w)"
+        if re.search(pattern, norm):
+            found[name] = sector
     return found
 
 
@@ -546,8 +583,8 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     if _CRIME_RE.search(norm) and not covered:
         return True, "irrelevant_region"
 
-    # 3. Sem tópicos reconhecidos e sem empresa coberta → baixa relevância
-    if not topics and not covered:
+    # 3. Sem tópicos, sem empresa coberta E sem player de indústria → baixa relevância
+    if not topics and not covered and not detect_industry_players(text):
         return True, "no_market_take_detected"
 
     # 3+4. Tópicos de aço de baixo valor (pig iron, billet, wire rod, plate) como
@@ -572,6 +609,7 @@ _STEEL_TOPICS = frozenset([
     "hrc", "crc", "rebar", "wire_rod", "billet", "slab", "plate",
     "flat_steel", "structural", "pig_iron", "iron_ore", "pellets",
     "sinter", "met_coal", "scrap", "dri", "furnace", "utilization",
+    "tariffs",   # comércio/antidumping/section 232 é tema central de steel
 ])
 _MINING_TOPICS = frozenset([
     "iron_ore", "pellets", "copper", "gold", "silver", "nickel", "aluminum",
@@ -887,8 +925,13 @@ def classify_take(text: str, metadata: dict | None = None) -> dict:
     norm = normalize_text(text)
     topics   = detect_topics(text)
     covered  = detect_covered_companies(text)
+    industry = detect_industry_players(text)
     region   = detect_region(text)
     sector   = _classify_sector(topics, covered, norm)
+
+    # ── Player de indústria (não coberto) define o setor quando indeterminado ─
+    if sector == "unknown" and industry:
+        sector = next(iter(industry.values()))
 
     # ── Ajuste de região: empresa coberta brasileira → brazil quando região incerta
     if region == "unknown" and covered:
@@ -897,7 +940,7 @@ def classify_take(text: str, metadata: dict | None = None) -> dict:
             region = "brazil"
 
     # ── Verificação de relevância pós-setor ──────────────────────────────────
-    if sector == "unknown" and not covered:
+    if sector == "unknown" and not covered and not industry:
         return {
             "include_in_report":          False,
             "exclusion_reason":           "no_market_take_detected",
