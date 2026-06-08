@@ -452,6 +452,57 @@ class TestPlattsBusinessRules:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Aprendizados do gabarito (PDFs de takes manuais) — regras derivadas da análise
+# de divergências. Travam o comportamento independentemente dos PDFs.
+# ─────────────────────────────────────────────────────────────────────────────
+class TestGabaritoLearnings:
+
+    # ── Tópico "mining" genérico: macro de mineração entra no relatório ───────
+    def test_mining_macro_included(self):
+        r = classify_take("Brazil mining sector posts higher Q1 revenue", {})
+        assert r["include_in_report"] is True
+
+    def test_mineral_demand_included(self):
+        r = classify_take("India rises as China slows in mineral demand shift", {})
+        assert r["include_in_report"] is True
+
+    # ── Palavras de direção que faltavam (formas no passado / termos de mercado)
+    def test_utilization_increased_past_tense(self):
+        r = classify_take("US steel capability utilization increased to 79.1% on the week", {})
+        assert r["take"] == "+"
+
+    def test_iron_ore_dip_negative(self):
+        """'dip' agora conta como queda (antes virava '+' por 'firm')."""
+        r = classify_take("Asian iron ore prices dip despite firm liquidity", {})
+        assert r["take"] == "-"
+
+    def test_bullish_positive(self):
+        r = classify_take("China HRC prices bullish on restocking demand", {})
+        assert r["take"] == "+"
+
+    # ── Marcador de estabilidade → neutro (sinal fraco) ───────────────────────
+    def test_neutral_marker_overrides_weak_signal(self):
+        r = classify_take("China HRC market stable; prices rise modestly", {})
+        assert r["take"] == "="
+        assert "neutral_marker" in r["matched_rules"]
+
+    def test_mixed_market_neutral(self):
+        r = classify_take("Asian HRC prices mixed as yuan lifts some quotes", {})
+        assert r["take"] == "="
+
+    # ── "flat steel" é PRODUTO, não marcador de estabilidade ──────────────────
+    def test_flat_steel_not_neutralized(self):
+        r = classify_take("Brazilian flat steel market prices rise by up to Real 300/mt", {})
+        assert r["take"] == "+"
+        assert "neutral_marker" not in r["matched_rules"]
+
+    # ── Movimento quantificado ($/t) prevalece sobre 'flat' de outro grade ────
+    def test_quantified_move_beats_neutral_marker(self):
+        r = classify_take("Pulp prices increase by $50/t in Asia; other grade pricing flat", {})
+        assert r["take"] == "+"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Aliases ambíguos — falsos positivos ('vale' = verbo PT, etc.)
 # ─────────────────────────────────────────────────────────────────────────────
 class TestAmbiguousAliasFalsePositives:

@@ -103,6 +103,7 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(pig.?iron|ferro.?gusa)\b",                                      "pig_iron"),
     # Raw materials (mining / inputs)
     (r"\b(iron.?ore|minerio.?de.?ferro|iodex|tsi.?62|iron ore price)\b", "iron_ore"),
+    (r"\b(mining|miner|minerals?|mineradora|mineracao|mineral.?demand)\b",  "mining"),
     (r"\b(pellet|pellets|pellet.?premium|pelotas?)\b",                   "pellets"),
     (r"\b(sinter.?feed|lump.?ore)\b",                                    "sinter"),
     (r"\b(met.?coal|coking.?coal|carvao.?metalurgico|carvao.?coqueificavel)\b", "met_coal"),
@@ -130,7 +131,7 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(exports?|exportacao|exportacoes|shipments?)\b",                 "exports"),
     (r"\b(imports?|importacao|importacoes)\b",                           "imports"),
     (r"\b(inventories|inventory|estoques?|inventario)\b",                "inventories"),
-    (r"\b(prices?|preco|precos)\b",                                       "prices"),
+    (r"\b(prices?|preco|precos|premium|premiums|index|indices)\b",        "prices"),
     (r"\b(utilization|utilizacao|capability.?utilization|capacity.?utilization|aisi)\b", "utilization"),
     (r"\b(tariff|tarifa|anti.?dumping|safeguard|section.?232)\b",        "tariffs"),
     (r"\b(blast.?furnace|alto.?forno|eaf|electric.?arc.?furnace|bof|basic.?oxygen)\b", "furnace"),
@@ -170,7 +171,9 @@ _UP_WORDS = frozenset([
     "rally", "rallies", "advance", "advances", "advanced", "accelerate", "accelerates",
     "expand", "expands", "expanding", "expansion", "positive", "record",
     "beat", "beats", "exceed", "exceeds", "above", "strengthen", "strengthens",
-    "strengthening", "robust", "resilient", "outperform", "outperforms",
+    "strengthening", "strengthened", "robust", "resilient", "outperform", "outperforms",
+    # formas no passado / termos de mercado que faltavam (gabarito Platts)
+    "increased", "gained", "bullish", "firmed",
     # PT
     "sobe", "subiu", "alta", "aumento", "maior", "maiores", "melhora", "melhor",
     "recuperacao", "avanco", "forte", "fortalecendo", "crescimento",
@@ -189,11 +192,39 @@ _DOWN_WORDS = frozenset([
     "miss", "misses", "loss", "losses", "ease", "eases", "easing", "eased",
     "weaken", "weakens", "weakened", "weakening", "subdued", "sluggish",
     "underperform", "underperforms", "pressured",
+    # formas no passado / termos de mercado que faltavam (gabarito Platts)
+    "decreased", "declined", "bearish", "softened",
+    "slip", "slips", "slipped", "slipping",
+    "dip", "dips", "dipped", "dipping",
+    "slide", "slides", "slid", "sliding",
+    "deteriorate", "deteriorates", "deteriorated", "deteriorating",
     # PT
     "cai", "caiu", "queda", "reducao", "menor", "menores", "piora", "fraco",
     "enfraquecendo", "recuo", "baixa", "retrocesso", "declinio", "colapso",
     "pressao", "pressionar", "despencou", "afundou",
 ])
+
+# Marcadores de estabilidade/mercado misto: quando presentes e o sinal direcional
+# é fraco (|score| <= 1), o analista trata como NEUTRO ("=") — ele lê "remains
+# stable, but higher prices" como estável, não como alta. (gabarito Platts)
+_NEUTRAL_MARKER_RE = re.compile(
+    r"\b(mixed|unchanged|stable|steady|stabiliz\w*|range.?bound|sideways|"
+    r"little.?changed|little.?change|broadly.?(stable|flat)|essentially.?flat|"
+    r"largely.?(stable|flat|unchanged)|hold(s)?.?steady|"
+    r"estavel|estaveis|inalterad\w*|sem.?alteracao|de.?lado)\b"
+    # "flat" como estabilidade — NÃO casar "flat steel/product/rolled" (é o produto)
+    r"|\bflat\b(?!\s*(steel|product|products|rolled|roll|carbon|bar))",
+    re.I,
+)
+
+# Movimento de preço quantificado (cifra, /tonelada ou %): sinal concreto que o
+# analista prioriza mesmo com outro grade "flat" → NÃO neutralizar nesses casos.
+_QUANTIFIED_MOVE_RE = re.compile(
+    r"(\$|us\$|r\$|real|eur|€|rmb|yuan)\s?\d"
+    r"|\d+\s?(/mt|/t|per\s?tonne|per\s?ton|/tonne|/lb)"
+    r"|\d+(\.\d+)?\s?%",
+    re.I,
+)
 
 # Termos de exclusão automática (tipo de conteúdo)
 _EXCLUDE_CONTENT_TYPES = frozenset(["rationale"])
@@ -544,7 +575,7 @@ _STEEL_TOPICS = frozenset([
 ])
 _MINING_TOPICS = frozenset([
     "iron_ore", "pellets", "copper", "gold", "silver", "nickel", "aluminum",
-    "zinc", "sinter",
+    "zinc", "sinter", "mining",
 ])
 _PP_TOPICS = frozenset([
     "pulp", "paper", "tissue", "containerboard", "occ", "newsprint",
@@ -614,6 +645,7 @@ def _compute_take(
     covered: list[str],
     sector: str,
     region: str,
+    raw_text: str = "",
 ) -> tuple[str, str, float, list[str]]:
     """
     Calcula take, take_reason, confidence e matched_rules.
@@ -805,6 +837,15 @@ def _compute_take(
         take = "+" if score > 0 else "-"
         reason = "; ".join(reasons)
 
+    # Marcador de estabilidade (stable/flat/mixed/unchanged) + sinal fraco → neutro.
+    # Não sobrepõe sinais fortes (|score| >= 2) nem movimentos quantificados ($/t, %).
+    # quantified check no texto CRU (normalize_text remove $, %, / e perde o sinal)
+    if abs_score <= 1 and _NEUTRAL_MARKER_RE.search(norm) and not _QUANTIFIED_MOVE_RE.search(raw_text or norm):
+        return ("=",
+                "Mercado estável/misto (marcador de estabilidade); sinal direcional fraco.",
+                round(min(conf_base, 0.60), 2),
+                rules + ["neutral_marker"])
+
     # Score alto mas confiança baixa → review
     if conf < 0.40:
         take = "review"
@@ -895,7 +936,7 @@ def classify_take(text: str, metadata: dict | None = None) -> dict:
 
     # ── Computa take ──────────────────────────────────────────────────────────
     take, take_reason, confidence, matched_rules = _compute_take(
-        norm, topics, covered, sector, region
+        norm, topics, covered, sector, region, raw_text=text
     )
 
     # ── Override regional (regra Platts) ──────────────────────────────────────

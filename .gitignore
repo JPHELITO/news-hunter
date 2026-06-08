@@ -6,7 +6,8 @@ venv/
 .DS_Store
 *.log
 
-# PDFs de gabarito (dados do analista — não versionar; repo é público)
+# Gabarito do analista (dados/IP — não versionar; repo é público)
 data/labeled/*.pdf
 data/labeled/*.xlsx
 data/labeled/*.xlsm
+data/labeled/*.csv

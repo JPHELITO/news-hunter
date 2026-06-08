@@ -51,73 +51,54 @@ def normalize_take(raw: str) -> str | None:
     return None
 
 
-# Linha-a-linha: take como símbolo isolado no início OU fim da linha.
-_LINE_RE = re.compile(
-    r"^\s*(?P<lead>[+\-−–—=▲▼↑↓→])?\s*(?P<text>.+?)\s*(?P<trail>[+\-−–—=▲▼↑↓→])?\s*$"
+# Formato real dos relatórios "NEWS - <data>.pdf": texto corrido, um item por
+# manchete na seção "Sector Headlines":
+#   • STEEL & MINING - <manchete (pode quebrar em várias linhas)> [Fonte] (take)
+# O take vem entre parênteses no fim; a fonte em colchetes logo antes dele.
+_HEADLINE_RE = re.compile(
+    r"(?P<sector>STEEL\s*&\s*MINING|PULP\s*&\s*PAPER)\s*-\s*"
+    r"(?P<headline>.+?)\s*"
+    r"\[(?P<source>[^\]]+)\]\s*"
+    r"\(\s*(?P<take>[+\-−–—=])\s*\)",
+    re.DOTALL | re.IGNORECASE,
 )
 
-
-def _looks_like_take_col(cells: list[str]) -> int:
-    """Heurística: quantas células desta coluna parecem um take."""
-    return sum(1 for c in cells if c and normalize_take(c) is not None and len(c.strip()) <= 3)
+_SECTOR_LABEL = {"steel & mining": "steel_mining", "pulp & paper": "pulp_paper"}
 
 
-def _rows_from_tables(page) -> list[tuple[str, str]]:
-    """Extrai (headline, raw_take) de tabelas detectadas na página."""
-    out: list[tuple[str, str]] = []
-    for table in page.extract_tables() or []:
-        if not table or len(table) < 2:
+def _rows_from_pattern(text: str, source_file: str) -> list[dict]:
+    """Extrai manchetes do padrão 'SETOR - headline [fonte] (take)'."""
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for m in _HEADLINE_RE.finditer(text):
+        headline = re.sub(r"\s+", " ", m.group("headline")).strip()
+        take = normalize_take(m.group("take"))
+        if not headline or take is None:
             continue
-        cols = list(zip(*[[(c or "").strip() for c in row] for row in table]))
-        if len(cols) < 2:
+        key = headline.lower()
+        if key in seen:        # dedup dentro do mesmo PDF
             continue
-        # coluna de take = a que mais parece take; headline = a de texto mais longo
-        take_idx = max(range(len(cols)), key=lambda i: _looks_like_take_col(list(cols[i])))
-        head_idx = max(range(len(cols)),
-                       key=lambda i: sum(len(c) for c in cols[i]) if i != take_idx else -1)
-        for row in table:
-            cells = [(c or "").strip() for c in row]
-            if max(take_idx, head_idx) >= len(cells):
-                continue
-            headline, raw = cells[head_idx], cells[take_idx]
-            if headline and normalize_take(raw) is not None:
-                out.append((headline, raw))
-    return out
-
-
-def _rows_from_lines(text: str) -> list[tuple[str, str]]:
-    """Fallback: take como símbolo no início/fim de cada linha."""
-    out: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        if len(line.strip()) < 8:
-            continue
-        m = _LINE_RE.match(line)
-        if not m:
-            continue
-        raw = m.group("lead") or m.group("trail")
-        head = m.group("text")
-        if raw and head and normalize_take(raw) is not None and len(head) >= 8:
-            out.append((head.strip(), raw))
-    return out
+        seen.add(key)
+        sector_raw = re.sub(r"\s+", " ", m.group("sector")).strip().lower()
+        rows.append({
+            "source_file": source_file,
+            "sector": _SECTOR_LABEL.get(sector_raw, sector_raw),
+            "source": m.group("source").strip(),
+            "headline": headline,
+            "gold_take": take,
+            "gold_include": "true",   # PDFs são o relatório final → tudo incluído
+            "raw_take": m.group("take"),
+            "notes": "",
+        })
+    return rows
 
 
 def extract_pdf(path: Path) -> list[dict]:
-    rows: list[dict] = []
+    parts: list[str] = []
     with pdfplumber.open(str(path)) as pdf:
         for page in pdf.pages:
-            pairs = _rows_from_tables(page)
-            if not pairs:
-                pairs = _rows_from_lines(page.extract_text() or "")
-            for headline, raw in pairs:
-                rows.append({
-                    "source_file": path.name,
-                    "headline": re.sub(r"\s+", " ", headline).strip(),
-                    "gold_take": normalize_take(raw),
-                    "gold_include": "true",
-                    "raw_take": raw.strip(),
-                    "notes": "",
-                })
-    return rows
+            parts.append(page.extract_text() or "")
+    return _rows_from_pattern("\n".join(parts), path.name)
 
 
 def inspect(path: Path) -> None:
@@ -160,16 +141,16 @@ def main() -> int:
 
     out_path = Path(args.out)
     with out_path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["source_file", "headline", "gold_take",
-                                          "gold_include", "raw_take", "notes"])
+        w = csv.DictWriter(f, fieldnames=["source_file", "sector", "source", "headline",
+                                          "gold_take", "gold_include", "raw_take", "notes"])
         w.writeheader()
         w.writerows(all_rows)
 
     dist = {t: sum(1 for r in all_rows if r["gold_take"] == t) for t in ("+", "-", "=")}
-    print(f"\nTotal: {len(all_rows)} manchetes de {len(pdfs)} PDF(s) → {out_path}")
-    print(f"Distribuição de takes: + {dist['+']} | - {dist['-']} | = {dist['=']}")
+    print(f"\nTotal: {len(all_rows)} manchetes de {len(pdfs)} PDF(s) -> {out_path}")
+    print(f"Distribuicao de takes: + {dist['+']} | - {dist['-']} | = {dist['=']}")
     if not all_rows:
-        print("⚠️  0 linhas extraídas — rode com --inspect num PDF p/ eu calibrar o parser.")
+        print("[!] 0 linhas extraidas -- rode com --inspect num PDF p/ calibrar o parser.")
     return 0
 
 

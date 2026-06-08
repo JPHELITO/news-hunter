@@ -64,7 +64,7 @@ def main() -> int:
         if not headline:
             continue
         n += 1
-        res = classify_take(headline, {"source_name": r.get("source_file", "")})
+        res = classify_take(headline, {"source_name": r.get("source") or r.get("source_file", "")})
         pred = res["take"]
         # "review" conta como divergência de take (não é +/-/=)
         pred_norm = pred if pred in TAKES else "review"
