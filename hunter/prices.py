@@ -281,6 +281,7 @@ def update_quotes() -> int:
             "price":      d.get("price"),
             "change_pct": d.get("change_pct"),
             "change_abs": d.get("change_abs"),
+            "updated_at": _now_iso(),
         })
     return _supa_upsert("quotes", rows)
 
@@ -300,6 +301,7 @@ def update_commodities() -> int:
             "unit":       unit,
             "price":      d.get("price"),
             "change_pct": d.get("change_pct"),
+            "updated_at": _now_iso(),
         })
     # As 4 commodities Platts (Iron Ore 61%, HRC China, Rebar Turkey, Met Coal)
     # são geridas por update_platts_commodities (hunt-playwright 30min) — não
@@ -351,6 +353,7 @@ def update_macro() -> int:
             "unit":       unit,
             "value":      d.get("price"),
             "change_pct": d.get("change_pct"),
+            "updated_at": _now_iso(),
         })
     # BCB
     for code, name, unit, series_id in MACRO_BCB:
@@ -363,6 +366,7 @@ def update_macro() -> int:
             "unit":       unit,
             "value":      d["value"],
             "change_pct": d.get("change_pct"),
+            "updated_at": _now_iso(),
         })
     return _supa_upsert("macro_indicators", rows)
 
