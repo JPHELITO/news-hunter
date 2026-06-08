@@ -229,11 +229,17 @@ _CRIME_RE = re.compile(
     r")(?!\w)", re.I,
 )
 
-# Tópicos que reduzem prioridade / excluem em Steel/Mining
-_LOW_PRIORITY_TOPICS_STEEL = frozenset(["billet", "wire_rod", "plate", "pig_iron"])
+# Tópicos de aço de baixo valor para o relatório (regra Platts "NÃO COLOCAR":
+# billet, plates, wire rod, pig iron). Excluídos quando são o ASSUNTO PRIMÁRIO —
+# i.e. só eles + modificadores genéricos e sem empresa coberta. Se vierem
+# secundários a um tópico relevante (ex.: HRC), a notícia entra normalmente.
+_LOW_VALUE_STEEL_TOPICS = frozenset(["pig_iron", "billet", "wire_rod", "plate"])
 
-# Tópicos que excluem em Steel/Mining quando não há empresa coberta
-_EXCLUDE_TOPICS_STEEL = frozenset(["pig_iron"])  # "pig iron brazil" sozinho não entra
+# Modificadores genéricos: sozinhos não elevam a relevância de um tópico de baixo
+# valor (preço/produção/exportação de "billet" continua sendo notícia de billet).
+_GENERIC_MODIFIER_TOPICS = frozenset([
+    "prices", "production", "exports", "imports", "demand", "supply", "inventories",
+])
 
 # Padrões de exclusão regional para Europa (P&P)
 _EU_ONLY_PATTERN = re.compile(
@@ -513,15 +519,16 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     if not topics and not covered:
         return True, "no_market_take_detected"
 
-    # 3. Pig iron sem empresa coberta e sem tópicos relevantes adicionais
+    # 3+4. Tópicos de aço de baixo valor (pig iron, billet, wire rod, plate) como
+    #      ASSUNTO PRIMÁRIO — só eles + modificadores genéricos e sem empresa
+    #      coberta → fora do relatório (regra Platts "NÃO COLOCAR"). Se vierem
+    #      secundários a um tópico relevante (ex.: HRC), a notícia entra.
     topic_set = set(topics)
-    _PIG_IRON_GENERIC = {"prices", "production", "exports", "imports", "demand", "supply"}
-    if "pig_iron" in topic_set and topic_set.issubset({"pig_iron"} | _PIG_IRON_GENERIC) and not covered:
-        return True, "irrelevant_commodity"
-
-    # 4. Billet ou wire_rod sem contexto adicional relevante
-    if topic_set.issubset({"billet", "wire_rod"}) and not covered:
-        return True, "low_relevance"
+    if (topic_set & _LOW_VALUE_STEEL_TOPICS
+            and topic_set.issubset(_LOW_VALUE_STEEL_TOPICS | _GENERIC_MODIFIER_TOPICS)
+            and not covered):
+        reason = "irrelevant_commodity" if "pig_iron" in topic_set else "low_relevance"
+        return True, reason
 
     return False, ""
 
@@ -713,7 +720,9 @@ def _compute_take(
             add(-1, "Utilização de capacidade em queda é sinal negativo.", "utilization_down_neg")
 
     # ── REGRA 7: preços de produtos vendidos (HRC, iron ore, pulp, etc.) ─────
-    _PRODUCT_TOPICS = {"hrc", "crc", "rebar", "flat_steel", "structural", "slab",
+    # NOTA: "slab" deliberadamente FORA — regra Platts marca placa (slab) como
+    # NEUTRO. Continua sendo detectado/incluído, mas não gera take direcional.
+    _PRODUCT_TOPICS = {"hrc", "crc", "rebar", "flat_steel", "structural",
                        "iron_ore", "pellets", "copper", "gold", "pulp", "paper",
                        "tissue", "containerboard"}
     _product_topics = topic_set & _PRODUCT_TOPICS
@@ -762,12 +771,14 @@ def _compute_take(
             add(+1, "Redução de oferta pode sustentar preços.", "supply_down_pos", conf=0.60)
 
     # ── REGRA 13: empresa coberta sem regra específica ────────────────────────
+    # Regra Platts: "Company Specifics (=)" → take NEUTRO. (Capacidade de empresa
+    # coberta — REGRA 0 — continua "review" por ser evento estratégico.)
     if has_covered and not rules:
-        reasons.append(f"Notícia específica de empresa coberta ({', '.join(covered)}); impacto depende do contexto.")
+        reasons.append(f"Notícia específica de empresa coberta ({', '.join(covered)}); sem sinal direcional de mercado.")
         rules.append("covered_company_generic")
         confidence_modifiers.append(0.50)
-        return ("review",
-                f"Notícia específica de empresa coberta ({', '.join(covered)}); impacto depende do contexto.",
+        return ("=",
+                f"Notícia específica de empresa coberta ({', '.join(covered)}); sem sinal direcional de mercado.",
                 0.50,
                 rules)
 
@@ -886,6 +897,21 @@ def classify_take(text: str, metadata: dict | None = None) -> dict:
     take, take_reason, confidence, matched_rules = _compute_take(
         norm, topics, covered, sector, region
     )
+
+    # ── Override regional (regra Platts) ──────────────────────────────────────
+    # Steel/mining da Europa ou "resto do mundo" (exceto Turkish rebar) e sem
+    # empresa coberta: MANTÉM no relatório, porém com take NEUTRO. Regiões-foco
+    # (China/Ásia, US, Brasil) e notícias globais preservam o sinal direcional.
+    if (sector != "pulp_paper"
+            and region in ("europe", "rest_of_world")
+            and not covered
+            and not _mentions_turkish_rebar(norm)
+            and take in ("+", "-")):
+        take = "="
+        take_reason = ("Europa/outras regiões sem empresa coberta — mantida no "
+                       "relatório como neutra (regra regional Platts).")
+        confidence = min(confidence, 0.50)
+        matched_rules = list(matched_rules) + ["region_neutral"]
 
     return {
         "include_in_report":          True,

@@ -306,7 +306,8 @@ class TestClassifyTakeAdditional:
         assert r["take"] == "review"
 
     def test_demand_down_negative(self):
-        r = classify_take("Steel demand falls in Europe amid weak construction", {})
+        # Região-foco (China) preserva o sinal direcional da demanda.
+        r = classify_take("Steel demand falls in China amid weak construction", {})
         assert r["take"] == "-"
 
     def test_inventories_down_positive(self):
@@ -375,6 +376,79 @@ class TestClassifyTakeAdditional:
         r = classify_take("China HRC prices rise amid stronger demand", {})
         if r["include_in_report"]:
             assert len(r["matched_rules"]) > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Regras de negócio Platts (imagem de regras) — slab neutro, ORES de baixo valor,
+# company specifics neutro, neutralização regional.
+# ─────────────────────────────────────────────────────────────────────────────
+class TestPlattsBusinessRules:
+
+    # ── Slab = NEUTRO ─────────────────────────────────────────────────────────
+    def test_slab_is_neutral(self):
+        r = classify_take("Steel slab prices rise", {})
+        assert r["include_in_report"] is True
+        assert "slab" in r["normalized_topics"]
+        assert r["take"] == "="
+
+    # ── ORES de baixo valor como assunto primário → excluídos ─────────────────
+    def test_billet_primary_excluded(self):
+        r = classify_take("Billet prices rise in Brazil", {})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "low_relevance"
+
+    def test_plate_primary_excluded(self):
+        r = classify_take("Heavy plate prices fall in Asia", {})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "low_relevance"
+
+    def test_wire_rod_primary_excluded(self):
+        r = classify_take("Wire rod production rises", {})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "low_relevance"
+
+    def test_pig_iron_with_inventories_excluded(self):
+        r = classify_take("Pig iron inventories rise in Brazil", {})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "irrelevant_commodity"
+
+    def test_billet_secondary_to_hrc_included(self):
+        """Billet secundário a HRC → notícia entra (pelo HRC)."""
+        r = classify_take("China HRC and billet prices rise strongly", {})
+        assert r["include_in_report"] is True
+        assert r["take"] == "+"
+
+    # ── Company Specifics = NEUTRO (antes era "review") ───────────────────────
+    def test_company_specific_generic_is_neutral(self):
+        r = classify_take("Usiminas reports quarterly production numbers", {})
+        assert r["include_in_report"] is True
+        assert "USIMINAS" in r["covered_companies_mentioned"]
+        assert r["take"] == "="
+
+    # ── Neutralização regional: Europa / outras regiões sem empresa coberta ───
+    def test_europe_steel_neutralized(self):
+        r = classify_take("HRC prices rise in Germany", {})
+        assert r["include_in_report"] is True
+        assert r["take"] == "="
+        assert "region_neutral" in r["matched_rules"]
+
+    def test_rest_of_world_neutralized(self):
+        r = classify_take("HRC prices rise in Mexico", {})
+        assert r["include_in_report"] is True
+        assert r["take"] == "="
+        assert "region_neutral" in r["matched_rules"]
+
+    def test_turkish_rebar_not_neutralized(self):
+        """Turkish rebar é exceção: preserva o sinal direcional."""
+        r = classify_take("Turkish rebar prices rise", {})
+        assert r["take"] == "+"
+        assert "region_neutral" not in r["matched_rules"]
+
+    def test_china_not_neutralized(self):
+        """Região-foco (China) preserva sinal."""
+        r = classify_take("HRC prices rise in China", {})
+        assert r["take"] == "+"
+        assert "region_neutral" not in r["matched_rules"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -29,8 +29,11 @@ _PRICE_SYMBOLS = {"IODBZ00", "STHRZ02", "STCBM00", "PLVHA00"}
 # Lido pelo thread principal após join via get_platts_prices().
 _platts_prices: dict[str, dict] = {}
 
+# "Rationale" foi REMOVIDO deliberadamente: por regra de negócio (ver imagem de
+# regras Platts — "NÃO usar notícias Rationale"), esse tipo de conteúdo não entra
+# no relatório. Barrado aqui na origem (ContentType) + por título no filter.py.
 _WANTED_TYPES = {"News", "Top News", "Flash", "Market Commentary",
-                 "Blog", "Rationale", "Headline Analysis"}
+                 "Blog", "Headline Analysis"}
 
 _TIMEOUT = 120  # segundos máximos no thread
 

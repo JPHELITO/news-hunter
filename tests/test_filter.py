@@ -78,3 +78,28 @@ class TestBlocklist:
 
     def test_soccer_title_blocked(self):
         assert not _passes("Futebol: final da Copa movimenta mercado de aço", "steel", "G1")
+
+
+class TestPlattsPassThrough:
+    """Platts é fonte curada: todas as notícias passam, exceto 'rationale' no título."""
+
+    def test_platts_passes_without_keyword(self):
+        """Notícia Platts sem nenhuma keyword nossa ainda passa (pass_through)."""
+        assert _passes("Market overview for the week ahead", "", "S&P Platts")
+
+    def test_platts_passes_short_title(self):
+        """Título curto que o page-index normalmente cortaria — Platts passa."""
+        assert _passes("China HRC up", "", "S&P Platts")
+
+    def test_platts_rationale_in_title_blocked(self):
+        assert not _passes("Iron ore rationale: IODEX edges lower", "assessment", "S&P Platts")
+
+    def test_platts_rationale_case_insensitive(self):
+        assert not _passes("HRC China Rationale", "", "S&P Platts")
+
+    def test_platts_normal_news_still_passes(self):
+        assert _passes("Iron ore prices rise on China demand", "", "S&P Platts")
+
+    def test_non_platts_still_keyword_filtered(self):
+        """A regra pass_through NÃO vaza para outras fontes."""
+        assert not _passes("Market overview for the week ahead", "", "Mining.com")

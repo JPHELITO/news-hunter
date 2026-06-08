@@ -14,12 +14,12 @@ Coleta notícias (Steel & Mining + Pulp & Paper) e cotações/commodities/macro,
 | `sources.py` | Lista de feeds RSS oficiais. `filter=False`=feed temático (aceita tudo); `filter=True`=feed geral (aplica keywords). |
 | `html_scrapers.py` | Scrapers de sites sem RSS (IBRAM, Instituto Aço Brasil). `_title_from_url` deriva título do slug. |
 | `reuters_scraper.py` | Reuters via Arc sitemap, `xml.etree.ElementTree` (stdlib, **NÃO** lxml). |
-| `platts_scraper.py` | Playwright: headlines + **preços** Platts via DOM (AG-Grid). `_PRICE_SYMBOLS`={IODBZ00, STHRZ02, STCBM00, PLVHA00}. `get_platts_prices()` devolve cache. |
+| `platts_scraper.py` | Playwright: headlines + **preços** Platts via DOM (AG-Grid). `_PRICE_SYMBOLS`={IODBZ00, STHRZ02, STCBM00, PLVHA00}. `get_platts_prices()` devolve cache. `_WANTED_TYPES` NÃO inclui "Rationale" (regra de negócio: Rationale não entra). |
 | `fastmarkets_scraper.py` | Playwright: headlines Fastmarkets P&P. |
-| `filter.py` | `filter_articles` — keyword matching (normaliza acentos/unicode, word-boundary). |
+| `filter.py` | `filter_articles` — keyword matching (normaliza acentos/unicode, word-boundary). **`SOURCE_FILTER_RULES`** = regras por fonte (chave=`source_name`): `pass_through` (aceita tudo, pula keyword/page-index/blocklist) e `title_exclude` (descarta título com termo). **Platts**: `pass_through=True` + exclui `"rationale"`. Pra regrar outra fonte, só add entrada no dict. |
 | `config.py` | `ALL_KEYWORDS` (S&M + P&P + regulatório), `WINDOW_HOURS=6`, `SUPABASE_TABLE="news_articles"`. |
 | `classify.py` | Classificação básica: sector/sentiment/tickers. |
-| `news_take_classifier.py` | **Classificador determinístico** (regra/dicionário/score, auditável — NÃO black-box). `classify_article_take` gera: include_in_report, exclusion_reason, take(+/−/=/review), take_reason, sector, region, topics, covered_companies, confidence, matched_rules. Aliases ambíguos ("vale","tx","aura") exigem `_COMPANY_CONTEXT_RE`. Hard-exclui cripto/política/crime sem empresa coberta. ~96 testes em `tests/`. |
+| `news_take_classifier.py` | **Classificador determinístico** (regra/dicionário/score, auditável — NÃO black-box). `classify_article_take` gera: include_in_report, exclusion_reason, take(+/−/=/review), take_reason, sector, region, topics, covered_companies, confidence, matched_rules. Aliases ambíguos ("vale","tx","aura") exigem `_COMPANY_CONTEXT_RE`. Hard-exclui cripto/política/crime sem empresa coberta. **Regras de negócio Platts:** slab=neutro (fora de `_PRODUCT_TOPICS`); ORES de baixo valor (pig iron/billet/wire rod/plate) excluídos quando assunto primário (`_LOW_VALUE_STEEL_TOPICS`); company specifics genérico=`=` (capacidade de coberta=`review`); Europa/resto-do-mundo s/ empresa coberta → take neutralizado (`region_neutral`, exceto Turkish rebar). ~113 testes em `tests/`. |
 | `prices.py` | Cotações Yahoo + commodities + macro BCB. Ver tabela de cadência abaixo. |
 | `sync.py` | Push Supabase. |
 

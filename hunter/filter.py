@@ -7,6 +7,27 @@ from functools import lru_cache
 from .config import ALL_KEYWORDS
 from .fetcher import RawArticle
 
+# ── Regras de filtro POR FONTE ────────────────────────────────────────────────
+# Cada fonte pode ter comportamento próprio de ingestão. Chave = source_name
+# (exatamente como o scraper o define). Campos suportados:
+#   pass_through   bool  → aceita TODAS as notícias da fonte (pula keyword,
+#                          page-index e blocklist). Use só p/ fontes curadas.
+#   title_exclude  list  → descarta se o título contém qualquer um destes termos
+#                          (case-insensitive, substring). Aplica-se SEMPRE,
+#                          inclusive a fontes pass_through.
+#
+# Para adicionar regras de outra fonte, basta inserir uma entrada aqui — nenhuma
+# outra parte do código precisa mudar.
+SOURCE_FILTER_RULES: dict[str, dict] = {
+    # Platts (S&P Global): terminal curado de metais/siderurgia. Por decisão de
+    # negócio, TODAS as notícias vão para o news hunter — exceto "Rationale"
+    # (também barrado por ContentType em platts_scraper._WANTED_TYPES).
+    "S&P Platts": {
+        "pass_through": True,
+        "title_exclude": ["rationale"],
+    },
+}
+
 # ── Blocklist — títulos com essas palavras são descartados independente de keywords ──
 # Evita agro, cripto e outros setores que jamais são relevantes para S&M / P&P.
 _TITLE_BLOCKLIST = frozenset([
@@ -95,22 +116,45 @@ def _matches(article: RawArticle) -> list[str]:
     return sorted(found)
 
 
+def _to_dict(art: RawArticle, matched: list[str]) -> dict:
+    return {
+        "url":              art.url,
+        "domain":           art.domain,
+        "source_name":      art.source_name,
+        "title":            art.title,
+        "snippet":          art.snippet,
+        "published_at":     art.published_at.isoformat() if art.published_at else None,
+        "found_at":         art.found_at.isoformat(),
+        "matched_keywords": matched,
+    }
+
+
 def filter_articles(articles: list[RawArticle]) -> list[dict]:
     """
-    Filtra todos os artigos por keyword — sem exceções.
+    Filtra os artigos por keyword — com exceções por fonte (SOURCE_FILTER_RULES).
 
-    Mesmo fontes Google News (pre-filtradas por query) precisam bater
-    ao menos um keyword no título ou snippet. Isso elimina artigos
-    tangencialmente relacionados que as queries trazem por coincidência.
+    Fontes comuns: ao menos 1 keyword deve aparecer no título OU snippet; fontes
+    genéricas (Folha, Exame…) exigem keyword no TÍTULO.
 
-    Regra:
-      - Ao menos 1 keyword deve aparecer no TÍTULO   (match forte)
-      - OU ao menos 2 keywords devem aparecer no título+snippet (match composto)
+    Fontes pass_through (ex.: Platts): aceitam TODAS as notícias, pulando
+    keyword/page-index/blocklist. O único gate é title_exclude (ex.: "rationale").
     """
     result: list[dict] = []
     for art in articles:
         title_lower = art.title.lower()
+        rule = SOURCE_FILTER_RULES.get(art.source_name, {})
 
+        # ── Exclusão por título específica da fonte (aplica-se SEMPRE) ──────────
+        excl = rule.get("title_exclude")
+        if excl and any(term in title_lower for term in excl):
+            continue
+
+        # ── Fonte pass_through: curada → aceita tudo (sem keyword/index/blocklist)
+        if rule.get("pass_through"):
+            result.append(_to_dict(art, []))
+            continue
+
+        # ── Caminho padrão: keyword filtering ──────────────────────────────────
         # 0. Page-index detection: descarta páginas de listagem do Google News
         if _is_page_index(art.title):
             continue
@@ -131,16 +175,6 @@ def filter_articles(articles: list[RawArticle]) -> list[dict]:
             if not _matches_field(art.title):
                 continue
 
-        matched = content_matches
-        result.append({
-            "url":              art.url,
-            "domain":           art.domain,
-            "source_name":      art.source_name,
-            "title":            art.title,
-            "snippet":          art.snippet,
-            "published_at":     art.published_at.isoformat() if art.published_at else None,
-            "found_at":         art.found_at.isoformat(),
-            "matched_keywords": matched,
-        })
+        result.append(_to_dict(art, content_matches))
 
     return result
