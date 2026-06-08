@@ -534,6 +534,27 @@ class TestGabaritoLearnings:
         assert "VALE" in r["covered_companies_mentioned"]
         assert r["include_in_report"] is True
 
+    # ── P&P: anúncio de aumento de preço por produtor → "+" ───────────────────
+    def test_producer_raises_prices_positive(self):
+        r = classify_take("UPM raises woodfree paper prices by 6% in North America", {})
+        assert r["take"] == "+"
+
+    def test_price_hike_positive(self):
+        r = classify_take("APP announces price hike of $50 per tonne for industrial white board", {})
+        assert r["take"] == "+"
+
+    def test_papers_plural_topic(self):
+        """'papers' (plural) deve mapear para o tópico paper (antes só 'paper')."""
+        r = classify_take("Suzano sets 10% price increase for coated papers in North America", {})
+        assert "paper" in r["normalized_topics"]
+        assert r["take"] == "+"
+
+    # ── 'stocks' (plural) = inventários → queda é bullish ─────────────────────
+    def test_stocks_plural_inventories(self):
+        r = classify_take("Stocks of woodpulp at European ports slide in March", {})
+        assert "inventories" in r["normalized_topics"]
+        assert r["take"] == "+"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Aliases ambíguos — falsos positivos ('vale' = verbo PT, etc.)

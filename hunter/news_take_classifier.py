@@ -132,7 +132,7 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(dri|direct.?reduced.?iron|hbi)\b",                             "dri"),
     # Pulp & Paper
     (r"\b(pulp|celulose|bhkp|nbsk|bekp|bek|bskp|bctmp|woodpulp|pulpwood|kraft.?pulp|hardwood.?pulp|softwood.?pulp|dissolving.?pulp|fluff.?pulp)\b", "pulp"),
-    (r"\b(paper|papel)(?!.?(board|ondulado|embalagem|kraft|tissue))\b",  "paper"),
+    (r"\b(papers?|papel)(?!.?(board|ondulado|embalagem|kraft|tissue))\b", "paper"),
     (r"\b(tissue|papel.?tissue|papel.?higienico|jumbo.?roll)\b",          "tissue"),
     (r"\b(containerboard|papelao.?ondulado|corrugated|caixas.?onduladas|kraftliner|linerboard|white.?top|white.?board|testliner)\b", "containerboard"),
     (r"\b(occ|old.?corrugated.?container|aparas)\b",                     "occ"),
@@ -151,7 +151,7 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(production|producao|output)\b",                                 "production"),
     (r"\b(exports?|exportacao|exportacoes|shipments?)\b",                 "exports"),
     (r"\b(imports?|importacao|importacoes)\b",                           "imports"),
-    (r"\b(inventories|inventory|estoques?|inventario)\b",                "inventories"),
+    (r"\b(inventories|inventory|stocks|estoques?|inventario)\b",         "inventories"),
     (r"\b(prices?|preco|precos|premium|premiums|index|indices)\b",        "prices"),
     (r"\b(utilization|utilizacao|capability.?utilization|capacity.?utilization|aisi)\b", "utilization"),
     (r"\b(tariff|tarifa|anti.?dumping|safeguard|section.?232)\b",        "tariffs"),
@@ -193,8 +193,10 @@ _UP_WORDS = frozenset([
     "expand", "expands", "expanding", "expansion", "positive", "record",
     "beat", "beats", "exceed", "exceeds", "above", "strengthen", "strengthens",
     "strengthening", "strengthened", "robust", "resilient", "outperform", "outperforms",
-    # formas no passado / termos de mercado que faltavam (gabarito Platts)
+    # formas no passado / termos de mercado que faltavam (gabarito Platts + P&P)
     "increased", "gained", "bullish", "firmed",
+    # anúncios de preço de produtor (price hike / raises prices) → alta
+    "raise", "raises", "raised", "hike", "hikes", "hiked",
     # PT
     "sobe", "subiu", "alta", "aumento", "maior", "maiores", "melhora", "melhor",
     "recuperacao", "avanco", "forte", "fortalecendo", "crescimento",
