@@ -89,12 +89,18 @@ _DOM_PRICE_JS = """
 () => {
   const targets = ['IODBZ00','STHRZ02','STCBM00','PLVHA00'];
   const out = {};
+  const chg = {};
   let priceColId = null;
-  // Descobre o col-id da coluna "Price" pelo cabeçalho
+  let changeColId = null;
+  // Descobre o col-id das colunas "Price" e "Change%" pelo cabeçalho
   document.querySelectorAll('.ag-header-cell, [role="columnheader"]').forEach(h => {
-    const t = (h.textContent||'').trim().toLowerCase();
+    const t = (h.textContent||'').trim().toLowerCase().replace(/\\s+/g,'');
     if (!priceColId && (t === 'price' || t === 'bid' || t === 'value' || t === 'last')) {
       priceColId = h.getAttribute('col-id');
+    }
+    // Change% (não confundir com a coluna "Change" absoluta — exige o '%')
+    if (!changeColId && t.indexOf('change') !== -1 && t.indexOf('%') !== -1) {
+      changeColId = h.getAttribute('col-id');
     }
   });
   const rows = document.querySelectorAll('.ag-row, [role="row"]');
@@ -119,8 +125,16 @@ _DOM_PRICE_JS = """
       });
     }
     if (priceText) out[sym] = priceText;
+    // Change% (autoritativo via col-id; vem com seta/cor, mas só o número importa)
+    if (changeColId) {
+      const cc = row.querySelector('[col-id="'+changeColId+'"]');
+      if (cc) {
+        const ct = (cc.textContent||'').trim();
+        if (ct) chg[sym] = ct;
+      }
+    }
   });
-  return {prices: out, rowCount: rows.length};
+  return {prices: out, changes: chg, rowCount: rows.length};
 }
 """
 
@@ -287,11 +301,13 @@ def _scrape() -> list[RawArticle]:
 
                 # Tenta ler do DOM até 3x (a grid pode demorar a popular)
                 dom_prices = {}
+                dom_changes = {}
                 row_count = 0
                 for attempt in range(3):
                     try:
                         res = page.evaluate(_DOM_PRICE_JS)
                         dom_prices = res.get("prices", {}) if isinstance(res, dict) else {}
+                        dom_changes = res.get("changes", {}) if isinstance(res, dict) else {}
                         row_count = res.get("rowCount", 0) if isinstance(res, dict) else 0
                         if dom_prices:
                             break
@@ -303,12 +319,17 @@ def _scrape() -> list[RawArticle]:
                 log.info("platts_scraper: DOM grid rows=%d, símbolos lidos=%s",
                          row_count, list(dom_prices.keys()))
 
-                # Parseia e mescla no price_buf (DOM tem prioridade sobre rede)
+                # Parseia e mescla no price_buf (DOM tem prioridade sobre rede).
+                # Captura preço + change% (variação percentual diária do assessment).
                 for sym, raw in dom_prices.items():
                     val = _parse_price(raw)
                     if val is not None:
-                        price_buf[sym] = {"price": val}
-                        log.info("platts_scraper: %s = %s (DOM)", sym, val)
+                        entry = {"price": val}
+                        chg = _parse_price(dom_changes.get(sym, ""))
+                        if chg is not None:
+                            entry["change_pct"] = chg
+                        price_buf[sym] = entry
+                        log.info("platts_scraper: %s = %s (DOM, chg=%s)", sym, val, entry.get("change_pct"))
 
                 log.info("platts_scraper: preços finais capturados: %s", list(price_buf.keys()))
             except Exception as e:
