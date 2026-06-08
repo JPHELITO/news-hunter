@@ -115,6 +115,7 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(crc|cold.?rolled.?coil|bobina.?a.?frio|cold.?roll)\b",         "crc"),
     (r"\b(rebar|vergalhao|barra.?de.?aco|deformed.?bar)\b",              "rebar"),
     (r"\b(wire.?rod|fio.?maquina)\b",                                     "wire_rod"),
+    (r"\b(long.?products|longs.?market)\b",                               "structural"),
     (r"\b(billet|tarugo|bloom)\b",                                        "billet"),
     (r"\b(slab|placa.?de.?aco|steel.?slab)\b",                           "slab"),
     (r"\b(plate|chapa.?grossa|heavy.?plate|plates)\b",                   "plate"),
@@ -130,10 +131,10 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(scrap|sucata|ferrous.?scrap|steel.?scrap|sucata.?ferrosa)\b",  "scrap"),
     (r"\b(dri|direct.?reduced.?iron|hbi)\b",                             "dri"),
     # Pulp & Paper
-    (r"\b(pulp|celulose|bhkp|nbsk|bekp|bskp|bctmp|kraft.?pulp|hardwood.?pulp|softwood.?pulp|dissolving.?pulp|fluff.?pulp)\b", "pulp"),
+    (r"\b(pulp|celulose|bhkp|nbsk|bekp|bek|bskp|bctmp|woodpulp|pulpwood|kraft.?pulp|hardwood.?pulp|softwood.?pulp|dissolving.?pulp|fluff.?pulp)\b", "pulp"),
     (r"\b(paper|papel)(?!.?(board|ondulado|embalagem|kraft|tissue))\b",  "paper"),
-    (r"\b(tissue|papel.?tissue|papel.?higienico)\b",                     "tissue"),
-    (r"\b(containerboard|papelao.?ondulado|corrugated|caixas.?onduladas)\b", "containerboard"),
+    (r"\b(tissue|papel.?tissue|papel.?higienico|jumbo.?roll)\b",          "tissue"),
+    (r"\b(containerboard|papelao.?ondulado|corrugated|caixas.?onduladas|kraftliner|linerboard|white.?top|white.?board|testliner)\b", "containerboard"),
     (r"\b(occ|old.?corrugated.?container|aparas)\b",                     "occ"),
     (r"\b(newsprint)\b",                                                  "newsprint"),
     # Metals
