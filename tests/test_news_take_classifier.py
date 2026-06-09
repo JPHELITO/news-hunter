@@ -555,6 +555,16 @@ class TestGabaritoLearnings:
         assert "inventories" in r["normalized_topics"]
         assert r["take"] == "+"
 
+    # ── Política/indústria siderúrgica (sem produto) entra como neutra ────────
+    def test_steel_industry_policy_included(self):
+        r = classify_take("South Korea approves law to boost, decarbonize steel industry", {})
+        assert r["include_in_report"] is True
+        assert r["sector"] == "steel_mining"
+
+    def test_steel_sector_origin_rules_included(self):
+        r = classify_take("European steel industry demands stricter origin rules in EU act", {})
+        assert r["include_in_report"] is True
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Aliases ambíguos — falsos positivos ('vale' = verbo PT, etc.)

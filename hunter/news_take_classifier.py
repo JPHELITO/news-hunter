@@ -155,6 +155,9 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(prices?|preco|precos|premium|premiums|index|indices)\b",        "prices"),
     (r"\b(utilization|utilizacao|capability.?utilization|capacity.?utilization|aisi)\b", "utilization"),
     (r"\b(tariff|tarifa|anti.?dumping|safeguard|section.?232)\b",        "tariffs"),
+    # "steel" sozinho não é tópico; indústria/setor/usina/política siderúrgica
+    # (sem produto específico) entra como notícia de steel com take neutro.
+    (r"\b(steel.?industry|steel.?sector|steel.?mill|steelmaker|steel.?maker|steelmaking|siderurgi\w*)\b", "steel_industry"),
     (r"\b(blast.?furnace|alto.?forno|eaf|electric.?arc.?furnace|bof|basic.?oxygen)\b", "furnace"),
     (r"\b(mill.?closure|plant.?closure|fechamento.?de.?planta|parada.?de.?planta)\b", "closure"),
 ]
@@ -612,7 +615,8 @@ _STEEL_TOPICS = frozenset([
     "hrc", "crc", "rebar", "wire_rod", "billet", "slab", "plate",
     "flat_steel", "structural", "pig_iron", "iron_ore", "pellets",
     "sinter", "met_coal", "scrap", "dri", "furnace", "utilization",
-    "tariffs",   # comércio/antidumping/section 232 é tema central de steel
+    "tariffs",          # comércio/antidumping/section 232 é tema central de steel
+    "steel_industry",   # indústria/setor/usina/política siderúrgica (sem produto)
 ])
 _MINING_TOPICS = frozenset([
     "iron_ore", "pellets", "copper", "gold", "silver", "nickel", "aluminum",
