@@ -344,19 +344,29 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
         return 0
 
     data = fetch_yahoo([qsym for _, qsym in stale], range_="1y", interval="1d")
-    rows = []
+    # PATCH (não upsert): a linha do ticker já existe (update_quotes roda antes). Upsert
+    # parcial tentaria INSERT com name/price nulos (NOT NULL) → 23502. PATCH só altera daily.
+    h = {"apikey": key, "Authorization": f"Bearer {key}",
+         "Content-Type": "application/json", "Prefer": "return=minimal"}
+    n = 0
     for ticker, qsym in stale:
         d = data.get(qsym)
         if not d or not d.get("series"):
             continue
-        rows.append({
-            "ticker":           ticker,
-            "daily":            d["series"],
-            "daily_updated_at": _now_iso(),
-        })
-    if rows:
-        log.info("quote_history: %d séries diárias atualizadas", len(rows))
-    return _supa_upsert("quotes", rows)
+        try:
+            r = requests.patch(
+                f"{url}/rest/v1/quotes?ticker=eq.{ticker}",
+                json={"daily": d["series"], "daily_updated_at": _now_iso()},
+                headers=h, timeout=15)
+            if r.ok:
+                n += 1
+            else:
+                log.warning("quote_history PATCH %s erro %s: %s", ticker, r.status_code, r.text[:150])
+        except Exception as e:
+            log.warning("quote_history PATCH %s exceção: %s", ticker, e)
+    if n:
+        log.info("quote_history: %d séries diárias atualizadas", n)
+    return n
 
 
 def update_commodities() -> int:
