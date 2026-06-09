@@ -11,12 +11,19 @@ import html
 import json
 import logging
 import re
-import threading
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-from .cookies import get_cookies_dir
 from .fetcher import RawArticle
+from .playwright_session import (
+    is_login_page,
+    launch_browser,
+    load_credentials,
+    navigate_with_login,
+    new_context,
+    run_in_thread,
+    state_path,
+)
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +42,7 @@ _platts_prices: dict[str, dict] = {}
 _WANTED_TYPES = {"News", "Top News", "Flash", "Market Commentary",
                  "Blog", "Headline Analysis"}
 
-_TIMEOUT = 120  # segundos máximos no thread
+_TIMEOUT = 180  # segundos máximos no thread (login a frio adiciona gotos + waits)
 
 
 def _html_to_text(h: str) -> str:
@@ -169,13 +176,174 @@ def _extract_prices(data, out: dict) -> None:
             _extract_prices(item, out)
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# Auto-login (Okta, core.spglobal.com) — 2 passos: identifier → Next → senha → submit
+# ───────────────────────────────────────────────────────────────────────────
+_LOGIN_URL = "https://core.spglobal.com/login"
+_LOGIN_HOSTS = ("core.spglobal.com/login", "okta")
+_MAX_LOGIN_ATTEMPTS = 2
+
+# Seletores multi-candidato: só o passo 1 do Okta foi reconhecido no DOM real;
+# os do passo 2 (senha) usam fallbacks padrão do widget Okta.
+_ID_SELECTORS = (
+    "input[name='identifier']",
+    "input[autocomplete='username']",
+    "input[type='email']",
+    "input[name='username']",
+)
+_NEXT_SELECTORS = (
+    "input[type='submit'][value='Next']",
+    "button:has-text('Next')",
+    "input[type='submit']",
+    "button[type='submit']",
+)
+_PW_SELECTORS = (
+    "input[name='credentials.passcode']",
+    "input[type='password']",
+    "input[autocomplete='current-password']",
+    "input[name='password']",
+)
+_SUBMIT_SELECTORS = (
+    "input[type='submit'][value='Verify']",
+    "button:has-text('Verify')",
+    "button:has-text('Sign in')",
+    "input[type='submit']",
+    "button[type='submit']",
+)
+
+# Okta IDX "Verify it's you with a security method" — link que seleciona o autenticador
+# Password (quando a conta também tem Email OTP disponível como método alternativo).
+_AUTH_PASSWORD_SELECTORS = (
+    "a[aria-label^='Select Password']",
+    "[data-se='okta_password'] a[data-se='button']",
+    "[data-se='okta_password'] a",
+)
+
+
+def _fill_first(page, selectors, value, timeout=10_000) -> bool:
+    """Preenche o primeiro seletor visível encontrado. True se preencheu."""
+    for sel in selectors:
+        try:
+            page.wait_for_selector(sel, timeout=timeout, state="visible")
+            page.fill(sel, value)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _click_first(page, selectors, timeout=8_000) -> bool:
+    """Clica no primeiro seletor visível encontrado. True se clicou."""
+    for sel in selectors:
+        try:
+            el = page.wait_for_selector(sel, timeout=timeout, state="visible")
+            if el:
+                el.click()
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _query_any(page, selectors):
+    """Primeiro elemento que casar com algum seletor (ou None). Perfura shadow DOM
+    (page.query_selector perfura shadow roots abertos; o widget Okta usa shadow DOM)."""
+    for sel in selectors:
+        try:
+            el = page.query_selector(sel)
+            if el:
+                return el
+        except Exception:
+            continue
+    return None
+
+
+def _check_remember_me(page) -> None:
+    """Marca 'rememberMe' se presente (best-effort; pode estar no passo 1 ou 2)."""
+    try:
+        rm = page.query_selector("input[name='rememberMe']")
+        if rm and not rm.is_checked():
+            rm.check()
+    except Exception:
+        pass
+
+
+def _platts_login(page, ctx) -> bool:
+    """Login no Okta da Platts com credenciais (platts_credentials.json).
+
+    Fluxo de 2 passos: identifier → (Next, se a senha ainda não apareceu) → senha → submit.
+    NUNCA loga a senha. Retorna True se saiu da tela de login.
+    """
+    creds = load_credentials("platts")
+    if not creds:
+        log.warning("platts_scraper: sem credenciais para auto-login")
+        return False
+    log.info("platts_scraper: auto-login para %s...", creds["email"])  # só email, nunca a senha
+    try:
+        if not is_login_page(page, _LOGIN_HOSTS):
+            page.goto(_LOGIN_URL, wait_until="domcontentloaded", timeout=20_000)
+        page.wait_for_timeout(2_000)
+
+        if not _fill_first(page, _ID_SELECTORS, creds["email"]):
+            log.warning("platts_scraper: campo identifier não encontrado")
+            return False
+        _check_remember_me(page)
+
+        # Passo identifier → próximo. Só clica "Next" se a senha ainda não apareceu.
+        if not _query_any(page, _PW_SELECTORS):
+            _click_first(page, _NEXT_SELECTORS)
+
+        # Okta IDX pode inserir um seletor de autenticador (Email OTP vs Password) entre o
+        # email e a senha. Aguarda até ~12s por: o campo de senha (foi direto) OU o link
+        # "Select Password" do chooser; se for o chooser, seleciona o autenticador Password.
+        chooser = None
+        for _ in range(12):
+            if _query_any(page, _PW_SELECTORS):
+                break
+            chooser = _query_any(page, _AUTH_PASSWORD_SELECTORS)
+            if chooser:
+                break
+            page.wait_for_timeout(1_000)
+        if chooser:
+            log.info("platts_scraper: chooser Okta — selecionando autenticador Password")
+            chooser.click()
+            page.wait_for_timeout(2_000)
+
+        if not _fill_first(page, _PW_SELECTORS, creds["password"]):
+            log.warning("platts_scraper: campo de senha não encontrado (passo da senha)")
+            return False
+        _check_remember_me(page)
+        _click_first(page, _SUBMIT_SELECTORS)
+
+        # Aguarda voltar ao app autenticado (core.spglobal.com sem /login).
+        try:
+            page.wait_for_url(
+                lambda u: "core.spglobal.com" in u and "/login" not in u,
+                timeout=30_000,
+            )
+        except Exception:
+            page.wait_for_timeout(5_000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=15_000)
+        except Exception:
+            page.wait_for_timeout(5_000)
+
+        ok = not is_login_page(page, _LOGIN_HOSTS)
+        log.info("platts_scraper: auto-login %s", "OK" if ok else "FALHOU")
+        return ok
+    except Exception as e:
+        log.warning("platts_scraper: auto-login erro: %s", e)  # nunca loga credenciais
+        return False
+
+
 def _scrape() -> list[RawArticle]:
     """Executa em thread. Intercepta headlines + preços IODEX do workspace."""
     from playwright.sync_api import sync_playwright
 
-    state_file = get_cookies_dir() / "platts_state.json"
-    if not state_file.exists():
-        log.warning("platts_scraper: state file não encontrado em %s", state_file)
+    sp = state_path("platts")
+    creds = load_credentials("platts")
+    if not sp.exists() and not creds:
+        log.warning("platts_scraper: sem state file nem credenciais em %s", sp)
         return []
 
     results: list[RawArticle] = []
@@ -239,41 +407,25 @@ def _scrape() -> list[RawArticle]:
             pass
 
     with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
-                channel="chrome",
-            )
-        except Exception:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-
-        ctx = browser.new_context(
-            storage_state=str(state_file),
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1440, "height": 900},
-            locale="en-US",
-        )
-        ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-        ctx.on("response", on_response)
+        browser = launch_browser(p)
+        ctx = new_context(browser, "platts", on_response=on_response, use_state=sp.exists())
         page = ctx.new_page()
 
         try:
             log.info("platts_scraper: carregando core.spglobal.com...")
-            page.goto("https://core.spglobal.com/", wait_until="domcontentloaded", timeout=40_000)
-            page.wait_for_timeout(6_000)
-
-            # Verifica sessão expirada
-            if any(x in page.url.lower() for x in ("login", "signin", "auth")):
-                log.warning("platts_scraper: sessão expirada — renovar platts_state.json")
+            # Navega; se a sessão expirou (redirect Okta), faz auto-login e re-salva o state.
+            ok = navigate_with_login(
+                page, ctx, "platts",
+                target_url="https://core.spglobal.com/",
+                login_fn=_platts_login,
+                login_hosts=_LOGIN_HOSTS,
+                max_attempts=_MAX_LOGIN_ATTEMPTS,
+                post_nav=None,
+                goto_timeout=40_000,
+                pre_check_wait_ms=6_000,  # SPA redireciona p/ /login via JS após ~alguns s
+            )
+            if not ok:
+                log.warning("platts_scraper: sem sessão válida (auto-login falhou/sem credenciais)")
                 return []
 
             # allInsights — News, Flash, Rationale, etc.
@@ -353,25 +505,7 @@ def _scrape() -> list[RawArticle]:
 
 def collect_platts_headlines() -> list[RawArticle]:
     """Ponto de entrada — executa em thread com timeout."""
-    out: list[RawArticle] = []
-    err: list[Exception] = []
-
-    def run():
-        try:
-            out.extend(_scrape())
-        except Exception as e:
-            err.append(e)
-
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
-    t.join(timeout=_TIMEOUT)
-    if t.is_alive():
-        log.warning("platts_scraper: timeout após %ds", _TIMEOUT)
-        return []
-    if err:
-        log.warning("platts_scraper: erro: %s", err[0])
-        return []
-    return out
+    return run_in_thread(_scrape, _TIMEOUT, "platts")
 
 
 def get_platts_prices() -> dict[str, dict]:

@@ -30,6 +30,7 @@ jobs:
       - name: Write session files from secrets
         env:
           PLATTS_STATE_JSON:       ${{ secrets.PLATTS_STATE_JSON }}
+          PLATTS_CREDENTIALS:      ${{ secrets.PLATTS_CREDENTIALS }}
           FASTMARKETS_STATE_JSON:  ${{ secrets.FASTMARKETS_STATE_JSON }}
           FASTMARKETS_CREDENTIALS: ${{ secrets.FASTMARKETS_CREDENTIALS }}
         run: |
@@ -39,6 +40,8 @@ jobs:
             echo "$PLATTS_STATE_JSON" | base64 -d | gunzip > /tmp/cookies/platts_state.json \
               || echo "$PLATTS_STATE_JSON" > /tmp/cookies/platts_state.json
           fi
+          # PLATTS credentials: JSON direto {email,password} para auto-login (recupera sessão expirada)
+          [ -n "$PLATTS_CREDENTIALS" ] && echo "$PLATTS_CREDENTIALS" > /tmp/cookies/platts_credentials.json
           # FASTMARKETS: JSON direto (arquivo pequeno)
           [ -n "$FASTMARKETS_STATE_JSON" ]  && echo "$FASTMARKETS_STATE_JSON"  > /tmp/cookies/fastmarkets_state.json
           [ -n "$FASTMARKETS_CREDENTIALS" ] && echo "$FASTMARKETS_CREDENTIALS" > /tmp/cookies/fastmarkets_credentials.json
