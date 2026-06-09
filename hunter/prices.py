@@ -139,17 +139,22 @@ def fetch_brapi(tickers: Iterable[str]) -> dict[str, dict]:
     return out
 
 
-def _fetch_yahoo_chart(symbol: str) -> dict | None:
+def _fetch_yahoo_chart(symbol: str, range_: str | None = None,
+                       interval: str | None = None) -> dict | None:
     """Yahoo v8 chart endpoint — não exige auth. Retorna price + change.
+
+    Se range_/interval forem passados (ex.: '1d'/'5m', '1y'/'1d'), inclui também a série
+    histórica: 'series' = [[epoch, close], ...] (closes não-nulos) e 'prev' (close anterior).
 
     Resiliente a bloqueio de IP (GitHub Actions): rotaciona hosts query1/query2,
     faz retry com backoff em 429/401/erros de rede.
     """
+    params = f"?range={range_}&interval={interval}" if (range_ and interval) else ""
     last_status = None
     last_err = None
     for attempt in range(_YAHOO_RETRIES):
         host = _YAHOO_HOSTS[attempt % len(_YAHOO_HOSTS)]
-        url = f"{host}/v8/finance/chart/{symbol}"
+        url = f"{host}/v8/finance/chart/{symbol}{params}"
         try:
             r = requests.get(url, headers=HEADERS, timeout=10)
             last_status = r.status_code
@@ -162,7 +167,8 @@ def _fetch_yahoo_chart(symbol: str) -> dict | None:
             results = data.get("chart", {}).get("result") or []
             if not results:
                 return None
-            meta = results[0].get("meta", {})
+            res0 = results[0]
+            meta = res0.get("meta", {})
             price = meta.get("regularMarketPrice")
             prev = meta.get("chartPreviousClose") or meta.get("previousClose")
             if price is None:
@@ -172,11 +178,19 @@ def _fetch_yahoo_chart(symbol: str) -> dict | None:
             if prev not in (None, 0):
                 change_abs = round(price - prev, 4)
                 change_pct = round((price - prev) / abs(prev) * 100, 3)
-            return {
+            out = {
                 "price": price,
                 "change_abs": change_abs,
                 "change_pct": change_pct,
             }
+            if range_ and interval:
+                ts = res0.get("timestamp") or []
+                quote = (res0.get("indicators", {}).get("quote") or [{}])[0]
+                closes = quote.get("close") or []
+                out["series"] = [[int(t), round(float(c), 4)]
+                                 for t, c in zip(ts, closes) if c is not None]
+                out["prev"] = prev
+            return out
         except Exception as e:
             last_err = e
             time.sleep(0.5 * (attempt + 1))
@@ -185,13 +199,15 @@ def _fetch_yahoo_chart(symbol: str) -> dict | None:
     return None
 
 
-def fetch_yahoo(symbols: Iterable[str]) -> dict[str, dict]:
-    """Busca múltiplos símbolos via Yahoo chart endpoint (em paralelo)."""
+def fetch_yahoo(symbols: Iterable[str], range_: str | None = None,
+                interval: str | None = None) -> dict[str, dict]:
+    """Busca múltiplos símbolos via Yahoo chart endpoint (em paralelo).
+    range_/interval opcionais → inclui a série histórica em cada resultado."""
     from concurrent.futures import ThreadPoolExecutor
     symbols = list(symbols)
     out = {}
     with ThreadPoolExecutor(max_workers=8) as ex:
-        results = list(ex.map(_fetch_yahoo_chart, symbols))
+        results = list(ex.map(lambda s: _fetch_yahoo_chart(s, range_, interval), symbols))
     for sym, data in zip(symbols, results):
         if data:
             out[sym] = data
@@ -265,14 +281,19 @@ def _supa_upsert(table: str, rows: list[dict]) -> int:
 # Public update functions
 # ───────────────────────────────────────────────────────────────────────────
 def update_quotes() -> int:
-    """Atualiza cotações das 14 empresas via Yahoo. Retorna número de rows."""
+    """Atualiza cotações das 14 empresas via Yahoo. Retorna número de rows.
+
+    Pede range=1d&interval=5m: a MESMA chamada traz o preço atual (meta) E a série
+    intradiária do dia (sparkline) — zero chamadas extras. change_pct/abs seguem do meta.
+    """
     yahoo_syms = [q[5] for q in QUOTES_LIST]
-    data = fetch_yahoo(yahoo_syms)
+    data = fetch_yahoo(yahoo_syms, range_="1d", interval="5m")
     rows = []
     for ticker, name, sector, exchange, _, qsym in QUOTES_LIST:
         d = data.get(qsym)
         if not d or d.get("price") is None:
             continue
+        intraday = {"prev": d.get("prev"), "pts": d["series"]} if d.get("series") else None
         rows.append({
             "ticker":     ticker,
             "name":       name,
@@ -281,8 +302,60 @@ def update_quotes() -> int:
             "price":      d.get("price"),
             "change_pct": d.get("change_pct"),
             "change_abs": d.get("change_abs"),
+            "intraday":   intraday,
             "updated_at": _now_iso(),
         })
+    return _supa_upsert("quotes", rows)
+
+
+def update_quote_history(max_age_hours: float = 18.0) -> int:
+    """Atualiza a série DIÁRIA (~1 ano) de cada empresa — base p/ WoW/MoM/YoY e o gráfico
+    do modal. Auto-throttled: só rebusca tickers cujo `daily` está ausente ou mais velho que
+    max_age_hours. Na maioria dos ciclos não faz nada; ~1×/dia rebusca os 14. Retorna nº rows.
+    """
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return 0
+    # 1 GET: descobre quais tickers precisam de refresh do diário
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/quotes?select=ticker,daily_updated_at",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+        existing = {row["ticker"]: row.get("daily_updated_at") for row in r.json()} if r.ok else {}
+    except Exception as e:
+        log.warning("quote_history: leitura de estado falhou: %s", e)
+        existing = {}
+
+    now = datetime.now(timezone.utc)
+    stale = []
+    for ticker, name, sector, exchange, _, qsym in QUOTES_LIST:
+        du = existing.get(ticker)
+        old = True
+        if du:
+            try:
+                age_h = (now - datetime.fromisoformat(du.replace("Z", "+00:00"))).total_seconds() / 3600
+                old = age_h > max_age_hours
+            except Exception:
+                old = True
+        if old:
+            stale.append((ticker, qsym))
+    if not stale:
+        return 0
+
+    data = fetch_yahoo([qsym for _, qsym in stale], range_="1y", interval="1d")
+    rows = []
+    for ticker, qsym in stale:
+        d = data.get(qsym)
+        if not d or not d.get("series"):
+            continue
+        rows.append({
+            "ticker":           ticker,
+            "daily":            d["series"],
+            "daily_updated_at": _now_iso(),
+        })
+    if rows:
+        log.info("quote_history: %d séries diárias atualizadas", len(rows))
     return _supa_upsert("quotes", rows)
 
 

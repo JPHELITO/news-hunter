@@ -94,14 +94,16 @@ def main() -> None:
 
     # Atualiza cotações, commodities e indicadores macro
     try:
-        from hunter.prices import update_quotes, update_commodities, update_macro, update_platts_commodities
+        from hunter.prices import (update_quotes, update_commodities, update_macro,
+                                    update_platts_commodities, update_quote_history)
         q = update_quotes()
+        h = update_quote_history()     # série diária ~1a (auto-throttled, ~1x/dia)
         c = update_commodities()       # Copper + Gold (Yahoo)
         m = update_macro()
         # 4 commodities Platts (Iron Ore 61%, HRC China, Rebar Turkey, Met Coal)
         if platts_prices:
             update_platts_commodities(platts_prices)
-        log.info("Preços: quotes=%d, commodities=%d, macro=%d", q, c, m)
+        log.info("Preços: quotes=%d (hist=%d), commodities=%d, macro=%d", q, h, c, m)
     except Exception as e:
         log.warning("Atualização de preços falhou: %s", e)
 
