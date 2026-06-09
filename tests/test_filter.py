@@ -103,3 +103,24 @@ class TestPlattsPassThrough:
     def test_non_platts_still_keyword_filtered(self):
         """A regra pass_through NÃO vaza para outras fontes."""
         assert not _passes("Market overview for the week ahead", "", "Mining.com")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Blocklist de domínios de ruído (notícia geral) — corte na ingestão
+# ─────────────────────────────────────────────────────────────────────────────
+from hunter.fetcher import _is_blocked_domain
+
+
+class TestBlockedDomains:
+    def test_el_financiero_blocked(self):
+        assert _is_blocked_domain("elfinanciero.com.mx")
+        assert _is_blocked_domain("www.elfinanciero.com.mx")
+
+    def test_legit_domains_not_blocked(self):
+        assert not _is_blocked_domain("mining.com")
+        assert not _is_blocked_domain("valor.globo.com")
+        assert not _is_blocked_domain("")
+
+    def test_no_spoofing_bypass(self):
+        """Domínio que só CONTÉM o bloqueado não pode ser confundido."""
+        assert not _is_blocked_domain("elfinanciero.com.mx.evil.com")

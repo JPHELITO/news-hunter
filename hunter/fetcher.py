@@ -152,6 +152,19 @@ def _fetch_one(source: dict) -> list[RawArticle]:
     return articles
 
 
+# Domínios de NOTÍCIA GERAL (política/esporte/economia ampla) que poluem o feed
+# com conteúdo irrelevante a S&M/P&P. Bloqueados na ingestão — independe do
+# caminho (RSS, scraper agregador que segue link externo, etc.). Extensível.
+_BLOCKED_DOMAINS = frozenset({
+    "elfinanciero.com.mx",   # jornal geral mexicano: política/esporte/op-ed
+})
+
+
+def _is_blocked_domain(domain: str) -> bool:
+    d = (domain or "").lower().lstrip(".")
+    return any(d == b or d.endswith("." + b) for b in _BLOCKED_DOMAINS)
+
+
 def fetch_all() -> list[RawArticle]:
     """Busca todos os feeds RSS + scrapers HTML em paralelo."""
     all_articles: list[RawArticle] = []
@@ -190,5 +203,13 @@ def fetch_all() -> list[RawArticle]:
             seen[art.url] = art
 
     deduped = list(seen.values())
+
+    # Blocklist de domínios de ruído (notícia geral) — corta na ingestão.
+    blocked = [a for a in deduped if _is_blocked_domain(a.domain)]
+    if blocked:
+        doms = ", ".join(sorted({a.domain for a in blocked}))
+        log.info("Blocklist: %d artigos descartados (%s)", len(blocked), doms)
+        deduped = [a for a in deduped if not _is_blocked_domain(a.domain)]
+
     log.info("Total após dedup: %d artigos", len(deduped))
     return deduped
