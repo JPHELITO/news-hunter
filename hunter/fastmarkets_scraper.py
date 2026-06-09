@@ -2,7 +2,9 @@
 
 Intercepta POST /search/v3/query no dashboard PP News.
 Retorna apenas título + snippet + link. Sem Fase 2 (sem corpo completo).
-Suporta auto-login com fastmarkets_credentials.json.
+Sessão mantida viva via store remoto (roll-forward, hunter.playwright_session). O login do
+FM exige fluxo OAuth interativo (não automatizável headless) → a partida é manual, uma vez,
+via scripts/capture_fastmarkets_session.py.
 """
 from __future__ import annotations
 
@@ -10,20 +12,37 @@ import html as _html
 import json
 import logging
 import re
-import threading
 from datetime import datetime, timezone
-from pathlib import Path
 
-from .cookies import get_cookies_dir
 from .fetcher import RawArticle
+from .playwright_session import (
+    launch_browser,
+    new_context,
+    pull_session,
+    run_in_thread,
+    save_state,
+    state_path,
+)
 
 log = logging.getLogger(__name__)
 
 _DASHBOARD_URL = "https://dashboard.fastmarkets.com/w/rUks4Ah2y8TjDB8L8RtS9L/pp-news"
-_LOGIN_URL     = "https://auth.fastmarkets.com/"
 _MAX_AGE_HOURS = 72
-_MAX_LOGIN_ATTEMPTS = 2
 _TIMEOUT = 180  # segundos máximos no thread
+
+# Health: True se não conseguiu estabelecer sessão nesta execução (lido por hunt.py).
+_login_failed = False
+
+
+def _set_login_failed(v: bool) -> None:
+    global _login_failed
+    _login_failed = v
+
+
+def get_fastmarkets_health() -> dict:
+    """Saúde da última execução: {'login_failed': bool}. True = sessão não pôde ser
+    estabelecida (expirada + autologin falhou, ou sem credenciais)."""
+    return {"login_failed": _login_failed}
 
 
 def _html_to_text(h: str) -> str:
@@ -43,94 +62,27 @@ def _parse_date(s: str | None) -> datetime | None:
         return None
 
 
-def _load_credentials() -> dict | None:
-    creds_file = get_cookies_dir() / "fastmarkets_credentials.json"
-    if not creds_file.exists():
-        return None
-    try:
-        c = json.loads(creds_file.read_text(encoding="utf-8"))
-        if c.get("email") and c.get("password"):
-            return c
-    except Exception:
-        pass
-    return None
-
-
-def _is_login_page(page) -> bool:
-    url = page.url.lower()
-    if "auth.fastmarkets.com" in url or "/login" in url or "/signin" in url:
-        return True
-    try:
-        title = page.title().lower()
-        if any(x in title for x in ("sign in", "log in", "login")):
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def _do_auto_login(page, ctx) -> bool:
-    creds = _load_credentials()
-    if not creds:
-        log.warning("fastmarkets_scraper: sem credenciais para auto-login")
-        return False
-    log.info("fastmarkets_scraper: auto-login para %s...", creds["email"])
-    try:
-        if not _is_login_page(page):
-            page.goto(_LOGIN_URL, wait_until="domcontentloaded", timeout=20_000)
-            page.wait_for_timeout(2_000)
-        page.wait_for_selector("input[name='username'], input[id='userEmail']", timeout=10_000)
-        page.fill("input[name='username']", creds["email"])
-        page.wait_for_selector("input[name='password'], input[id='password']", timeout=5_000)
-        page.fill("input[name='password']", creds["password"])
-        try:
-            rm = page.query_selector("input[name='rememberMe']")
-            if rm and not rm.is_checked():
-                rm.check()
-        except Exception:
-            pass
-        page.click("button[id='login-button'], button[type='submit']")
-        try:
-            page.wait_for_url("https://dashboard.fastmarkets.com/**", timeout=25_000)
-        except Exception:
-            page.wait_for_timeout(3_000)
-            if _is_login_page(page):
-                log.warning("fastmarkets_scraper: auto-login falhou")
-                return False
-        try:
-            page.wait_for_load_state("networkidle", timeout=15_000)
-        except Exception:
-            page.wait_for_timeout(5_000)
-        if _is_login_page(page):
-            return False
-        # Salva novo state
-        state_file = get_cookies_dir() / "fastmarkets_state.json"
-        new_state = ctx.storage_state()
-        state_file.write_text(json.dumps(new_state), encoding="utf-8")
-        log.info("fastmarkets_scraper: auto-login OK — state salvo")
-        return True
-    except Exception as e:
-        log.warning("fastmarkets_scraper: auto-login erro: %s", e)
-        return False
-
-
 def _scrape() -> list[RawArticle]:
     """Executa em thread. Fase 1 apenas — intercepta API, sem navegar artigos."""
     from playwright.sync_api import sync_playwright
 
-    state_file = get_cookies_dir() / "fastmarkets_state.json"
-    creds = _load_credentials()
-    if not state_file.exists() and not creds:
-        log.warning("fastmarkets_scraper: sem state file nem credenciais")
+    pull_session("fastmarkets")          # puxa a sessão rolada-pra-frente do store remoto
+    state_file = state_path("fastmarkets")
+    if not state_file.exists():
+        log.warning("fastmarkets_scraper: sem sessão — rode scripts/capture_fastmarkets_session.py "
+                    "para dar a partida (login do FM não é automatizável headless)")
+        _set_login_failed(True)
         return []
 
     results_meta: list[dict] = []
     seen_ids: set[str] = set()
+    api_seen = {"v": False}  # True quando a API de notícias responde = sessão autenticada
 
     def on_response(response):
         url = response.url
         if "search/v3/query" not in url or response.request.method != "POST":
             return
+        api_seen["v"] = True  # o dashboard só chama essa API quando logado
         try:
             try:
                 raw = response.text()
@@ -165,60 +117,39 @@ def _scrape() -> list[RawArticle]:
         except Exception as e:
             log.debug("fastmarkets_scraper: parse error: %s", e)
 
+    def _authenticated() -> bool:
+        # FM NÃO redireciona pro login quando a sessão cai — o dashboard fica em branco.
+        # O sinal confiável de "logado" é a API de notícias (search/v3/query) ter respondido.
+        return api_seen["v"] or bool(results_meta)
+
     with sync_playwright() as p:
-        try:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
-                channel="chrome",
-            )
-        except Exception:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-
-        ctx_kwargs: dict = {
-            "user_agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "viewport": {"width": 1440, "height": 900},
-            "locale": "en-US",
-        }
-        if state_file.exists():
-            ctx_kwargs["storage_state"] = str(state_file)
-
-        ctx = browser.new_context(**ctx_kwargs)
-        ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-        ctx.on("response", on_response)
+        browser = launch_browser(p)
+        ctx = new_context(browser, "fastmarkets", on_response=on_response,
+                          use_state=state_file.exists())
         page = ctx.new_page()
 
-        login_attempts = 0
         try:
             log.info("fastmarkets_scraper: carregando dashboard PP News...")
-            while login_attempts <= _MAX_LOGIN_ATTEMPTS:
-                page.goto(_DASHBOARD_URL, wait_until="domcontentloaded", timeout=45_000)
-                if _is_login_page(page):
-                    login_attempts += 1
-                    if login_attempts > _MAX_LOGIN_ATTEMPTS:
-                        log.warning("fastmarkets_scraper: sessão expirada após %d tentativas", _MAX_LOGIN_ATTEMPTS)
-                        return []
-                    if not _do_auto_login(page, ctx):
-                        return []
-                    continue
-                try:
-                    page.wait_for_load_state("networkidle", timeout=30_000)
-                except Exception:
-                    page.wait_for_timeout(15_000)
-                if not _is_login_page(page):
+            page.goto(_DASHBOARD_URL, wait_until="domcontentloaded", timeout=45_000)
+            # Sessão viva = a API de notícias (search/v3/query) responde. Espera até ~25s.
+            for _ in range(25):
+                if _authenticated():
                     break
+                page.wait_for_timeout(1_000)
 
+            ok = _authenticated()
+            _set_login_failed(not ok)
+            if not ok:
+                # Sessão expirou de vez. FM não tem login automático (parede OAuth) → reporta
+                # para o watchdog avisar e o re-seed manual (capture tool) ser feito.
+                log.warning("fastmarkets_scraper: sessão expirada — re-seed necessário via "
+                            "scripts/capture_fastmarkets_session.py (login automático indisponível)")
+                return []
+            # Autenticado: rola a sessão pra frente (salva a versão renovada local + store).
+            save_state(ctx, "fastmarkets")
             log.info("fastmarkets_scraper: %d headlines interceptados", len(results_meta))
         except Exception as e:
-            log.warning("fastmarkets_scraper: erro na navegação: %s", e)
+            log.warning("fastmarkets_scraper: erro na navegacao: %s", e)
         finally:
             page.close()
             browser.close()
@@ -247,22 +178,4 @@ def _scrape() -> list[RawArticle]:
 
 def collect_fastmarkets_headlines() -> list[RawArticle]:
     """Ponto de entrada — executa em thread com timeout."""
-    out: list[RawArticle] = []
-    err: list[Exception] = []
-
-    def run():
-        try:
-            out.extend(_scrape())
-        except Exception as e:
-            err.append(e)
-
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
-    t.join(timeout=_TIMEOUT)
-    if t.is_alive():
-        log.warning("fastmarkets_scraper: timeout após %ds", _TIMEOUT)
-        return []
-    if err:
-        log.warning("fastmarkets_scraper: erro: %s", err[0])
-        return []
-    return out
+    return run_in_thread(_scrape, _TIMEOUT, "fastmarkets")

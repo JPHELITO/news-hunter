@@ -12,7 +12,8 @@ from .config import SUPABASE_TABLE
 log = logging.getLogger(__name__)
 
 BATCH_SIZE = 100  # máximo por request
-RUNS_TABLE  = "hunter_runs"
+RUNS_TABLE   = "hunter_runs"
+HEALTH_TABLE = "source_health"
 
 # Campos do news_take_classifier que existem na tabela news_articles
 # (migration SQL já rodada). O push_articles inclui todos eles no INSERT;
@@ -69,6 +70,72 @@ def record_run(articles_new: int) -> bool:
         return True
     except Exception as e:
         log.warning("hunter_runs: falhou: %s", e)
+        return False
+
+
+def record_source_health(source: str, login_failed: bool, detail: dict | None = None) -> bool:
+    """Upsert do "sinal de vida" de uma fonte Playwright na tabela source_health.
+
+    Chamado a cada run (--playwright) para Platts e Fastmarkets. Permite ao watchdog
+    distinguir "fonte quieta" (sessão viva, sem notícia nova) de "fonte morta".
+
+    - last_attempt = agora (sempre).
+    - last_ok      = agora SÓ se login_failed=False. Quando o login falha, last_ok NÃO é
+      enviado → o valor anterior é preservado (merge-duplicates) e vai ficando "velho",
+      que é exatamente o sinal que o watchdog usa para alertar.
+
+    Idempotente por source (on_conflict=source). Se a tabela ainda não existir, loga um
+    aviso e retorna False sem quebrar o run.
+
+    SQL p/ criar a tabela (rodar UMA vez no Supabase SQL Editor):
+    ──────────────────────────────────────────────────────────────
+    create table if not exists source_health (
+      source        text primary key,
+      last_ok       timestamptz,
+      last_attempt  timestamptz not null default now(),
+      login_failed  boolean     not null default false,
+      detail        jsonb
+    );
+    ──────────────────────────────────────────────────────────────
+    """
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return False
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    row: dict = {"source": source, "last_attempt": now, "login_failed": login_failed}
+    if not login_failed:
+        row["last_ok"] = now
+    if detail is not None:
+        row["detail"] = detail
+    try:
+        r = requests.post(
+            f"{url}/rest/v1/{HEALTH_TABLE}?on_conflict=source",
+            json=[row],
+            headers={
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=minimal",
+            },
+            timeout=10,
+        )
+        if r.ok:
+            log.info("source_health[%s]: login_failed=%s", source, login_failed)
+            return True
+        if r.status_code in (404, 400) and (
+            "source_health" in r.text or "does not exist" in r.text or "relation" in r.text
+        ):
+            log.warning(
+                "source_health: tabela ausente — rode o SQL da docstring de "
+                "record_source_health no Supabase SQL Editor."
+            )
+        else:
+            log.warning("source_health[%s] erro %s: %s", source, r.status_code, r.text[:200])
+        return False
+    except Exception as e:
+        log.warning("source_health[%s] exceção: %s", source, e)
         return False
 
 

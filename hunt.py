@@ -105,6 +105,25 @@ def main() -> None:
     except Exception as e:
         log.warning("Atualização de preços falhou: %s", e)
 
+    # Sinal de vida das fontes Playwright → o watchdog lê isto para alertar (email do
+    # GitHub) se Platts/Fastmarkets ficarem fora do ar por expiração de sessão.
+    if args.playwright:
+        try:
+            from hunter.platts_scraper import get_platts_health
+            from hunter.fastmarkets_scraper import get_fastmarkets_health
+            from hunter.sync import record_source_health
+            healths = {
+                "platts":      get_platts_health(),
+                "fastmarkets": get_fastmarkets_health(),
+            }
+            for src, hh in healths.items():
+                record_source_health(src, login_failed=bool(hh.get("login_failed")))
+            failed = [s for s, hh in healths.items() if hh.get("login_failed")]
+            if failed:
+                log.warning("SESSAO FORA DO AR (login falhou): %s", ", ".join(failed))
+        except Exception as e:
+            log.warning("source_health: falha ao registrar: %s", e)
+
     log.info("=== News Hunter done ===")
 
 

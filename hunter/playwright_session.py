@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Callable
@@ -20,6 +21,11 @@ from typing import Callable
 from .cookies import get_cookies_dir
 
 log = logging.getLogger(__name__)
+
+# Store remoto de sessões (Supabase) — "rola a sessão pra frente" (keep-alive): a cada
+# run salvamos a versão renovada e a próxima run parte dela, então a sessão quase nunca
+# chega a expirar. Sobrevive ao /tmp efêmero do CI (ao contrário de um secret estático).
+SESSIONS_TABLE = "source_sessions"
 
 # Constantes copiadas verbatim dos scrapers existentes para manter comportamento idêntico.
 DEFAULT_USER_AGENT = (
@@ -56,13 +62,73 @@ def state_path(provider: str) -> Path:
 
 
 def save_state(ctx, provider: str) -> None:
-    """Re-salva o storage_state (cookies + localStorage) do contexto após login."""
+    """Salva o storage_state (cookies + localStorage) localmente E no store remoto
+    (Supabase), rolando a sessão pra frente. Best-effort: falha no remoto não quebra o run."""
     try:
-        sp = state_path(provider)
-        sp.write_text(json.dumps(ctx.storage_state()), encoding="utf-8")
-        log.info("%s: storage_state salvo em %s", provider, sp)
+        state_json = json.dumps(ctx.storage_state())
     except Exception as e:
-        log.warning("%s: falha ao salvar storage_state: %s", provider, e)
+        log.warning("%s: falha ao serializar storage_state: %s", provider, e)
+        return
+    try:
+        state_path(provider).write_text(state_json, encoding="utf-8")
+    except Exception as e:
+        log.warning("%s: falha ao salvar storage_state local: %s", provider, e)
+    _push_session_to_store(provider, state_json)
+
+
+def pull_session(provider: str) -> bool:
+    """Puxa a sessão rolada-pra-frente do store remoto e grava no arquivo de state local,
+    para o new_context usar a versão mais fresca. Retorna True se puxou algo.
+
+    Best-effort: sem store/sem linha → False (cai no fallback do arquivo local/secret).
+    """
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return False
+    try:
+        import requests
+        r = requests.get(
+            f"{url}/rest/v1/{SESSIONS_TABLE}?source=eq.{provider}&select=state",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15,
+        )
+        if r.ok and r.json():
+            state = r.json()[0].get("state")
+            if state:
+                state_path(provider).write_text(state, encoding="utf-8")
+                log.info("%s: sessão carregada do store (roll-forward)", provider)
+                return True
+        elif r.status_code in (404, 400):
+            log.warning("%s: store de sessões ausente (tabela source_sessions?)", provider)
+    except Exception as e:
+        log.warning("%s: falha ao puxar sessão do store: %s", provider, e)
+    return False
+
+
+def _push_session_to_store(provider: str, state_json: str) -> None:
+    """Upsert da sessão atual no store remoto (Supabase source_sessions). Best-effort."""
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return
+    try:
+        import requests
+        r = requests.post(
+            f"{url}/rest/v1/{SESSIONS_TABLE}?on_conflict=source",
+            json=[{"source": provider, "state": state_json}],
+            headers={"apikey": key, "Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json",
+                     "Prefer": "resolution=merge-duplicates,return=minimal"},
+            timeout=15,
+        )
+        if r.ok:
+            log.info("%s: sessão salva no store (roll-forward, %d bytes)", provider, len(state_json))
+        elif r.status_code in (404, 400):
+            log.warning("%s: store de sessões ausente — rode o SQL de source_sessions", provider)
+        else:
+            log.warning("%s: store push erro %s: %s", provider, r.status_code, r.text[:150])
+    except Exception as e:
+        log.warning("%s: falha ao salvar sessão no store: %s", provider, e)
 
 
 # ───────────────────────────────────────────────────────────────────────────

@@ -21,7 +21,9 @@ from .playwright_session import (
     load_credentials,
     navigate_with_login,
     new_context,
+    pull_session,
     run_in_thread,
+    save_state,
     state_path,
 )
 
@@ -35,6 +37,21 @@ _PRICE_SYMBOLS = {"IODBZ00", "STHRZ02", "STCBM00", "PLVHA00"}
 # Cache de preços preenchido pelo _scrape() como efeito colateral.
 # Lido pelo thread principal após join via get_platts_prices().
 _platts_prices: dict[str, dict] = {}
+
+# Health: True se não conseguiu estabelecer sessão nesta execução (lido por hunt.py
+# após o run, para o "sinal de vida" / watchdog). Processo CI roda 1x → começa False.
+_login_failed = False
+
+
+def _set_login_failed(v: bool) -> None:
+    global _login_failed
+    _login_failed = v
+
+
+def get_platts_health() -> dict:
+    """Saúde da última execução: {'login_failed': bool}. True = sessão não pôde ser
+    estabelecida (expirada + autologin falhou, ou sem credenciais)."""
+    return {"login_failed": _login_failed}
 
 # "Rationale" foi REMOVIDO deliberadamente: por regra de negócio (ver imagem de
 # regras Platts — "NÃO usar notícias Rationale"), esse tipo de conteúdo não entra
@@ -340,10 +357,12 @@ def _scrape() -> list[RawArticle]:
     """Executa em thread. Intercepta headlines + preços IODEX do workspace."""
     from playwright.sync_api import sync_playwright
 
+    pull_session("platts")               # puxa a sessão rolada-pra-frente do store remoto
     sp = state_path("platts")
     creds = load_credentials("platts")
     if not sp.exists() and not creds:
         log.warning("platts_scraper: sem state file nem credenciais em %s", sp)
+        _set_login_failed(True)
         return []
 
     results: list[RawArticle] = []
@@ -424,9 +443,12 @@ def _scrape() -> list[RawArticle]:
                 goto_timeout=40_000,
                 pre_check_wait_ms=6_000,  # SPA redireciona p/ /login via JS após ~alguns s
             )
+            _set_login_failed(not ok)
             if not ok:
                 log.warning("platts_scraper: sem sessão válida (auto-login falhou/sem credenciais)")
                 return []
+            # Autenticado: rola a sessão pra frente (salva versão renovada local + store).
+            save_state(ctx, "platts")
 
             # allInsights — News, Flash, Rationale, etc.
             page.evaluate("window.location.hash = '#platts/allInsights'")

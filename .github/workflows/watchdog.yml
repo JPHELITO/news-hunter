@@ -1,0 +1,41 @@
+name: Watchdog — alerta de fonte fora do ar
+# Checa de hora em hora se Platts/Fastmarkets pararam de renovar a sessão.
+# Lê source_health no Supabase (somente leitura). Se alguma fonte estiver fora do ar,
+# o job FALHA de propósito → o GitHub envia email automático ao dono do repo.
+#
+# Pré-requisito: a tabela source_health precisa existir no Supabase (SQL na docstring
+# de hunter/sync.py:record_source_health). Ela é preenchida pelo hunt-playwright.
+
+on:
+  schedule:
+    - cron: "23 * * * *"     # toda hora (offset :23 p/ evitar congestão de :00)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Verifica saúde das fontes (falha = email do GitHub)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python scripts/watchdog.py
