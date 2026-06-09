@@ -58,11 +58,13 @@ jobs:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           PYTHONIOENCODING:     utf-8
+          GH_TOKEN:             ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e   # não aborta o loop se uma iteração falhar
           deadline=$(( $(date +%s) + 19800 ))   # 5h30min em segundos
           i=0
           last_sha=""
+          last_pw=0   # epoch do último disparo do hunt-playwright (0 = dispara já na 1ª iteração)
           while [ "$(date +%s)" -lt "$deadline" ]; do
             i=$((i + 1))
             echo "============================================================"
@@ -80,6 +82,19 @@ jobs:
                 pip install -r requirements.txt --quiet
               fi
               last_sha="$new_sha"
+            fi
+
+            # Dispara o hunt-playwright a cada ~29 min. O cron */30 do GitHub atrasa HORAS
+            # (medido: runs agendados a cada 8–13h). Como este loop roda confiável a cada
+            # 5 min, ele é o gatilho estável p/ as commodities Platts renovarem de verdade.
+            nowt=$(date +%s)
+            if [ $(( nowt - last_pw )) -ge 1740 ]; then
+              if gh workflow run hunt-playwright.yml --ref master; then
+                echo "▶ hunt-playwright disparado"
+                last_pw=$nowt
+              else
+                echo "⚠ falha ao disparar hunt-playwright"
+              fi
             fi
 
             start=$(date +%s)
