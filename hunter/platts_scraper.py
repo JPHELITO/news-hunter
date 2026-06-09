@@ -476,6 +476,16 @@ def _scrape() -> list[RawArticle]:
                 )
                 page.wait_for_timeout(12_000)  # tempo para a grid renderizar + dados chegarem
 
+                # A aba "Dashboard" do workspace é a que tem os 4 símbolos (inclui Met Coal/
+                # PLVHA00). A aba padrão (Watchlist1) tem ~13 linhas e NÃO traz o PLVHA00 →
+                # clicar na Dashboard garante a grid certa (span.tab-label, role=button).
+                try:
+                    page.click("span.tab-label:text-is('Dashboard')", timeout=6_000)
+                    page.wait_for_timeout(5_000)
+                    log.info("platts_scraper: aba Dashboard do workspace selecionada")
+                except Exception as e:
+                    log.debug("platts_scraper: aba Dashboard não clicada: %s", e)
+
                 # Tenta ler do DOM até 3x (a grid pode demorar a popular)
                 dom_prices = {}
                 dom_changes = {}
