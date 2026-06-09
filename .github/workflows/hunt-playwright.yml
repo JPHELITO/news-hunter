@@ -1,22 +1,39 @@
-name: News Hunter — Playwright (Platts + Fastmarkets, 30 min)
-# Roda a cada 30 min com Playwright para buscar headlines de Platts e Fastmarkets.
-# Usa container com Chromium pré-instalado — sem step de install.
+name: News Hunter — Playwright (Platts + Fastmarkets, loop 30 min)
+# Loop auto-reiniciante: roda `python hunt.py --playwright` a cada ~30 min por ~5h30 e,
+# antes de terminar, dispara a si mesmo (self-restart) — corrente contínua sem gaps.
+#
+# Por quê: o cron `schedule` do GitHub atrasa scheduled workflows por HORAS (medido: runs
+# agendados a cada 8–13h em vez de 30 min). Este loop garante a cadência real de ~30 min
+# das commodities Platts, sem depender do agendador do GitHub. Mesmo padrão do hunt-loop.
+#
+# Backups: cron horário (ressuscita em <=1h se a corrente cair) + workflow_dispatch manual.
+# Custo: repo público tem minutos ilimitados no GitHub Actions.
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "17 * * * *"     # rede de segurança: a cada 1h ressuscita se a corrente cair
   workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write             # necessário p/ o self-restart (dispatch via API)
+
+concurrency:
+  group: news-hunter-playwright
+  cancel-in-progress: false  # nunca cancela um loop em andamento
 
 jobs:
   hunt:
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright/python:v1.52.0-jammy
-    timeout-minutes: 20
+    timeout-minutes: 355     # ~5h55min — margem antes do limite de 6h
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: master
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -40,19 +57,45 @@ jobs:
             echo "$PLATTS_STATE_JSON" | base64 -d | gunzip > /tmp/cookies/platts_state.json \
               || echo "$PLATTS_STATE_JSON" > /tmp/cookies/platts_state.json
           fi
-          # PLATTS credentials: JSON direto {email,password} para auto-login (recupera sessão expirada)
+          # PLATTS credentials: JSON direto {email,password} para auto-login
           [ -n "$PLATTS_CREDENTIALS" ] && echo "$PLATTS_CREDENTIALS" > /tmp/cookies/platts_credentials.json
           # FASTMARKETS: JSON direto (arquivo pequeno)
           [ -n "$FASTMARKETS_STATE_JSON" ]  && echo "$FASTMARKETS_STATE_JSON"  > /tmp/cookies/fastmarkets_state.json
           [ -n "$FASTMARKETS_CREDENTIALS" ] && echo "$FASTMARKETS_CREDENTIALS" > /tmp/cookies/fastmarkets_credentials.json
 
-      - name: Run hunter with Playwright
+      - name: Loop --playwright a cada ~30 min por ~5h30 (auto-reiniciante)
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           COOKIES_DIR:          /tmp/cookies
-        run: python hunt.py --playwright
+          PYTHONIOENCODING:     utf-8
+        run: |
+          set +e   # não aborta o loop se uma iteração falhar
+          deadline=$(( $(date +%s) + 19800 ))   # 5h30min em segundos
+          i=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            i=$((i + 1))
+            echo "============================================================"
+            echo "▶ Playwright iteração $i — $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            echo "============================================================"
+            start=$(date +%s)
+            python hunt.py --playwright || echo "⚠ hunt --playwright falhou na iter $i — continuando"
+            elapsed=$(( $(date +%s) - start ))
+            sleep_for=$(( 1800 - elapsed ))   # alvo: 30 min entre inícios
+            if [ "$sleep_for" -lt 60 ]; then sleep_for=60; fi
+            echo "✓ Iteração $i em ${elapsed}s — dormindo ${sleep_for}s"
+            sleep "$sleep_for"
+          done
+          echo "Janela do loop atingida — preparando self-restart"
 
-concurrency:
-  group: news-hunter-playwright
-  cancel-in-progress: true
+      - name: Self-restart (dispara o próximo loop)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/hunt-playwright.yml/dispatches" \
+            -d '{"ref":"master"}' \
+            && echo "✓ próximo run agendado" || echo "⚠ self-restart falhou (cron horário ressuscita)"
