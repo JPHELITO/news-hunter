@@ -343,20 +343,26 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
     if not stale:
         return 0
 
-    data = fetch_yahoo([qsym for _, qsym in stale], range_="1y", interval="1d")
+    syms = [qsym for _, qsym in stale]
+    daily_data = fetch_yahoo(syms, range_="1y",  interval="1d")   # granular (último ano)
+    hist_data  = fetch_yahoo(syms, range_="max", interval="1d")   # mensal (histórico completo)
     # PATCH (não upsert): a linha do ticker já existe (update_quotes roda antes). Upsert
     # parcial tentaria INSERT com name/price nulos (NOT NULL) → 23502. PATCH só altera daily.
     h = {"apikey": key, "Authorization": f"Bearer {key}",
          "Content-Type": "application/json", "Prefer": "return=minimal"}
     n = 0
     for ticker, qsym in stale:
-        d = data.get(qsym)
-        if not d or not d.get("series"):
+        d1 = (daily_data.get(qsym) or {}).get("series") or []     # ~1 ano diário
+        dm = (hist_data.get(qsym) or {}).get("series") or []      # histórico mensal (range=max)
+        if not d1 and not dm:
             continue
+        # Série única: mensal antigo (< início do diário) + diário do último ano.
+        # Cobre WoW/MoM/YoY/YTD (cauda diária) e Max (série inteira) com 1 só campo.
+        merged = ([p for p in dm if p[0] < d1[0][0]] + d1) if d1 else dm
         try:
             r = requests.patch(
                 f"{url}/rest/v1/quotes?ticker=eq.{ticker}",
-                json={"daily": d["series"], "daily_updated_at": _now_iso()},
+                json={"daily": merged, "daily_updated_at": _now_iso()},
                 headers=h, timeout=15)
             if r.ok:
                 n += 1
@@ -365,7 +371,7 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
         except Exception as e:
             log.warning("quote_history PATCH %s exceção: %s", ticker, e)
     if n:
-        log.info("quote_history: %d séries diárias atualizadas", n)
+        log.info("quote_history: %d séries (mensal+diário) atualizadas", n)
     return n
 
 
