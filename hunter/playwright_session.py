@@ -35,7 +35,14 @@ DEFAULT_USER_AGENT = (
 DEFAULT_VIEWPORT = {"width": 1440, "height": 900}
 DEFAULT_LOCALE = "en-US"
 _LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled"]
-_WEBDRIVER_INIT = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+# Stealth leve anti-detecção-de-headless. Necessário p/ o SPA do Fastmarkets iniciar o
+# redirect OAuth de login em headless (só com webdriver=undefined às vezes fica em branco).
+_WEBDRIVER_INIT = (
+    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+    "Object.defineProperty(navigator,'languages',{get:()=>['en-US','en']});"
+    "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
+    "window.chrome=window.chrome||{runtime:{}};"
+)
 
 
 # ───────────────────────────────────────────────────────────────────────────

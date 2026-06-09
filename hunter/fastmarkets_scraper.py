@@ -2,9 +2,12 @@
 
 Intercepta POST /search/v3/query no dashboard PP News.
 Retorna apenas título + snippet + link. Sem Fase 2 (sem corpo completo).
-Sessão mantida viva via store remoto (roll-forward, hunter.playwright_session). O login do
-FM exige fluxo OAuth interativo (não automatizável headless) → a partida é manual, uma vez,
-via scripts/capture_fastmarkets_session.py.
+Sessão mantida viva via store remoto (roll-forward, hunter.playwright_session) + AUTO-LOGIN
+de recuperação: se a sessão morrer, navega pro dashboard e deixa o redirect OAuth levar à
+tela de login (auth.fastmarkets.com/?ReturnUrl=/connect/authorize/...), então preenche as
+credenciais. Detalhe-chave: ir na URL PELADA de login NÃO funciona — tem que ser via o
+redirect do dashboard (que preserva o ReturnUrl do OAuth). Fallback manual (raro):
+scripts/capture_fastmarkets_session.py.
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ from datetime import datetime, timezone
 from .fetcher import RawArticle
 from .playwright_session import (
     launch_browser,
+    load_credentials,
     new_context,
     pull_session,
     run_in_thread,
@@ -62,15 +66,66 @@ def _parse_date(s: str | None) -> datetime | None:
         return None
 
 
+_LOGIN_HOST = "auth.fastmarkets.com"
+_USER_SEL = "input[name='username'], input[id='userEmail'], input[type='email']"
+_PASS_SEL = "input[name='password'], input[id='password']"
+_SUBMIT_SEL = "button[id='login-button'], button:has-text('Sign in'), input[type='submit']"
+
+
+def _fm_login(page, creds) -> bool:
+    """Auto-login OAuth do FM. Vai pro dashboard e deixa o redirect levar à tela de login
+    (auth.fastmarkets.com/?ReturnUrl=/connect/authorize/...) — esse ReturnUrl é o que faz a
+    sessão valer pro dashboard (login na URL pelada falha). Preenche e envia. Nunca loga a senha.
+    """
+    log.info("fastmarkets_scraper: auto-login para %s...", creds["email"])
+    try:
+        got_login = False
+        for _ in range(3):
+            page.goto("https://dashboard.fastmarkets.com/", wait_until="load", timeout=45_000)
+            try:
+                page.wait_for_selector(_USER_SEL, timeout=22_000, state="visible")
+                got_login = True
+                break
+            except Exception:
+                continue
+        if not got_login:
+            log.warning("fastmarkets_scraper: tela de login não apareceu (dashboard não redirecionou)")
+            return False
+        page.fill(_USER_SEL, creds["email"])
+        page.fill(_PASS_SEL, creds["password"])
+        try:
+            rm = page.query_selector("input[name='rememberMe']")
+            if rm and not rm.is_checked():
+                rm.check()
+        except Exception:
+            pass
+        page.click(_SUBMIT_SEL)
+        try:
+            page.wait_for_url(
+                lambda u: "dashboard.fastmarkets.com" in u and _LOGIN_HOST not in u, timeout=40_000)
+        except Exception:
+            page.wait_for_timeout(5_000)
+        # Submetido. A confirmação REAL de "logado" é a API do dashboard responder (o loop
+        # externo revisita o dashboard e valida). Login errado cai como não-autenticado lá →
+        # vira login_failed. Por isso retornamos True após submeter (sem julgar pela URL).
+        log.info("fastmarkets_scraper: login submetido (%s)",
+                 "ja no dashboard" if _LOGIN_HOST not in page.url else "aguardando confirmacao")
+        return True
+    except Exception as e:
+        log.warning("fastmarkets_scraper: auto-login erro: %s", e)
+        return False
+
+
 def _scrape() -> list[RawArticle]:
     """Executa em thread. Fase 1 apenas — intercepta API, sem navegar artigos."""
     from playwright.sync_api import sync_playwright
 
     pull_session("fastmarkets")          # puxa a sessão rolada-pra-frente do store remoto
     state_file = state_path("fastmarkets")
-    if not state_file.exists():
-        log.warning("fastmarkets_scraper: sem sessão — rode scripts/capture_fastmarkets_session.py "
-                    "para dar a partida (login do FM não é automatizável headless)")
+    creds = load_credentials("fastmarkets")
+    if not state_file.exists() and not creds:
+        log.warning("fastmarkets_scraper: sem sessão nem credenciais "
+                    "(rode scripts/capture_fastmarkets_session.py ou configure FASTMARKETS_CREDENTIALS)")
         _set_login_failed(True)
         return []
 
@@ -131,19 +186,27 @@ def _scrape() -> list[RawArticle]:
         try:
             log.info("fastmarkets_scraper: carregando dashboard PP News...")
             page.goto(_DASHBOARD_URL, wait_until="domcontentloaded", timeout=45_000)
-            # Sessão viva = a API de notícias (search/v3/query) responde. Espera até ~25s.
-            for _ in range(25):
+            # Sessão viva = a API de notícias (search/v3/query) responde. Espera até ~20s.
+            for _ in range(20):
                 if _authenticated():
                     break
                 page.wait_for_timeout(1_000)
 
+            # Warm-state morto? Tenta o auto-login (redirect OAuth do dashboard) e revisita.
+            if not _authenticated() and creds:
+                if _fm_login(page, creds):
+                    api_seen["v"] = False
+                    page.goto(_DASHBOARD_URL, wait_until="domcontentloaded", timeout=45_000)
+                    for _ in range(20):
+                        if _authenticated():
+                            break
+                        page.wait_for_timeout(1_000)
+
             ok = _authenticated()
             _set_login_failed(not ok)
             if not ok:
-                # Sessão expirou de vez. FM não tem login automático (parede OAuth) → reporta
-                # para o watchdog avisar e o re-seed manual (capture tool) ser feito.
-                log.warning("fastmarkets_scraper: sessão expirada — re-seed necessário via "
-                            "scripts/capture_fastmarkets_session.py (login automático indisponível)")
+                log.warning("fastmarkets_scraper: não autenticou (warm-state morto + auto-login "
+                            "falhou). Se persistir, re-seed via capture_fastmarkets_session.py")
                 return []
             # Autenticado: rola a sessão pra frente (salva a versão renovada local + store).
             save_state(ctx, "fastmarkets")
