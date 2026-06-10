@@ -89,7 +89,10 @@ jobs:
           echo "Janela do loop atingida — preparando self-restart"
 
       - name: Self-restart (dispara o próximo loop)
-        if: always()
+        # !cancelled() (não always()): mantém auto-recuperação em sucesso/falha, mas
+        # RESPEITA cancelamento manual — senão cancelar o run pela UI re-dispara um
+        # substituto na hora (loop "imortal"). Timeout é coberto pelo cron horário.
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

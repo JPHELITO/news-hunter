@@ -17,11 +17,10 @@ name: Hunt Loop — 5min real cadence (self-restarting)
 on:
   workflow_dispatch:
   schedule:
-    # Rede de segurança: a cada 1h um novo run é disparado.
-    # Se já houver um loop em andamento, este novo fica pending e será
-    # descartado quando o atual ainda estiver rodando (concurrency group).
-    # Garante que, em qualquer cenário de falha/cancelamento, o sistema
-    # volte a rodar em <= 1h sem intervenção manual.
+    # Rede de segurança: a cada 30 min o GitHub tenta um novo run. Se já há um loop
+    # em andamento, o novo fica PENDING (concurrency group; cancel-in-progress=false
+    # não cancela o atual) e roda quando o atual terminar — ressuscita o sistema em
+    # <= 30 min em qualquer falha/cancelamento, sem intervenção manual.
     - cron: "*/30 * * * *"
 
 permissions:
@@ -93,6 +92,10 @@ jobs:
           echo "Loop window reached — preparing self-restart"
 
       - name: Self-restart the loop
+        # !cancelled(): sem isto o default é success() → se o step do loop sair ≠0
+        # (ex.: git reset --hard trouxe código quebrado), o restart era pulado e só
+        # o cron */30 ressuscitava. Reinicia em falha, mas respeita cancelamento.
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

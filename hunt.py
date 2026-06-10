@@ -96,16 +96,24 @@ def main() -> None:
     try:
         from hunter.prices import (update_quotes, update_commodities, update_macro,
                                     update_platts_commodities, update_quote_history)
-        q = update_quotes()
-        h = update_quote_history()     # série diária ~1a (auto-throttled, ~1x/dia)
-        c = update_commodities()       # Copper + Gold (Yahoo)
-        m = update_macro()
-        # 4 commodities Platts (Iron Ore 61%, HRC China, Rebar Turkey, Met Coal)
-        if platts_prices:
-            update_platts_commodities(platts_prices)
-        log.info("Preços: quotes=%d (hist=%d), commodities=%d, macro=%d", q, h, c, m)
     except Exception as e:
-        log.warning("Atualização de preços falhou: %s", e)
+        log.warning("Preços: import falhou: %s", e)
+    else:
+        # Cada provedor isolado: uma falha (ex.: Yahoo fora do ar) NÃO derruba os
+        # demais, e o log diz exatamente qual quebrou.
+        def _safe(name, fn, *a):
+            try:
+                return fn(*a)
+            except Exception as e:
+                log.warning("Preços[%s] falhou: %s", name, e)
+                return None
+        q = _safe("quotes", update_quotes)
+        h = _safe("quote_history", update_quote_history)  # série diária (auto-throttle ~1x/dia)
+        c = _safe("commodities", update_commodities)       # Copper + Gold (Yahoo)
+        m = _safe("macro", update_macro)
+        if platts_prices:  # Iron Ore 61%, HRC China, Rebar Turkey, Met Coal
+            _safe("platts_commodities", update_platts_commodities, platts_prices)
+        log.info("Preços: quotes=%s (hist=%s), commodities=%s, macro=%s", q, h, c, m)
 
     # Sinal de vida das fontes Playwright → o watchdog lê isto para alertar (email do
     # GitHub) se Platts/Fastmarkets ficarem fora do ar por expiração de sessão.

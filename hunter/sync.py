@@ -31,8 +31,8 @@ def record_run(articles_new: int) -> bool:
     Chamado SEMPRE, mesmo quando o run não trouxe novidades — é o
     timestamp que o dashboard usa para mostrar "sincronizado há X min".
 
-    Também limpa runs antigos (>24h) para manter a tabela enxuta:
-    288 runs/dia × 5min = ~1.728 linhas máximas.
+    Também limpa runs antigos (>24h) para manter a tabela enxuta: ~288 runs/dia
+    (loop de 5 min) + ~48 (hunt-playwright de 30 min) ≈ 340 linhas no pico de 24h.
     """
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("SUPABASE_SERVICE_KEY", "")

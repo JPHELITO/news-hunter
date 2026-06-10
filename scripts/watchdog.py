@@ -89,8 +89,10 @@ def check_coverage(url: str, headers: dict, now: datetime) -> tuple[list[str], l
     win_h = COVERAGE_WINDOW_DAYS * 24
     problems: list[str] = []
     report: list[tuple] = []
+    skipped: list[tuple] = []   # fontes sem baseline (somem do radar se a cadência cair)
     for s, (count, last) in sorted(agg.items(), key=lambda x: -x[1][0]):
         if count < COVERAGE_MIN_BASELINE:
+            skipped.append((s, count))
             continue
         avg_gap = win_h / count
         thr = coverage_threshold_h(count, win_h)
@@ -102,7 +104,7 @@ def check_coverage(url: str, headers: dict, now: datetime) -> tuple[list[str], l
                 f"{s}: {silence:.0f}h sem notícia (ritmo ~{avg_gap:.0f}h, "
                 f"limite {thr:.0f}h) -> provavelmente QUEBRADA"
             )
-    return problems, report
+    return problems, report, skipped
 
 
 def main() -> int:
@@ -153,12 +155,17 @@ def main() -> int:
               f"last_ok={row.get('last_ok')} last_attempt={row.get('last_attempt')}")
 
     # ── Monitor de cobertura por fonte (anti-quebra-silenciosa) ──────────────
-    cov_problems, cov_report = check_coverage(url, headers, now)
+    cov_problems, cov_report, cov_skipped = check_coverage(url, headers, now)
     print("\n[Cobertura por fonte — últimos %d dias]" % COVERAGE_WINDOW_DAYS)
     for s, count, avg_gap, silence, thr, ok in cov_report:
         flag = "OK" if ok else "*** SILENCIOSA ***"
         print(f"  {s[:20]:20} n={count:4d} ritmo~{avg_gap:5.0f}h silêncio={silence:5.0f}h "
               f"limite={thr:4.0f}h  {flag}")
+    if cov_skipped:
+        # Só informativo (não muda exit code): fontes no limiar somem do radar
+        # adaptativo se a cadência cair — bom enxergar quem está raspando o mínimo.
+        puladas = ", ".join(f"{s}({n})" for s, n in cov_skipped)
+        print(f"  · puladas (baseline < {COVERAGE_MIN_BASELINE} em {COVERAGE_WINDOW_DAYS}d): {puladas}")
     problems += cov_problems
 
     if problems:
