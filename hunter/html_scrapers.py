@@ -53,18 +53,19 @@ HTML_SOURCES = [
         "needs_filter": True,
     },
     {
+        # gov.br (Plone): seleciona por URL de notícia (resiliente a mudança de CSS).
         "label": "ANM",
         "page_url": "https://www.gov.br/anm/pt-br/assuntos/noticias",
         "domain": "gov.br",
-        "selector": "article h2 a",
-        "needs_filter": False,  # fonte temática
+        "href_re": r"/anm/.+/noticias/[a-z0-9].*-.*",
+        "needs_filter": False,  # fonte temática (agência de mineração)
     },
     {
         "label": "ANTAQ",
         "page_url": "https://www.gov.br/antaq/pt-br/assuntos/noticias",
         "domain": "gov.br",
-        "selector": "h2 a[href*='antaq']",
-        "needs_filter": True,
+        "href_re": r"/antaq/.+/noticias/[a-z0-9].*-.*",
+        "needs_filter": True,   # portos: amplo → exige keyword (minério/embarques)
     },
     {
         "label": "SMM",

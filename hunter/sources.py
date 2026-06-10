@@ -11,10 +11,13 @@ filter=True  → feed geral → aplica keyword matching
 SOURCES = [
     # ══ MINING.COM — feeds por commodity ══════════════════════════════════════
     # (os feeds de CATEGORIA steel/mining retornam 404 — só existem os de commodity)
-    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/iron-ore/feed/", "filter": False},
-    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/copper/feed/",   "filter": False},
-    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/nickel/feed/",   "filter": False},
-    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/gold/feed/",     "filter": False},
+    # filter=True (keyword): Mining.com é AMPLO (ouro, lítio, urânio…) → aceitar tudo
+    # floodaria ~93 extras/ciclo fora do foco. Keyword mantém iron-ore/copper/nickel +
+    # empresas cobertas (Vale, Aura, Kinross). NÃO é fonte setorial estreita.
+    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/iron-ore/feed/", "filter": True},
+    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/copper/feed/",   "filter": True},
+    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/nickel/feed/",   "filter": True},
+    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/gold/feed/",     "filter": True},
 
     # ══ BRASIL — Imprensa econômica (RSS oficiais) ════════════════════════════
     {"label": "Valor Econômico",       "url": "https://pox.globo.com/rss/valor/empresas",         "filter": True},

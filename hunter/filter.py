@@ -193,6 +193,18 @@ def filter_articles(articles: list[RawArticle]) -> list[dict]:
             result.append(_to_dict(art, []))
             continue
 
+        # ── Fonte temática/setorial (filter=False → needs_filter=False): curada e
+        #    100% no escopo (Portal Celulose, Ibá, Siderurgia Brasil, ABTCP, ANM,
+        #    SteelRadar, IBRAM, Aço Brasil, Reuters). Aceita TUDO, sem exigir
+        #    keyword — só barra a blocklist de título (agro/cripto/esporte) por
+        #    segurança. (Antes, por bug, essas passavam por keyword e perdiam
+        #    matérias setoriais sem termo exato no título/resumo.)
+        if not getattr(art, "needs_filter", True):
+            if any(w in title_lower for w in _TITLE_BLOCKLIST):
+                continue
+            result.append(_to_dict(art, []))
+            continue
+
         # ── Caminho padrão: keyword filtering ──────────────────────────────────
         # 0. Page-index detection: descarta páginas de listagem do Google News
         if _is_page_index(art.title):

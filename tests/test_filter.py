@@ -103,6 +103,28 @@ class TestBroadSourcesTitleOrSnippet:
         assert _passes("Quarterly results beat expectations", "iron ore output up", "Mining.com")
 
 
+class TestThematicSourcesAcceptAll:
+    """Fontes setoriais (needs_filter=False) aceitam tudo, sem exigir keyword."""
+
+    def _mk_thematic(self, title, source="Portal Celulose"):
+        return RawArticle(
+            url=f"http://x/{hash((title, source))}", domain="x.com",
+            source_name=source, title=title, snippet="",
+            published_at=_NOW, found_at=_NOW, needs_filter=False,
+        )
+
+    def test_thematic_accepts_without_keyword(self):
+        # 'Nova maquina inaugurada' não tem keyword nossa → mas é fonte setorial
+        assert len(filter_articles([self._mk_thematic("Nova maquina inaugurada no interior paulista")])) == 1
+
+    def test_thematic_still_blocks_blocklist(self):
+        assert len(filter_articles([self._mk_thematic("Futebol: final movimenta a cidade neste fim de semana")])) == 0
+
+    def test_keyword_source_still_requires_keyword(self):
+        # fonte needs_filter=True (default do _mk) sem keyword → bloqueada
+        assert not _passes("Nova maquina inaugurada no interior paulista", "", "Folha de S.Paulo")
+
+
 class TestBlocklist:
     def test_crypto_title_blocked(self):
         assert not _passes("Bitcoin sobe e Vale acompanha rali", "minerio", "InfoMoney")
