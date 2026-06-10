@@ -342,6 +342,23 @@ _CRIME_RE = re.compile(
     r")(?!\w)", re.I,
 )
 
+# Finanças pessoais / consumo (varejo): clickbait que pega carona em "economia"/
+# alias ambíguo (ex.: "vale a pena investir nos CDBs"). NUNCA é research de
+# S&M/P&P. Termos sem acento (normalize_text remove acento). Exclui sem coberta.
+_PERSONAL_FINANCE_RE = re.compile(
+    r"(?<!\w)("
+    r"cdb|cdbs|renda fixa|tesouro direto|tesouro selic|\blci\b|\blca\b|"
+    r"poupanca|previdencia privada|fundos? imobiliario|\bfii\b|\bfiis\b|"
+    r"cartao de credito|emprestimo pessoal|"
+    # "consorcio" e "financiamento" só na acepção de CONSUMO (carro/imóvel) — o
+    # consórcio EMPRESARIAL (ex.: "Consórcio da K-Infra vence Rota da Celulose") é legítimo.
+    r"(consorcio|financiamento) (de |do |da )?(carro|imovel|imoveis|veiculo|casa|moto)|"
+    r"vale a pena (investir|comprar|ter|abrir|fazer|contratar)|"
+    r"quanto rende|rende mais|melhores investimentos|onde investir|como investir|"
+    r"black friday|cashback|milhas aereas|nota do enem"
+    r")(?!\w)", re.I,
+)
+
 # Tópicos de aço de baixo valor para o relatório (regra Platts "NÃO COLOCAR":
 # billet, plates, wire rod, pig iron). Excluídos quando são o ASSUNTO PRIMÁRIO —
 # i.e. só eles + modificadores genéricos e sem empresa coberta. Se vierem
@@ -659,6 +676,12 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     # 2b. Notícia policial/crime (commodity ou cidade só de carona) sem empresa coberta
     if _CRIME_RE.search(norm) and not covered:
         return True, "irrelevant_region"
+
+    # 2c. Finanças pessoais / consumo (CDB, renda fixa, "vale a pena investir/comprar",
+    # cartão de crédito, financiamento de carro/imóvel…) sem empresa coberta → clickbait
+    # de varejo, não é research setorial. Snippet de "economia" fazia esses entrarem.
+    if _PERSONAL_FINANCE_RE.search(norm) and not covered:
+        return True, "personal_finance"
 
     # 3. Sem tópicos, sem empresa coberta E sem player de indústria → baixa relevância
     if not topics and not covered and not detect_industry_players(text):

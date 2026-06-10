@@ -812,3 +812,16 @@ class TestGabarito8639Batch:
         exclude, _ = should_exclude_news(
             "Steel decarbonization standards create uncertainty, WTO says", {})
         assert exclude is False
+
+    def test_personal_finance_excluded(self):
+        """Clickbait de finanças pessoais/consumo (entrava via snippet 'economia')."""
+        for t in ["Com novas regras, vale a pena investir nos CDBs que rendem mais?",
+                  "Melhores investimentos de renda fixa para 2026",
+                  "Financiamento de carro fica mais caro com nova Selic"]:
+            r = classify_take(t, {})
+            assert r["include_in_report"] is False, t
+
+    def test_business_consortium_kept(self):
+        """Consórcio EMPRESARIAL (infra/logística) não é finanças pessoais → entra."""
+        r = classify_take("Consórcio da K-Infra vence disputa por Rota da Celulose", {})
+        assert r["include_in_report"] is True
