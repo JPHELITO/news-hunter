@@ -86,34 +86,73 @@ def _normalize(text: str) -> str:
     return text.lower()
 
 
-@lru_cache(maxsize=1)
-def _keyword_pattern() -> re.Pattern:
-    """Regex combinada para todos os keywords. Compilada uma vez.
+# ── Keywords AMBÍGUAS — palavras comuns quando minúsculas, empresa quando
+# capitalizadas. Casam SÓ na forma capitalizada (case-sensitive), evitando
+# falsos positivos como "vale a pena" (≠ Vale) ou "baixe o app" (≠ APP).
+# chave = token minúsculo · valor = formas aceitas (Title/UPPER).
+_AMBIGUOUS_CASED: dict[str, tuple[str, ...]] = {
+    "vale":  ("Vale", "VALE"),
+    "app":   ("APP",),
+    "aura":  ("Aura", "AURA"),
+    "sail":  ("SAIL",),
+    "sigma": ("Sigma", "SIGMA"),
+    "cba":   ("CBA",),
+    "rani":  ("RANI",),
+}
 
-    Usa fronteira de palavra unicode-safe (?<!\\w) ... (?!\\w) para evitar
-    casar keyword DENTRO de outra palavra (ex: 'aura' em 'restaurante',
-    'rani' em palavras aleatórias, 'app' em 'application'). Keywords
-    ordenadas por tamanho desc → as longas casam antes das curtas.
+
+@lru_cache(maxsize=1)
+def _strong_pattern() -> re.Pattern:
+    """Regex case-INSENSITIVE das keywords inequívocas (todas menos as ambíguas).
+
+    Fronteira de palavra unicode-safe (?<!\\w) ... (?!\\w) evita casar dentro de
+    outra palavra. Keywords longas antes das curtas. Compostos como 'Vale S.A.' e
+    'Sigma Lithium' permanecem aqui (só o token isolado 'vale'/'sigma' é ambíguo).
     """
-    escaped = [re.escape(kw.lower()) for kw in sorted(ALL_KEYWORDS, key=len, reverse=True)]
-    pattern = r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)"
-    return re.compile(pattern, re.IGNORECASE)
+    kws = [kw for kw in ALL_KEYWORDS if kw.lower() not in _AMBIGUOUS_CASED]
+    escaped = [re.escape(kw.lower()) for kw in sorted(kws, key=len, reverse=True)]
+    return re.compile(r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)", re.IGNORECASE)
+
+
+@lru_cache(maxsize=1)
+def _ambiguous_pattern() -> re.Pattern:
+    """Regex case-SENSITIVE das formas capitalizadas aceitas (Vale|VALE|APP|…)."""
+    forms = [f for variants in _AMBIGUOUS_CASED.values() for f in variants]
+    escaped = [re.escape(f) for f in sorted(forms, key=len, reverse=True)]
+    return re.compile(r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)")  # SEM IGNORECASE
+
+
+# "Vale" + infinitivo = expressão idiomática ("Vale lembrar/destacar/a pena…"), NÃO a
+# empresa. Notícia real da Vale usa 3ª pessoa ("Vale registra/anuncia/eleva"), então
+# excluir os INFINITIVOS é seguro — não bloqueia manchete verdadeira.
+_VALE_IDIOM = re.compile(
+    r"\s+(?:a\s+pena|lembrar|destacar|ressaltar|citar|notar|mencionar|frisar|"
+    r"salientar|dizer|conferir|registrar|comentar|observar|pontuar)\b",
+    re.IGNORECASE,
+)
+
+
+def _match_text(text: str) -> list[str]:
+    """Keywords que batem no texto: fortes (case-insensitive) + ambíguas (capitalizadas)."""
+    if not text:
+        return []
+    found = set(m.group(0).lower() for m in _strong_pattern().finditer(text.lower()))
+    for m in _ambiguous_pattern().finditer(text):           # case original
+        # 'Vale a pena / Vale lembrar …' → expressão, não a empresa → ignora
+        if m.group(0).lower() == "vale" and _VALE_IDIOM.match(text, m.end()):
+            continue
+        found.add(m.group(0).lower())
+    return sorted(found)
 
 
 def _matches_field(text: str) -> list[str]:
-    """Retorna keywords que batem em um campo específico (ex: só o título)."""
-    haystack = _normalize(text)
-    pat = _keyword_pattern()
-    found = set(m.group(0).lower() for m in pat.finditer(haystack))
-    return sorted(found)
+    """Keywords que batem em um campo específico (ex: só o título)."""
+    return _match_text(text)
 
 
 def _matches(article: RawArticle) -> list[str]:
-    """Retorna lista de keywords que bateram no título + snippet."""
-    haystack = _normalize(f"{article.title} {article.snippet}")
-    pat = _keyword_pattern()
-    found = set(m.group(0).lower() for m in pat.finditer(haystack))
-    return sorted(found)
+    """Keywords que bateram no título + snippet."""
+    return _match_text(f"{article.title} {article.snippet}")
 
 
 def _to_dict(art: RawArticle, matched: list[str]) -> dict:
@@ -163,17 +202,18 @@ def filter_articles(articles: list[RawArticle]) -> list[dict]:
         if any(w in title_lower for w in _TITLE_BLOCKLIST):
             continue
 
-        content_matches = _matches(art)   # título + snippet
+        content_matches = _matches(art)   # título + snippet (com casing de ambíguas)
 
         # 2. Sem nenhuma keyword → descarta
         if not content_matches:
             continue
 
-        # 3. Fontes genéricas (Folha, Exame, InfoMoney…) exigem keyword no TÍTULO
-        #    para evitar artigos que só mencionam "cobre" num parágrafo de agro
-        if art.source_name in _BROAD_SOURCES:
-            if not _matches_field(art.title):
-                continue
+        # 3. Fontes genéricas (Folha, Exame, InfoMoney…): ANTES exigiam keyword no
+        #    TÍTULO (anti-ruído). Agora aceitam título OU resumo — o ruído clássico
+        #    ("vale a pena", "baixe o app") é cortado pelo casing case-sensitive das
+        #    ambíguas (_AMBIGUOUS_CASED). Keyword forte no corpo (Suzano/Gerdau/
+        #    "minério de ferro") já é sinal confiável; o classificador decide o resto.
+        #    → sem gate extra: _matches já cobre título + resumo.
 
         result.append(_to_dict(art, content_matches))
 

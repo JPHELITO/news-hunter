@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from hunter.fetcher import RawArticle
-from hunter.filter import filter_articles, _keyword_pattern
+from hunter.filter import filter_articles, _strong_pattern, _ambiguous_pattern
 
 _NOW = datetime.now(timezone.utc)
 
@@ -39,10 +39,34 @@ class TestWordBoundary:
     def test_app_not_in_application(self):
         assert not _passes("New banking application launches today", "fintech app", "Exame")
 
-    def test_keyword_pattern_excludes_substring(self):
-        pat = _keyword_pattern()
-        assert not pat.search("restaurante")        # contém 'aura'
-        assert pat.search("aura minerals expansion") # 'aura' isolado casa
+    def test_strong_pattern_excludes_substring(self):
+        pat = _strong_pattern()
+        assert not pat.search("agerdaus")          # 'gerdau' dentro de outra palavra não casa
+        assert pat.search("gerdau anuncia usina")  # 'gerdau' isolado casa
+
+    def test_ambiguous_requires_capitalized(self):
+        """Ambíguas (vale, app, aura) só casam capitalizadas — evita 'vale a pena'/'app'."""
+        pat = _ambiguous_pattern()
+        assert not pat.search("se vale a pena investir")  # 'vale' minúsculo NÃO casa
+        assert pat.search("Vale bate recorde")            # 'Vale' (Title) casa
+        assert pat.search("acao da VALE sobe")            # 'VALE' (caps) casa
+        assert not pat.search("baixe o app no celular")   # 'app' minúsculo NÃO casa
+        assert pat.search("APP eleva precos")             # 'APP' (caps) casa
+
+
+class TestValeIdiom:
+    """'Vale' + infinitivo = expressão ('Vale lembrar/a pena'), não a empresa."""
+
+    def test_vale_a_pena_blocked(self):
+        assert not _passes("Dicas de investimento", "Vale a pena diversificar a carteira", "Exame")
+
+    def test_vale_lembrar_blocked(self):
+        assert not _passes("Renda fixa em foco", "Vale lembrar que o CDI subiu este mes", "G1 Economia")
+
+    def test_vale_company_3rd_person_passes(self):
+        """3ª pessoa = empresa: 'Vale registra/anuncia' continua passando."""
+        assert _passes("Vale registra lucro recorde no trimestre", "resultado", "Money Times")
+        assert _passes("Mercado de olho", "Vale anuncia novo programa de dividendos", "Exame")
 
 
 class TestLegitimateStillPass:
@@ -59,12 +83,19 @@ class TestLegitimateStillPass:
         assert _passes("Suzano eleva preco da celulose", "BHKP", "Valor Econômico")
 
 
-class TestBroadSourcesRequireTitleKeyword:
-    def test_general_source_no_title_keyword_blocked(self):
-        """Fonte geral (UOL) sem keyword no título → bloqueada mesmo com kw no snippet."""
-        assert not _passes("Shakira atuara na inauguracao do Mundial", "minerio de ferro", "UOL Economia")
+class TestBroadSourcesTitleOrSnippet:
+    """Two-tier: grandes jornais agora aceitam keyword no título OU resumo. O ruído de
+    ambíguas é cortado pelo casing case-sensitive (não mais exigindo keyword no título)."""
 
-    def test_general_source_with_title_keyword_passes(self):
+    def test_broad_source_strong_keyword_in_snippet_passes(self):
+        """'Gerdau' (forte) só no resumo → agora PASSA (antes era bloqueado)."""
+        assert _passes("Inauguracao reune autoridades locais", "Gerdau eleva producao de aco", "UOL Economia")
+
+    def test_broad_source_ambiguous_lowercase_in_snippet_blocked(self):
+        """'vale' minúsculo no resumo ('vale a pena') → NÃO conta → bloqueado."""
+        assert not _passes("Dicas de investimento para 2026", "veja se vale a pena aplicar", "G1 Economia")
+
+    def test_broad_source_Vale_capitalized_passes(self):
         assert _passes("Vale bate recorde de minerio", "trimestre", "Metrópoles")
 
     def test_specialized_source_snippet_match_ok(self):

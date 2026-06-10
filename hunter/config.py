@@ -178,6 +178,12 @@ ALL_KEYWORDS = list(set(
 ))
 
 # Configurações
-WINDOW_HOURS   = 6   # safety net — Google News já filtra na origem (when:6h)
+WINDOW_HOURS   = 72  # janela de ingestão. Só descarta itens de RSS com published_at
+                     # mais antigo que isto. NÃO é a janela de exibição — o front-end
+                     # já filtra a home em 48h (published_at). Mantemos 72h (>48h + margem)
+                     # para nunca jogar fora, na coleta, algo que a home mostraria.
+                     # (Antes era 6h — resquício do Google News, derrubava fontes que
+                     # publicam menos de uma vez a cada 6h, ex.: Siderurgia Brasil, ABTCP.)
+                     # Aumentar é seguro: o push usa ignore-duplicates (URL repetida = ignorada).
 SUPABASE_TABLE = "news_articles"
 MAX_PER_SOURCE = 50
