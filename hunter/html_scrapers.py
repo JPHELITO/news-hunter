@@ -40,14 +40,7 @@ TIMEOUT = 20  # SteelRadar precisa de tempo extra
 # Cada entrada define como extrair manchetes de uma fonte sem RSS.
 HTML_SOURCES = [
     {
-        "label": "CNN Brasil",
-        "page_url": "https://www.cnnbrasil.com.br/economia/",
-        "domain": "cnnbrasil.com.br",
-        # Seletor combinado — h2 e h3 com link interno
-        "selector": "h2 a[href*='cnnbrasil.com.br'], h3 a[href*='cnnbrasil.com.br']",
-        "needs_filter": True,
-    },
-    {
+        # CNN Brasil migrou para RSS (ver sources.py) — scraper HTML removido.
         # A grade principal do Estadão usa âncoras SEM classe → o seletor por
         # classe (title/headline) só pegava o bloco de colunas (~19 links) e
         # perdia as notícias (ex.: "Venda da CSN Cimentos…"). Selecionamos por
