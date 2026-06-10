@@ -48,10 +48,15 @@ HTML_SOURCES = [
         "needs_filter": True,
     },
     {
+        # A grade principal do Estadão usa âncoras SEM classe → o seletor por
+        # classe (title/headline) só pegava o bloco de colunas (~19 links) e
+        # perdia as notícias (ex.: "Venda da CSN Cimentos…"). Selecionamos por
+        # PADRÃO DE URL de artigo (slug com 3+ tokens hifenizados) — robusto a
+        # mudança de marcação. O filtro de keyword cuida da relevância.
         "label": "Estadão",
         "page_url": "https://www.estadao.com.br/economia/",
         "domain": "estadao.com.br",
-        "selector": "a[class*='title'], a[class*='headline']",
+        "href_re": r"-[a-z0-9]+-[a-z0-9]+-[a-z0-9]+",
         "needs_filter": True,
     },
     {
@@ -123,7 +128,12 @@ def _scrape_source(src: dict) -> list[RawArticle]:
             log.warning("HTML [%s] %s: HTTP %d", label, url, r.status_code)
             return []
         soup = BeautifulSoup(r.text, "html.parser")
-        links = soup.select(src["selector"])
+        # Fonte pode selecionar por CSS (selector) OU por padrão de URL (href_re).
+        # href_re é mais robusto p/ sites que trocam classes (ex.: Estadão).
+        if src.get("href_re"):
+            links = soup.find_all("a", href=re.compile(src["href_re"], re.I))
+        else:
+            links = soup.select(src["selector"])
     except Exception as e:
         log.warning("HTML [%s] %s: %s", label, url, e)
         return []
@@ -133,7 +143,7 @@ def _scrape_source(src: dict) -> list[RawArticle]:
     articles: list[RawArticle] = []
     base = url
 
-    for a in links[:60]:  # limite por página
+    for a in links[:150]:  # limite por página (href_re traz +âncoras, incl. dups de imagem)
         href = a.get("href", "").strip()
         if not href:
             continue
