@@ -17,20 +17,6 @@ from .sources import SOURCES
 
 log = logging.getLogger(__name__)
 
-# Whitelist de fontes — usadas para validar source_name vindo do feed
-# Cada nome aqui corresponde a uma fonte declarada em sources.py ou html_scrapers.py
-_KNOWN_SOURCES = frozenset([
-    "Mining.com",
-    "Valor Econômico", "Folha de S.Paulo", "G1 Economia",
-    "InfoMoney", "Exame", "Money Times",
-    "Metrópoles", "UOL Economia", "Veja",
-    "Portal Celulose", "Siderurgia Brasil",
-    "Instituto Aço Brasil", "IBRAM", "Ibá", "ABTCP",
-    "CNN Brasil", "Estadão", "ANM", "ANTAQ",
-    "SMM", "SteelRadar",
-    "S&P Platts", "Fastmarkets",
-])
-
 # UA de navegador — WAFs bloqueiam bot-UA óbvio. Accept padrão de navegador
 # (não RSS-específico) — alguns WAFs devolvem 415 a Accept estranho.
 # Sem Accept-Encoding/Cache-Control manuais (requests cuida; evitam 415).
@@ -71,14 +57,15 @@ def _parse_date(entry) -> Optional[datetime]:
 
 
 def _http_get(url: str) -> tuple[int, bytes]:
-    """GET com fallback curl_cffi quando 403.
+    """GET com fallback curl_cffi quando bloqueado (401/403/429).
 
     Cloudflare bloqueia o TLS fingerprint do `requests` a partir de IP de
-    datacenter (ex: Mining.com 403 no GitHub Actions). curl_cffi imita o TLS
-    do Chrome e costuma passar. Se não estiver instalado, retorna o 403.
+    datacenter (ex: Mining.com 403, Estadão sitemap 401 no GitHub Actions) e
+    rate-limit devolve 429. curl_cffi imita o TLS do Chrome e costuma passar.
+    Se não estiver instalado, retorna o código original.
     """
     resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-    if resp.status_code == 403:
+    if resp.status_code in (401, 403, 429):
         try:
             from curl_cffi import requests as creq
             r2 = creq.get(url, impersonate="chrome", timeout=TIMEOUT)
@@ -115,8 +102,11 @@ def _fetch_one(source: dict) -> list[RawArticle]:
     from datetime import timedelta
     cutoff = datetime.now(timezone.utc) - timedelta(hours=WINDOW_HOURS)
 
+    # Itera TODAS as entradas e corta DEPOIS do filtro de janela (filter-then-cap):
+    # cortar em MAX_PER_SOURCE antes perderia itens recentes em feeds grandes (Valor/
+    # Folha/G1 devolvem ~100, todos dentro de 72h → metade era descartada).
     articles: list[RawArticle] = []
-    for entry in feed.entries[:MAX_PER_SOURCE]:
+    for entry in feed.entries:
         title = _strip_html(entry.get("title", "")).strip()
         if not title:
             continue
@@ -142,6 +132,8 @@ def _fetch_one(source: dict) -> list[RawArticle]:
             found_at=datetime.now(timezone.utc),
             needs_filter=needs_filter,
         ))
+
+    articles = articles[:MAX_PER_SOURCE]   # cap após o filtro de janela
 
     # Se o feed tinha entradas mas TODAS caíram fora da janela, sinaliza —
     # ajuda a distinguir "bloqueio" de "feed sem novidades recentes".
@@ -206,10 +198,19 @@ def fetch_all() -> list[RawArticle]:
             except Exception as e:
                 log.warning("Feed future error: %s", e)
 
-    # Deduplica por URL
+    # Deduplica por URL. Na COLISÃO (ex.: Estadão homepage ∩ sitemap), preferir a
+    # melhor versão: a que tem published_at (sitemap traz data real → recência
+    # correta) e, em empate, o título mais longo (sitemap usa <news:title> bem
+    # formatado; homepage às vezes deriva título do slug, truncado).
+    def _better(new: RawArticle, cur: RawArticle) -> bool:
+        if (new.published_at is not None) != (cur.published_at is not None):
+            return new.published_at is not None
+        return len(new.title or "") > len(cur.title or "")
+
     seen: dict[str, RawArticle] = {}
     for art in all_articles:
-        if art.url not in seen:
+        cur = seen.get(art.url)
+        if cur is None or _better(art, cur):
             seen[art.url] = art
 
     deduped = list(seen.values())
