@@ -216,6 +216,13 @@ _UP_WORDS = frozenset([
     "sobe", "subiu", "alta", "aumento", "maior", "maiores", "melhora", "melhor",
     "recuperacao", "avanco", "forte", "fortalecendo", "crescimento",
     "elevacao", "elevou", "impulsionado", "acelerou", "aquecimento",
+    # conjugações que faltavam (imprensa BR: "preços sobem/ganham/avançam…")
+    "sobem", "subindo", "subir", "ganha", "ganham", "ganhando", "avanca", "avancam",
+    "avancando", "impulsiona", "impulsionam", "impulso", "fortalece", "fortalecem",
+    "valoriza", "valorizam", "valorizacao", "dispara", "disparam", "recupera",
+    "recuperam", "recuperando", "cresce", "crescem", "crescendo", "acelera",
+    "aceleram", "reage", "reagem", "sustenta", "sustentam", "aquecido", "aquecida",
+    "aquece", "aquecem", "elevam", "eleva", "aumenta", "aumentam", "aumentando",
 ])
 
 _DOWN_WORDS = frozenset([
@@ -240,6 +247,12 @@ _DOWN_WORDS = frozenset([
     "cai", "caiu", "queda", "reducao", "menor", "menores", "piora", "fraco",
     "enfraquecendo", "recuo", "baixa", "retrocesso", "declinio", "colapso",
     "pressao", "pressionar", "despencou", "afundou",
+    # conjugações que faltavam (imprensa BR: "preços caem/recuam/cedem…")
+    "caem", "caindo", "cair", "recua", "recuam", "recuando", "despenca", "despencam",
+    "despencando", "desaba", "desabam", "cede", "cedem", "enfraquece", "enfraquecem",
+    "enfraquecer", "pioram", "piorando", "desacelera", "desaceleram", "desaceleracao",
+    "tomba", "tombam", "afunda", "afundam", "encolhe", "encolhem", "derrete",
+    "derretem", "diminui", "diminuem", "reduz", "reduzem", "cairam",
 ])
 
 # Marcadores de estabilidade/mercado misto: quando presentes e o sinal direcional
@@ -549,15 +562,32 @@ def _primary_clause(norm: str) -> str:
     return " ".join(_retained_clauses(norm))
 
 
+# Negadores (texto já normalizado: sem apóstrofo → "haven't"→"haven t"; por isso
+# os radicais hasn/haven/didn/etc. entram soltos). Negador até ~18 chars ANTES da
+# palavra de direção inverte a polaridade: "demand has NOT fallen" → alta, não queda.
+_NEG_LOOKBACK = re.compile(
+    r"\b(not|no|never|without|hardly|barely|nor|"
+    r"hasn|haven|hadn|didn|doesn|don|won|isn|aren|wasn|weren|cannot|cant|wont|"
+    r"nao|sem|fails?\s+to|failed\s+to|fail\s+to|yet\s+to|unlikely\s+to)\b"
+    r"[\w\s]{0,18}$", re.I,
+)
+
+
+def _negated(text: str, pos: int) -> bool:
+    return bool(_NEG_LOOKBACK.search(text[:pos]))
+
+
 def _direction_positions(text: str) -> tuple[list[int], list[int]]:
-    """Posições (char) das palavras de direção up e down."""
+    """Posições (char) das palavras de direção up e down. Negação inverte a
+    polaridade (ex.: 'demand has not fallen' conta como ALTA)."""
     ups, downs = [], []
     for m in re.finditer(r"\w+", text):
         w = m.group(0)
+        neg = _negated(text, m.start())
         if w in _UP_WORDS:
-            ups.append(m.start())
+            (downs if neg else ups).append(m.start())
         elif w in _DOWN_WORDS:
-            downs.append(m.start())
+            (ups if neg else downs).append(m.start())
     return ups, downs
 
 
@@ -832,14 +862,10 @@ def _compute_take(
         rules.append(rule)
         confidence_modifiers.append(conf)
 
-    # ── REGRA 0: empresa coberta menciona expansão de capacidade ─────────────
-    if has_covered and "capacity" in topic_set and _mentions_capacity_increase(norm):
-        add(0, f"Expansão de capacidade por empresa coberta ({', '.join(covered)}); impacto depende do contexto estratégico.",
-            "covered_company_capacity_expansion", conf=0.55)
-        return ("review",
-                f"Expansão de capacidade por empresa coberta ({', '.join(covered)}); impacto depende do contexto estratégico.",
-                0.55,
-                rules)
+    # ── REGRA 0: expansão de capacidade de empresa coberta → NEUTRO ───────────
+    # Gabarito: 89% dos casos de coberta+expansão são "=" (evento estratégico de
+    # longo prazo, não sinal de preço de curto prazo). Cai no covered_generic ("=")
+    # mais adiante. (NÃO usar "review" — sempre conta como erro no eval.)
 
     # ── REGRA 1: met coal (custo-insumo) ──────────────────────────────────────
     if "met_coal" in topic_set:

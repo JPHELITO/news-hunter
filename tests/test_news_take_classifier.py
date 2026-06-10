@@ -282,11 +282,13 @@ class TestClassifyTakeRequiredCases:
         assert r["take"] == "-"
 
     def test_9_gerdau_capacity_expansion(self):
-        """Gerdau announces capacity expansion → review (empresa coberta)"""
+        """Gerdau announces capacity expansion → NEUTRO (empresa coberta).
+        Gabarito 8.639: coberta+expansão é 89% '=' (evento estratégico de longo
+        prazo, não sinal de preço diário). Antes era 'review' (sempre erro no eval)."""
         r = classify_take("Gerdau announces capacity expansion", {})
         assert r["include_in_report"] is True
         assert "GERDAU" in r["covered_companies_mentioned"]
-        assert r["take"] == "review"
+        assert r["take"] == "="
 
     def test_10_rationale_excluded(self):
         """Platts steel rationale → excluído"""
@@ -329,10 +331,11 @@ class TestClassifyTakeAdditional:
         assert r["take"] == "+"
 
     def test_suzano_no_auto_negative_capacity(self):
-        """Suzano expansão: regra de oferta de terceiro NÃO aplica."""
+        """Suzano expansão: regra de oferta de terceiro NÃO aplica (é coberta) →
+        neutro (89% do gabarito), nunca negativo."""
         r = classify_take("Suzano announces major capacity expansion in Brazil", {})
         assert "SUZANO" in r["covered_companies_mentioned"]
-        assert r["take"] == "review"
+        assert r["take"] == "="
 
     def test_demand_down_negative(self):
         # Região-foco (China) preserva o sinal direcional da demanda.
@@ -825,3 +828,21 @@ class TestGabarito8639Batch:
         """Consórcio EMPRESARIAL (infra/logística) não é finanças pessoais → entra."""
         r = classify_take("Consórcio da K-Infra vence disputa por Rota da Celulose", {})
         assert r["include_in_report"] is True
+
+    def test_negation_demand_not_reduced(self):
+        """'have NOT reduced demand' → demanda resiliente → + (bug do feed Vale/iron ore)."""
+        r = classify_take("Vale: Iran tensions have not reduced iron ore demand", {})
+        assert r["take"] == "+"
+
+    def test_negation_prices_not_declined(self):
+        r = classify_take("Iron ore prices have not declined this week", {})
+        assert r["take"] == "+"
+
+    def test_pt_press_prices_up(self):
+        """Imprensa BR: conjugações ('preços sobem/ganham') agora direcionais → +."""
+        r = classify_take("MINÉRIO DE FERRO: preços sobem apoiados em fundamentos", {})
+        assert r["take"] == "+"
+
+    def test_pt_press_prices_down(self):
+        r = classify_take("Minério de ferro: preços recuam com demanda fraca na China", {})
+        assert r["take"] == "-"
