@@ -33,6 +33,14 @@ SITEMAP_SOURCES = [
         "url": "https://www.estadao.com.br/arc/outboundfeeds/news-sitemap/?outputType=xml",
         "needs_filter": True,
     },
+    {
+        # Trade BR de mineração (Fiol, Belo Sun, Código de Mineração) — antes sem
+        # cobertura. news-sitemap com ~200 artigos + news:title. Fonte setorial estreita.
+        "label": "Notícias de Mineração",
+        "domain": "noticiasdemineracao.com",
+        "url": "https://www.noticiasdemineracao.com/news-sitemap.xml",
+        "needs_filter": False,
+    },
 ]
 
 _DATE_SUFFIX = re.compile(r"-\d{4}-\d{2}-\d{2}/?$")
@@ -46,9 +54,14 @@ def _parse_date(s: str | None):
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.strip().replace("Z", "+00:00"))
+        d = datetime.fromisoformat(s.strip().replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+    # Alguns sitemaps (ex.: Notícias de Mineração) trazem data SEM offset → naive.
+    # Assume UTC para poder comparar com o cutoff (aware) sem TypeError.
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d
 
 
 def _title_from_slug(url: str) -> str:

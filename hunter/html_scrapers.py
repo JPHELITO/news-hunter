@@ -75,11 +75,15 @@ HTML_SOURCES = [
         "needs_filter": True,
     },
     {
+        # Versão em INGLÊS (/en/) — o classificador não fala turco; em /en/haber/
+        # os artigos têm título em inglês limpo ("EU safeguard measures…", "U.S.
+        # crude steel production rises…"). Antes raspava a home turca (descartada
+        # pelo classificador). Site 100% dedicado a steel.
         "label": "SteelRadar",
-        "page_url": "https://www.steelradar.com/",
+        "page_url": "https://www.steelradar.com/en/",
         "domain": "steelradar.com",
-        "selector": "a[href*='/haber/']",
-        "needs_filter": False,   # site 100% dedicado a steel; conteúdo em turco
+        "href_re": r"/en/haber/[^/]+-[^/]+",
+        "needs_filter": False,
     },
     {
         # RSS oficial está congelado (>170 dias) → scraper da página de notícias.

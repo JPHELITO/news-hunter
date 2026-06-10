@@ -54,6 +54,23 @@ def test_titulo_derivado_do_slug_quando_ausente():
     assert any("slug" in a.title.lower() for a in arts)
 
 
+def test_data_naive_assumida_utc():
+    # sitemap sem offset na data (ex.: Notícias de Mineração) → não pode dar
+    # TypeError comparando com o cutoff (aware); assume UTC.
+    xml = (
+        b'<?xml version="1.0"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
+        b' xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">'
+        b'<url><loc>https://www.noticiasdemineracao.com/vale-terras-raras-projeto/</loc>'
+        b'<news:news><news:publication_date>2026-06-10T09:00:00</news:publication_date>'
+        b'<news:title>Vale analisa competitividade de terras raras no Brasil</news:title>'
+        b'</news:news></url></urlset>'
+    )
+    arts = parse_news_sitemap(xml, "Notícias de Mineração", "noticiasdemineracao.com", False, now=_NOW)
+    assert len(arts) == 1
+    assert "terras raras" in arts[0].title.lower()
+
+
 def test_campos_basicos():
     arts = parse_news_sitemap(_XML, "Estadão", "estadao.com.br", True, now=_NOW)
     a = next(x for x in arts if "Vale aprimora" in x.title)
