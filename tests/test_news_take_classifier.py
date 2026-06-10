@@ -172,13 +172,14 @@ class TestShouldExcludeNews:
         )
         assert exclude is True
 
-    def test_pig_iron_only_excluded(self):
+    def test_pig_iron_now_product_included(self):
+        """Pig iron saiu da exclusão de baixo valor: é produto vendido (export BR)
+        → entra no relatório (gabarito 8.639 mostrou pig iron com take)."""
         exclude, reason = should_exclude_news(
             "Pig iron prices move in Brazil",
             {},
         )
-        assert exclude is True
-        assert reason == "irrelevant_commodity"
+        assert exclude is False
 
     # ── "mundial" (=global em PT) NÃO é off-topic; só futebol explícito é ──
     def test_producao_mundial_de_aco_nao_excluida(self):
@@ -437,15 +438,15 @@ class TestPlattsBusinessRules:
         assert r["include_in_report"] is False
         assert r["exclusion_reason"] == "low_relevance"
 
-    def test_wire_rod_primary_excluded(self):
+    def test_wire_rod_now_product_included(self):
+        """Wire rod é produto (segue rebar) → incluído, não mais excluído."""
         r = classify_take("Wire rod production rises", {})
-        assert r["include_in_report"] is False
-        assert r["exclusion_reason"] == "low_relevance"
+        assert r["include_in_report"] is True
 
-    def test_pig_iron_with_inventories_excluded(self):
+    def test_pig_iron_with_inventories_included(self):
+        """Pig iron é produto agora → incluído (estoque subindo → negativo)."""
         r = classify_take("Pig iron inventories rise in Brazil", {})
-        assert r["include_in_report"] is False
-        assert r["exclusion_reason"] == "irrelevant_commodity"
+        assert r["include_in_report"] is True
 
     def test_billet_secondary_to_hrc_included(self):
         """Billet secundário a HRC → notícia entra (pelo HRC)."""
@@ -770,3 +771,44 @@ class TestClassifyArticleTake:
         art = {"title": "Iron ore prices rise in China", "snippet": ""}
         result = classify_article_take(art)
         assert isinstance(result["take_topics"], str)  # ";" separado
+
+
+class TestGabarito8639Batch:
+    """Comportamentos travados pelo gabarito de 8.639 manchetes (2026-06-10):
+    macro com take, aço de baixo valor como produto, restart de oferta, fluxo P&P."""
+
+    def test_macro_china_negative(self):
+        r = classify_take("China property investment contracts further in November", {})
+        assert r["include_in_report"] is True
+        assert r["take"] == "-"
+
+    def test_macro_china_positive(self):
+        r = classify_take("Beijing rolls out fresh stimulus package for the economy", {})
+        assert r["include_in_report"] is True
+        assert r["take"] == "+"
+
+    def test_macro_offset_neutral(self):
+        r = classify_take("China economic recovery may lose steam, outlook uncertain", {})
+        assert r["include_in_report"] is True
+        assert r["take"] == "="
+
+    def test_wire_rod_product_direction(self):
+        # wire rod é produto (não mais excluído); região-foco BR não neutraliza
+        r = classify_take("Brazilian wire rod prices fall", {})
+        assert r["include_in_report"] is True
+        assert r["take"] == "-"
+
+    def test_restart_adds_supply_negative(self):
+        r = classify_take("Stora Enso restarts pulp mill after maintenance", {})
+        assert r["take"] == "-"
+
+    def test_box_shipments_fall_negative(self):
+        r = classify_take("US box shipments fall 5% in first quarter", {})
+        assert r["include_in_report"] is True
+        assert r["take"] == "-"
+
+    def test_decarbonization_included(self):
+        # política/decarbonização de aço entra (não mais excluída por falta de tópico)
+        exclude, _ = should_exclude_news(
+            "Steel decarbonization standards create uncertainty, WTO says", {})
+        assert exclude is False

@@ -138,7 +138,7 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(pulp|celulose|bhkp|nbsk|bekp|bek|bskp|bctmp|woodpulp|pulpwood|kraft.?pulp|hardwood.?pulp|softwood.?pulp|dissolving.?pulp|fluff.?pulp)\b", "pulp"),
     (r"\b(papers?|papel)(?!.?(board|ondulado|embalagem|kraft|tissue))\b", "paper"),
     (r"\b(tissue|papel.?tissue|papel.?higienico|jumbo.?roll)\b",          "tissue"),
-    (r"\b(containerboard|papelao.?ondulado|corrugated|caixas.?onduladas|kraftliner|linerboard|white.?top|white.?board|testliner)\b", "containerboard"),
+    (r"\b(containerboard|papelao.?ondulado|corrugated|caixas.?onduladas|kraftliner|linerboard|white.?top|white.?board|testliner|box.?shipments?|boxboard|cartonboard|fluting)\b", "containerboard"),
     (r"\b(occ|old.?corrugated.?container|aparas)\b",                     "occ"),
     (r"\b(newsprint)\b",                                                  "newsprint"),
     # Metals
@@ -158,10 +158,18 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(inventories|inventory|stocks|estoques?|inventario)\b",         "inventories"),
     (r"\b(prices?|preco|precos|premium|premiums|index|indices)\b",        "prices"),
     (r"\b(utilization|utilizacao|capability.?utilization|capacity.?utilization|aisi)\b", "utilization"),
-    (r"\b(tariff|tarifa|anti.?dumping|safeguard|section.?232)\b",        "tariffs"),
+    (r"\b(tariff|tariffs|tarifa|anti.?dumping|antidumping|safeguard|section.?232|"
+     r"export.?tax|countervailing|\bcvd\b|trade.?(war|barrier|measure|case|probe)|"
+     r"import.?(duty|duties|quota|ban)|levy|dumping.?(probe|duty|case))\b",        "tariffs"),
     # "steel" sozinho não é tópico; indústria/setor/usina/política siderúrgica
     # (sem produto específico) entra como notícia de steel com take neutro.
-    (r"\b(steel.?industry|steel.?sector|steel.?mill|steelmaker|steel.?maker|steelmaking|siderurgi\w*)\b", "steel_industry"),
+    (r"\b(steel.?industry|steel.?sector|steel.?mill|steelmaker|steel.?maker|steelmaking|siderurgi\w*|decarboni\w*|green.?steel|net.?zero|carbon.?(border|tax|market|emissions?)|emissions?.?(standard|target|reduction))\b", "steel_industry"),
+    # Macro / demanda-driver (sobretudo China): entra no relatório com take.
+    (r"\b(econom\w+|macroeconom\w*|gdp|pmi|property\s?(sector|market|woes|prices|investment|developer\w*)?|"
+     r"real\s?estate|housing|infrastructure|stimulus|fiscal\s?(stimulus|spending|package)?|monetary|"
+     r"interest\s?rate|central\s?bank|rate\s?(cut|hike)|inflation|deflation|recession|reopen\w*|lockdown|"
+     r"covid|pandemic|manufacturing\s?(pmi|activity|sector|output)?|industrial\s?(production|output|activity)|"
+     r"construction\s?(activity|demand|sector|starts)|trade\s?(deal|talks|tensions?))\b", "macro"),
     (r"\b(blast.?furnace|alto.?forno|eaf|electric.?arc.?furnace|bof|basic.?oxygen)\b", "furnace"),
     (r"\b(mill.?closure|plant.?closure|fechamento.?de.?planta|parada.?de.?planta)\b", "closure"),
 ]
@@ -273,6 +281,27 @@ _QUANTITY_TOPICS = frozenset({
     "capacity", "utilization",
 })
 
+# Direção de notícia MACRO (demanda-driver). Gabarito: macro entra com take;
+# discriminador-chave é a RESSALVA/condicional (offset) → neutro.
+_MACRO_OFFSET_RE = re.compile(
+    r"\b(but|despite|however|yet|though|although|even as|no clarity|unclear|"
+    r"uncertain\w*|loom\w*|may |might |could |would |limited|muted|mixed|"
+    r"cautio\w*|await\w*|wait|seen |expected|likely|outlook|forecast|"
+    r"mas|porem|apesar|incert\w*)\b", re.I,
+)
+_MACRO_POS_RE = re.compile(
+    r"\b(stimulus|stimulat\w*|easing|eases|reopen\w*|recover\w*|rebound\w*|"
+    r"growth|grow\w*|expansion|expand\w*|boost\w*|accelerat\w*|pickup|pick up|"
+    r"upturn|improv\w*|resilient|robust|special bonds?|rate cut|"
+    r"estimulo|retomada|recuperac\w*|crescimento)\b", re.I,
+)
+_MACRO_NEG_RE = re.compile(
+    r"\b(slowdown|slowing|slows|contraction|contract\w*|recession|woes|"
+    r"weak\w*|sluggish|subdued|downturn|deflation\w*|crisis|slump\w*|curb\w*|"
+    r"cooling|cools?|stall\w*|debt crisis|default\w*|lockdown|"
+    r"desaceler\w*|crise|fraqueza)\b", re.I,
+)
+
 # Termos de exclusão automática (tipo de conteúdo)
 _EXCLUDE_CONTENT_TYPES = frozenset(["rationale"])
 
@@ -317,7 +346,10 @@ _CRIME_RE = re.compile(
 # billet, plates, wire rod, pig iron). Excluídos quando são o ASSUNTO PRIMÁRIO —
 # i.e. só eles + modificadores genéricos e sem empresa coberta. Se vierem
 # secundários a um tópico relevante (ex.: HRC), a notícia entra normalmente.
-_LOW_VALUE_STEEL_TOPICS = frozenset(["pig_iron", "billet", "wire_rod", "plate"])
+# Gabarito 8.639: wire rod e pig iron APARECEM com take (são produtos vendidos —
+# wire rod segue rebar; pig iron export price → +). Saíram da exclusão de baixo
+# valor; billet/plate seguem excluídos como assunto primário (regra Platts).
+_LOW_VALUE_STEEL_TOPICS = frozenset(["billet", "plate"])
 
 # Modificadores genéricos: sozinhos não elevam a relevância de um tópico de baixo
 # valor (preço/produção/exportação de "billet" continua sendo notícia de billet).
@@ -551,6 +583,17 @@ def _is_rationale(text: str, source: str = "") -> bool:
     return False
 
 
+def _mentions_restart(norm: str) -> bool:
+    """Retomada/restart de capacidade (re-adiciona oferta → negativo)."""
+    return bool(re.search(
+        r"\b(restart\w*|resum\w*|recommission\w*|back.?online|fires?.?up|ramp.?up|ramp.?back)\b"
+        r".{0,35}(mill|plant|furnace|line|production|capacity|machine|operation|output)|"
+        r"(mill|plant|furnace|line|production|capacity|machine|operation)"
+        r".{0,35}\b(restart\w*|resum\w*|recommission\w*|back.?online)\b",
+        norm, re.I,
+    ))
+
+
 def _mentions_turkish_rebar(norm: str) -> bool:
     return bool(re.search(r"\b(turkish|turkey|turk).{0,25}(rebar|vergalhao)\b", norm, re.I) or
                 re.search(r"\b(rebar|vergalhao).{0,25}(turkish|turkey|turk)\b", norm, re.I))
@@ -645,6 +688,7 @@ _STEEL_TOPICS = frozenset([
     "sinter", "met_coal", "scrap", "dri", "furnace", "utilization",
     "tariffs",          # comércio/antidumping/section 232 é tema central de steel
     "steel_industry",   # indústria/setor/usina/política siderúrgica (sem produto)
+    "macro",            # macro/demanda-driver (China property/stimulus/PMI/…) entra como steel
 ])
 _MINING_TOPICS = frozenset([
     "iron_ore", "pellets", "copper", "gold", "silver", "nickel", "aluminum",
@@ -831,9 +875,9 @@ def _compute_take(
     # ── REGRA 7: preços de produtos vendidos (HRC, iron ore, pulp, etc.) ─────
     # NOTA: "slab" deliberadamente FORA — regra Platts marca placa (slab) como
     # NEUTRO. Continua sendo detectado/incluído, mas não gera take direcional.
-    _PRODUCT_TOPICS = {"hrc", "crc", "rebar", "flat_steel", "structural",
-                       "iron_ore", "pellets", "copper", "gold", "pulp", "paper",
-                       "tissue", "containerboard"}
+    _PRODUCT_TOPICS = {"hrc", "crc", "rebar", "wire_rod", "pig_iron", "flat_steel",
+                       "structural", "iron_ore", "pellets", "copper", "gold",
+                       "pulp", "paper", "tissue", "containerboard"}
     _product_topics = topic_set & _PRODUCT_TOPICS
     # NÃO exige mais a palavra literal "prices" (a regra antiga perdia "HRC
     # bullish", "iron ore market rises", "pellet premiums strong" → achatava
@@ -851,6 +895,19 @@ def _compute_take(
             elif pd < 0:
                 add(-1, f"Queda de preços de {prod} é negativa para produtores.", f"price_{prod}_down_neg")
 
+    # ── REGRA 7b: P&P — fluxo de produto final (shipments/output) = proxy demanda ──
+    # Gabarito: "US box shipments fall" / "containerboard output drops" → demanda
+    # de embalagem em queda → -. Subida → +.
+    if sector == "pulp_paper" and (topic_set & {"paper", "tissue", "containerboard", "pulp"}):
+        for q in ("exports", "production"):
+            if q in topic_set:
+                qd = d(q)
+                if qd > 0:
+                    add(+1, "Fluxo/produção de produto P&P em alta (proxy de demanda).", f"pp_{q}_up_pos", conf=0.55)
+                elif qd < 0:
+                    add(-1, "Fluxo/produção de produto P&P em queda (proxy de demanda).", f"pp_{q}_down_neg", conf=0.55)
+                break
+
     # ── REGRA 8: capacidade de terceiros ─────────────────────────────────────
     if "capacity" in topic_set and not has_covered:
         if _mentions_capacity_increase(norm):
@@ -863,6 +920,12 @@ def _compute_take(
     # ── REGRA 9: closure / plant shutdown ────────────────────────────────────
     if "closure" in topic_set and not has_covered:
         add(+1, "Fechamento de planta de terceiro reduz oferta.", "closure_pos", conf=0.75)
+
+    # ── REGRA 9b: restart/retomada de capacidade de terceiro → re-oferta → - ──
+    # Gabarito P&P: restart/resume/fires up de máquina/usina re-adiciona oferta → -.
+    if _mentions_restart(norm) and not has_covered:
+        add(-1, "Retomada/restart de capacidade de terceiro re-adiciona oferta.",
+            "third_party_restart_neg", conf=0.65)
 
     # ── REGRA 10: Turkish rebar — é PRODUTO, não inversão (gabarito 8.639) ────
     # A regra antiga (exports up→- / down→+) tinha 68-84% de ERRO. Rebar turco é
@@ -884,6 +947,21 @@ def _compute_take(
             add(-1, "Aumento de oferta pode pressionar preços.", "supply_up_neg", conf=0.60)
         elif dd < 0:
             add(+1, "Redução de oferta pode sustentar preços.", "supply_down_pos", conf=0.60)
+
+    # ── REGRA 14: MACRO / demanda-driver (China etc.) ────────────────────────
+    # Macro entra no relatório com take (gabarito: NÃO excluir). Discriminador:
+    # ressalva/condicional (but/despite/may/loom/limited/expected) → neutro;
+    # senão direção macro (estímulo/retomada/crescimento → +; desaceleração/
+    # crise/property woes → -). Só dirige o take quando não há produto na manchete.
+    if "macro" in topic_set and not (topic_set & _PRODUCT_TOPICS):
+        if _MACRO_OFFSET_RE.search(norm):
+            add(0, "Macro com ressalva/condicional — sem leitura direcional.", "macro_offset_neutral", conf=0.50)
+        elif _MACRO_NEG_RE.search(norm):
+            add(-1, "Macro desfavorável à demanda do setor.", "macro_down_neg", conf=0.60)
+        elif _MACRO_POS_RE.search(norm):
+            add(+1, "Macro favorável à demanda do setor.", "macro_up_pos", conf=0.60)
+        else:
+            add(0, "Notícia macro/setorial incluída sem direção clara.", "macro_neutral", conf=0.45)
 
     # ── REGRA 13: empresa coberta sem regra específica ────────────────────────
     # Regra Platts: "Company Specifics (=)" → take NEUTRO. (Capacidade de empresa
