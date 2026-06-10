@@ -120,7 +120,7 @@ TICKER_MAP = {
     "Freeport": "FCX", "Freeport-McMoRan": "FCX",
     "BHP": "BHP",
     "Rio Tinto": "RIO",
-    "Vale": "VALE",      # ADR
+    # (Vale ADR "VALE" removido: chave "Vale" duplicada sobrescrevia o B3 VALE3.SA acima)
     "International Paper": "IP",
     # Santiago / México
     "CMPC": "CMPC.SN", "Empresas CMPC": "CMPC.SN",

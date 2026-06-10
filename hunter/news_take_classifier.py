@@ -33,7 +33,11 @@ COVERED_COMPANY_ALIASES: dict[str, list[str]] = {
         "gerdau ameristeel", "gerdau metalurgica",
     ],
     "TERNIUM": [
-        "ternium", "tx", "ternium brasil", "ternium mexico",
+        # NÃO incluir o ticker "tx" (NYSE): colide com "TX" = Texas, onipresente
+        # em manchetes de aço dos EUA (ex.: "...in Houston, TX"), e o contexto
+        # setorial sempre presente nesses textos não desambigua. Notícia real de
+        # Ternium sempre soletra "Ternium".
+        "ternium", "ternium brasil", "ternium mexico",
     ],
     "USIMINAS": [
         "usiminas", "usim5", "usim3", "usinas siderurgicas de minas gerais",
@@ -269,11 +273,17 @@ _HARD_CRYPTO_RE = re.compile(
 _OFF_TOPIC_RE = re.compile(
     r"(?<!\w)("
     r"cripto|crypto|nft|blockchain|web3|defi|"
-    r"futebol|futbol|mundial|copa do mundo|world cup|shakira|"
-    r"jogador|jogadores|selecao|partida|estadio|"
+    r"futebol|futbol|copa do mundo|world cup|shakira|"
+    r"jogador|jogadores|estadio|"
+    r"selecao brasileira|selecao de futebol|partida de futebol|"
     r"eleic|election|elecciones|amlo|cnte|tepjf"
     r")(?!\w)", re.I,
 )
+# NOTA: "mundial" foi REMOVIDO daqui — em PT/ES = "global" ("produção mundial de
+# aço", "mercado mundial de celulose" são ON-TOPIC). A Copa é coberta por
+# "copa do mundo|world cup". "selecao"/"partida" soltos também saíram (excluíam
+# "seleção de fornecedores", "partida da usina" = startup de alto-forno). A rede
+# de segurança no_market_take_detected ainda barra futebol genuíno sem take.
 
 # Notícia policial / crime: pega carona em palavra de commodity ou nome de
 # cidade (ex: "roubo ... em Alumínio" — cidade de SP). Excluído sem empresa coberta.
@@ -325,10 +335,11 @@ def normalize_text(text: str) -> str:
 
 # Aliases que coincidem com palavras comuns (PT/EN) e geram falso-positivo:
 #   'vale'  → verbo "valer" ("vale a pena", "vale comprar")
-#   'tx'    → "TX" = Texas
 #   'aura'  → palavra comum ("aura de mercado")
 # Só contam como menção à empresa se houver contexto setorial/financeiro no texto.
-_AMBIGUOUS_ALIAS_WORDS = frozenset({"vale", "tx", "aura"})
+# (O ticker "tx" da Ternium foi REMOVIDO da lista de aliases — colide com "TX" =
+#  Texas e o contexto setorial não desambigua em notícia de aço dos EUA.)
+_AMBIGUOUS_ALIAS_WORDS = frozenset({"vale", "aura"})
 
 # Contexto que confirma que a menção é realmente à empresa
 _COMPANY_CONTEXT_RE = re.compile(
@@ -865,9 +876,8 @@ def _compute_take(
 
     conf_base = (sum(confidence_modifiers) / len(confidence_modifiers)) if confidence_modifiers else 0.50
 
-    # Penaliza conflito (sinais opostos presentes)
-    has_conflict = any(d > 0 for d in [score]) and any(d < 0 for d in [score])
-    # score pode ser combinação de múltiplas regras; usa valor absoluto para medir clareza
+    # score pode ser combinação de múltiplas regras; usa valor absoluto para medir
+    # clareza. Conflito (sinais opostos) já é tratado pelo ramo abs_score==0 abaixo.
     abs_score = abs(score)
     if abs_score == 0:
         conf = min(conf_base, 0.50)
@@ -1024,8 +1034,11 @@ def classify_take(text: str, metadata: dict | None = None) -> dict:
 
 def _build_full_text(art: dict) -> str:
     """Concatena campos disponíveis do artigo para formar texto de classificação."""
+    # NÃO incluir 'source_name': o NOME da fonte ("Mining.com", "Portal Celulose",
+    # "Siderurgia Brasil") injetava tópico/setor falso em TODO artigo da fonte.
+    # O source ainda é avaliado à parte (metadata) p/ excluir rationale da Platts.
     fields = ["title", "headline", "snippet", "summary", "body",
-              "commodity", "region", "source_name"]
+              "commodity", "region"]
     parts = [str(art.get(f, "") or "") for f in fields]
     return " ".join(p for p in parts if p)
 

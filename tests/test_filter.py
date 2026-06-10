@@ -132,6 +132,19 @@ class TestBlocklist:
     def test_soccer_title_blocked(self):
         assert not _passes("Futebol: final da Copa movimenta mercado de aço", "steel", "G1")
 
+    # ── Word-boundary (não substring): não pode derrubar palavra que só CONTÉM o termo ──
+    def test_define_nao_bloqueia_vale(self):
+        # 'define' contém 'defi' (cripto) — não pode bloquear manchete real da Vale
+        assert _passes("Vale define plano de investimento em mina", "trimestre", "InfoMoney")
+
+    def test_wheaton_nao_bloqueia(self):
+        # 'Wheaton' (mineradora) contém 'wheat' — não pode bloquear
+        assert _passes("CSN e Wheaton avançam em acordo de minério", "negócio", "Exame")
+
+    def test_blocklist_real_ainda_bloqueia(self):
+        assert not _passes("Vale e a safra de soja batem recorde", "agro", "G1")
+        assert not _passes("Tokenização de ativos avança no mercado", "token", "InfoMoney")
+
 
 class TestPlattsPassThrough:
     """Platts é fonte curada: todas as notícias passam, exceto 'rationale' no título."""

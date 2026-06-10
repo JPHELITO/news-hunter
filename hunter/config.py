@@ -52,8 +52,8 @@ COMPANIES_INTL = [
 # ── Produtos — Siderurgia & Mineração ─────────────────────────────────────────
 STEEL_PRODUCTS = [
     # Aço planos (termos compostos — evitam falsos positivos)
-    "HRC", "hot rolled coil", "bobina a quente",
-    "CRC", "cold rolled coil", "bobina a frio",
+    "HRC", "hot rolled coil", "hot-rolled coil", "hot-rolled steel", "bobina a quente",
+    "CRC", "cold rolled coil", "cold-rolled coil", "cold-rolled steel", "bobina a frio",
     "galvanized steel", "galvanizado", "galvalume",
     "coated steel", "aço revestido",
     "heavy plate", "chapa grossa",
@@ -83,13 +83,13 @@ STEEL_PRODUCTS = [
     "basic oxygen furnace", "BOF",
     "steelmaking", "pelotização", "pelletizing",
     # Metais não-ferrosos (só termos específicos do setor)
-    "nickel price", "nickel ore", "níquel",
-    "copper price", "copper ore", "minério de cobre",
-    "aluminium smelter", "aluminium price", "alumínio",
-    "zinc price", "zinco",
+    "nickel price", "nickel prices", "nickel ore", "níquel",
+    "copper price", "copper prices", "copper ore", "minério de cobre",
+    "aluminium smelter", "aluminium price", "aluminium prices", "alumínio",
+    "zinc price", "zinc prices", "zinco",
     "manganese ore", "manganês",
-    "cobalt price", "cobalto",
-    "lithium price", "lítio",
+    "cobalt price", "cobalt prices", "cobalto",
+    "lithium price", "lithium prices", "lítio",
     "rare earth", "terras raras",
     "critical minerals", "minerais críticos",
     "bauxite", "bauxita",
@@ -100,8 +100,9 @@ STEEL_PRODUCTS = [
 
 # ── Mercado Siderúrgico ────────────────────────────────────────────────────────
 STEEL_MARKET = [
-    "steel price", "preço do aço", "preço aço",
-    "steel demand", "steel output", "steel capacity",
+    "steel price", "steel prices", "preço do aço", "preços do aço", "preço aço", "preços aço",
+    "steel demand", "steel output", "steel outputs", "steel capacity", "produção de aço",
+    "iron ore prices", "pellet prices",
     "siderurgia", "siderúrgica", "indústria siderúrgica",
     "mineração", "setor mineral",
     "IODEX", "TSI 62%",
@@ -129,7 +130,7 @@ STEEL_MARKET = [
 PULP_PAPER = [
     # Celulose (termos compostos ou específicos)
     "celulose", "mercado de celulose", "preço celulose",
-    "pulp price", "pulp market", "pulp demand",
+    "pulp price", "pulp prices", "preços da celulose", "pulp market", "pulp demand",
     "BHKP", "celulose de fibra curta", "hardwood pulp", "eucalyptus pulp",
     "NBSK", "softwood pulp", "celulose de fibra longa",
     "BEKP", "BSKP", "BCTMP",
@@ -149,7 +150,7 @@ PULP_PAPER = [
     "coated paper", "papel revestido",
     "newsprint",
     "paper demand", "demanda papel",
-    "paper price", "preço papel",
+    "paper price", "paper prices", "preço papel", "preços do papel",
     # Florestal / setorial
     "eucalipto", "eucalyptus plantation",
     "pinus", "cavaco de madeira",

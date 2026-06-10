@@ -180,6 +180,26 @@ class TestShouldExcludeNews:
         assert exclude is True
         assert reason == "irrelevant_commodity"
 
+    # ── "mundial" (=global em PT) NÃO é off-topic; só futebol explícito é ──
+    def test_producao_mundial_de_aco_nao_excluida(self):
+        exclude, _ = should_exclude_news(
+            "Produção mundial de aço bruto cai 2% em maio", {})
+        assert exclude is False
+
+    def test_copa_do_mundo_excluida(self):
+        exclude, _ = should_exclude_news("Copa do Mundo movimenta o turismo no país", {})
+        assert exclude is True
+
+    def test_selecao_brasileira_excluida(self):
+        exclude, _ = should_exclude_news("Seleção brasileira goleia em amistoso preparatório", {})
+        assert exclude is True
+
+    def test_partida_de_usina_nao_excluida(self):
+        # "partida" (startup de alto-forno) não é mais tratada como futebol
+        exclude, _ = should_exclude_news(
+            "Gerdau conclui partida do novo alto-forno e eleva produção de aço", {})
+        assert exclude is False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # classify_take — 10 casos obrigatórios do enunciado
@@ -608,6 +628,22 @@ class TestAmbiguousAliasFalsePositives:
     def test_texas_tx_not_ternium(self):
         """'TX' (Texas) sem contexto NÃO deve virar TERNIUM."""
         assert "TERNIUM" not in detect_covered_companies("Storm hits Texas TX power grid")
+
+    def test_texas_tx_with_steel_context_not_ternium(self):
+        """'TX' (Texas) MESMO com contexto setorial de aço NÃO é TERNIUM.
+
+        O contexto siderúrgico (steel/capacity/demand) está sempre presente em
+        notícia de aço dos EUA e não desambigua 'TX' = Texas vs ticker Ternium.
+        """
+        assert "TERNIUM" not in detect_covered_companies(
+            "Steel mill opens in Houston TX with new capacity")
+        assert "TERNIUM" not in detect_covered_companies(
+            "New steel plant in Dallas, TX boosts US capacity")
+
+    def test_ternium_spelled_out_still_detected(self):
+        """Notícia real de Ternium (nome soletrado) CONTINUA detectada."""
+        assert "TERNIUM" in detect_covered_companies(
+            "Ternium reports higher steel shipments in Mexico")
 
     def test_crypto_with_gold_topic_excluded(self):
         """Cripto que menciona 'gold' (tópico) ainda é excluído como off-topic."""

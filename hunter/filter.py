@@ -47,21 +47,18 @@ _TITLE_BLOCKLIST = frozenset([
     "futebol", "football", "basketball", "soccer",
 ])
 
-# ── Fontes genéricas — exigem keyword no TÍTULO (não apenas no snippet) ────────
-# Evita que artigos de agro ou finanças gerais passem por menção tangencial.
-_BROAD_SOURCES = frozenset([
-    "Folha de S.Paulo", "Folha de São Paulo",
-    "Exame", "InfoMoney", "G1", "G1 Economia", "CNN Brasil",
-    "O Globo", "Agência Brasil",
-    # Notícia geral (esporte/política/entretenimento misturados) — exigem
-    # keyword no TÍTULO para não vazar futebol/política via menção tangencial.
-    "Metrópoles", "UOL Economia", "Veja", "Money Times",
-    "Google News", "Google Notícias",
-])
+# Match por FRONTEIRA DE PALAVRA (não substring): senão "defi" casaria em
+# "define/definir", "wheat" em "Wheaton", "corn" em "Corning", "token" em
+# "tokenização" — derrubando manchete real de empresa coberta. Frases
+# multi-palavra ("boi gordo", "crude oil") usam a mesma fronteira.
+_BLOCK_RE = re.compile(
+    r"(?<!\w)(?:" + "|".join(re.escape(w) for w in sorted(_TITLE_BLOCKLIST, key=len, reverse=True)) + r")(?!\w)",
+    re.IGNORECASE,
+)
 
-# ── Page-index detection — Google News retorna URLs de páginas-índice (não
-# artigos): "Mineração - Valor Econômico", "Últimas notícias", "Vídeos",
-# "B3SA3 - Ações hoje". Reconhecíveis por padrões de título genérico.
+# ── Page-index detection — descarta títulos que são páginas de listagem/índice
+# (não artigos): "Últimas notícias", "Vídeos", "Seção - Jornal", "Ações hoje".
+# Genérico — útil p/ qualquer scraper de homepage que capte links de navegação.
 _PAGE_INDEX_TITLE_PATTERNS = [
     re.compile(r"^(últimas notícias|ultimas noticias|vídeos|videos|home|notícias|noticias)", re.IGNORECASE),
     re.compile(r"^[A-Z]{2,5}\s*\|\s*[A-Z]{4,5}\d?\b", re.IGNORECASE),  # "B3 | B3SA3"
@@ -145,11 +142,6 @@ def _match_text(text: str) -> list[str]:
     return sorted(found)
 
 
-def _matches_field(text: str) -> list[str]:
-    """Keywords que batem em um campo específico (ex: só o título)."""
-    return _match_text(text)
-
-
 def _matches(article: RawArticle) -> list[str]:
     """Keywords que bateram no título + snippet."""
     return _match_text(f"{article.title} {article.snippet}")
@@ -172,11 +164,10 @@ def filter_articles(articles: list[RawArticle]) -> list[dict]:
     """
     Filtra os artigos por keyword — com exceções por fonte (SOURCE_FILTER_RULES).
 
-    Fontes comuns: ao menos 1 keyword deve aparecer no título OU snippet; fontes
-    genéricas (Folha, Exame…) exigem keyword no TÍTULO.
-
-    Fontes pass_through (ex.: Platts): aceitam TODAS as notícias, pulando
-    keyword/page-index/blocklist. O único gate é title_exclude (ex.: "rationale").
+    Fontes comuns (filter=True): >=1 keyword no título OU snippet (two-tier — keywords
+    ambíguas exigem forma capitalizada; ver _AMBIGUOUS_CASED).
+    Fontes setoriais (needs_filter=False): aceitam tudo, só blocklist de título.
+    Fontes pass_through (Platts): aceitam TUDO, só title_exclude (ex.: "rationale").
     """
     result: list[dict] = []
     for art in articles:
@@ -200,18 +191,18 @@ def filter_articles(articles: list[RawArticle]) -> list[dict]:
         #    segurança. (Antes, por bug, essas passavam por keyword e perdiam
         #    matérias setoriais sem termo exato no título/resumo.)
         if not getattr(art, "needs_filter", True):
-            if any(w in title_lower for w in _TITLE_BLOCKLIST):
+            if _BLOCK_RE.search(title_lower):
                 continue
             result.append(_to_dict(art, []))
             continue
 
         # ── Caminho padrão: keyword filtering ──────────────────────────────────
-        # 0. Page-index detection: descarta páginas de listagem do Google News
+        # 0. Page-index: descarta páginas de listagem/índice (não artigos)
         if _is_page_index(art.title):
             continue
 
-        # 1. Blocklist: descarta imediatamente se o TÍTULO contém palavra off-topic
-        if any(w in title_lower for w in _TITLE_BLOCKLIST):
+        # 1. Blocklist: descarta se o TÍTULO contém palavra off-topic (fronteira de palavra)
+        if _BLOCK_RE.search(title_lower):
             continue
 
         content_matches = _matches(art)   # título + snippet (com casing de ambíguas)
