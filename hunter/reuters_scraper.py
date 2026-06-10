@@ -85,6 +85,31 @@ def _iter_xml_children(content: bytes, parent_local: str):
         yield fields
 
 
+def _get(url: str) -> tuple[int, bytes]:
+    """GET com fallback curl_cffi quando bloqueado.
+
+    A Reuters fica atrás de Cloudflare e devolve 401/403 ao TLS fingerprint do
+    `requests` a partir de IP de datacenter (GitHub Actions). curl_cffi imita o
+    TLS do Chrome e costuma passar (mesma estratégia do Mining.com em fetcher.py).
+    """
+    status, content = 0, b""
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        status, content = resp.status_code, resp.content
+    except Exception as e:
+        log.debug("Reuters requests falhou [%s]: %s", url, e)
+    if status == 200:
+        return status, content
+    try:
+        from curl_cffi import requests as creq
+        r2 = creq.get(url, impersonate="chrome", timeout=_TIMEOUT)
+        log.info("Reuters curl_cffi fallback [%s]: HTTP %d", url, r2.status_code)
+        return r2.status_code, r2.content
+    except Exception as e:
+        log.debug("Reuters curl_cffi indisponível/falhou: %s", e)
+    return status, content
+
+
 def collect_reuters_headlines() -> list[RawArticle]:
     """Ponto de entrada — retorna RawArticle list (Reuters, via sitemap)."""
     now = datetime.now(timezone.utc)
@@ -93,22 +118,22 @@ def collect_reuters_headlines() -> list[RawArticle]:
     seen: set[str] = set()
 
     try:
-        ri = requests.get(_SITEMAP_INDEX, headers=_HEADERS, timeout=_TIMEOUT)
-        if ri.status_code != 200:
-            log.warning("Reuters sitemap-index HTTP %d (provável bloqueio Cloudflare/IP)",
-                        ri.status_code)
+        ri_status, ri_content = _get(_SITEMAP_INDEX)
+        if ri_status != 200:
+            log.warning("Reuters sitemap-index HTTP %d (bloqueio Cloudflare/IP, mesmo c/ curl_cffi)",
+                        ri_status)
             return []
-        submaps = [f["loc"] for f in _iter_xml_children(ri.content, "sitemap") if "loc" in f][:_SUBMAPS]
+        submaps = [f["loc"] for f in _iter_xml_children(ri_content, "sitemap") if "loc" in f][:_SUBMAPS]
     except Exception as e:
         log.warning("Reuters sitemap-index falhou: %s", e)
         return []
 
     for sm in submaps:
         try:
-            r = requests.get(sm, headers=_HEADERS, timeout=_TIMEOUT)
-            if r.status_code != 200:
+            st, content = _get(sm)
+            if st != 200:
                 continue
-            for f in _iter_xml_children(r.content, "url"):
+            for f in _iter_xml_children(content, "url"):
                 loc = f.get("loc", "")
                 if not loc or loc in seen or ".jpg" in loc or ".png" in loc:
                     continue
