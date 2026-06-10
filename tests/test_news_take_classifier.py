@@ -231,12 +231,18 @@ class TestClassifyTakeRequiredCases:
         assert "met_coal" in r["normalized_topics"]
         assert r["take"] == "-"
 
-    def test_4_scrap_fall_positive(self):
-        """Scrap prices fall in Brazil → +"""
+    def test_4_scrap_subject_neutral_brazil(self):
+        """Scrap como SUJEITO fora dos EUA → neutro. Gabarito de 8.639: scrap é
+        ~58-73% '='; a inversão global tinha 43% de erro. Só inverte nos EUA."""
         r = classify_take("Scrap prices fall in Brazil", {})
         assert r["include_in_report"] is True
         assert r["sector"] == "steel_mining"
         assert "scrap" in r["normalized_topics"]
+        assert r["take"] == "="
+
+    def test_4b_scrap_us_inverts(self):
+        """Scrap doméstico dos EUA ainda inverte como custo (queda → +)."""
+        r = classify_take("US ferrous scrap prices fall", {})
         assert r["take"] == "+"
 
     def test_5_new_pulp_capacity_third_party(self):
@@ -312,12 +318,14 @@ class TestClassifyTakeAdditional:
         )
         assert r["take"] == "+"
 
-    def test_turkish_rebar_exports_up_negative(self):
+    def test_turkish_rebar_up_positive(self):
+        """Rebar turco é PRODUTO vendido no mercado global: preço em alta → +
+        (gabarito 13/13). A inversão antiga (up→-) tinha 68-84% de erro."""
         r = classify_take(
-            "Turkish rebar exports rise strongly to global markets",
+            "Turkish rebar export prices rise strongly",
             {},
         )
-        assert r["take"] == "-"
+        assert r["take"] == "+"
 
     def test_suzano_no_auto_negative_capacity(self):
         """Suzano expansão: regra de oferta de terceiro NÃO aplica."""
@@ -375,9 +383,16 @@ class TestClassifyTakeAdditional:
         r = classify_take("Scrap prices surge in US market driven by strong demand", {})
         assert r["take"] == "-"
 
-    def test_occ_up_negative(self):
+    def test_occ_up_neutral(self):
+        """OCC em ALTA é ambíguo no gabarito (39%+/25%-), não '-': removido
+        occ_up_neg (tinha 62% de erro)."""
         r = classify_take("OCC prices rise sharply in Europe", {})
-        assert r["take"] == "-"
+        assert r["take"] == "="
+
+    def test_occ_down_positive(self):
+        """OCC em QUEDA → alívio de custo de aparas → + (lado limpo mantido)."""
+        r = classify_take("OCC prices drop sharply", {})
+        assert r["take"] == "+"
 
     def test_confidence_range(self):
         """Confidence deve estar entre 0 e 1."""
@@ -687,13 +702,15 @@ class TestTopicAnchoredDirection:
         r = classify_take("Met coal prices fall sharply as supply increases", {})
         assert r["take"] == "+"
 
-    def test_causal_subordinate_ignored_scrap(self):
-        r = classify_take("Scrap prices surge driven by strong demand", {})
+    def test_causal_subordinate_ignored_met_coal(self):
+        """Subordinada causal 'driven by strong demand' é ignorada: só o met coal
+        (custo) conta → '-'. (Antes usava scrap, que agora é neutro fora dos EUA.)"""
+        r = classify_take("Met coal prices surge driven by strong demand", {})
         assert r["take"] == "-"
 
     def test_genuine_conflict_neutral(self):
-        """HRC sobe (+) vs scrap custo sobe (-) = conflito real = '='."""
-        r = classify_take("HRC prices rise but scrap costs jump", {})
+        """HRC sobe (+) vs met coal custo sobe (-) = conflito real = '='."""
+        r = classify_take("HRC prices rise but met coal costs jump", {})
         assert r["take"] == "="
 
     def test_demand_recovers_causal(self):

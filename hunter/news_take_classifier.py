@@ -131,7 +131,7 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(mining|miner|minerals?|mineradora|mineracao|mineral.?demand)\b",  "mining"),
     (r"\b(pellet|pellets|pellet.?premium|pelotas?)\b",                   "pellets"),
     (r"\b(sinter.?feed|lump.?ore)\b",                                    "sinter"),
-    (r"\b(met.?coal|coking.?coal|carvao.?metalurgico|carvao.?coqueificavel)\b", "met_coal"),
+    (r"\b(met.?coal|coking.?coal|carvao.?metalurgico|carvao.?coqueificavel|coke)\b", "met_coal"),
     (r"\b(scrap|sucata|ferrous.?scrap|steel.?scrap|sucata.?ferrosa)\b",  "scrap"),
     (r"\b(dri|direct.?reduced.?iron|hbi)\b",                             "dri"),
     # Pulp & Paper
@@ -255,6 +255,23 @@ _QUANTIFIED_MOVE_RE = re.compile(
     r"|\d+(\.\d+)?\s?%",
     re.I,
 )
+
+# Sinais de que a manchete fala de PREÇO do produto (não de volume/estoque).
+# Permitem disparar a regra de preço sem exigir a palavra literal "prices", mas
+# sem capturar direção que pertence a inventories/production/exports.
+_PRICE_SIGNAL_RE = re.compile(
+    r"\b(price|prices|priced|pricing|premium|premiums|market|markets|"
+    r"rally|rallies|rallied|bullish|bearish|offer|offers|bid|bids|"
+    r"assessment|assessed|fob|cfr|cif|exw|spot|index|indices|hike|hikes|"
+    r"quotation|quoted|quotes)\b", re.I,
+)
+# Tópicos de QUANTIDADE: quando presentes, a direção provavelmente é deles
+# (estoque/produção/fluxo), não do preço — então a regra de preço só dispara se
+# houver sinal explícito de preço acima.
+_QUANTITY_TOPICS = frozenset({
+    "inventories", "production", "exports", "imports", "supply", "demand",
+    "capacity", "utilization",
+})
 
 # Termos de exclusão automática (tipo de conteúdo)
 _EXCLUDE_CONTENT_TYPES = frozenset(["rationale"])
@@ -767,20 +784,24 @@ def _compute_take(
         else:
             add(0, "Movimentação de met coal detectada; direção incerta.", "met_coal_neutral", conf=0.50)
 
-    # ── REGRA 2: scrap (custo-insumo) ─────────────────────────────────────────
-    if "scrap" in topic_set:
+    # ── REGRA 2: scrap — majoritariamente NEUTRO (gabarito 8.639) ─────────────
+    # Scrap como sujeito é ~58-73% neutro no gabarito; a inversão global tinha 43%
+    # de erro. Só inverte de forma confiável no mercado doméstico dos EUA (8/8).
+    # TR/BR/global → sem sinal direcional (cai para neutro). Quando scrap é só
+    # driver de um produto (rebar "amid strong scrap"), o produto é quem manda.
+    if "scrap" in topic_set and region == "us":
         dd = d("scrap")
         if dd > 0:
-            add(-1, "Alta de scrap pressiona custos.", "scrap_up_neg")
+            add(-1, "Alta de scrap doméstico (US) pressiona custos.", "scrap_up_neg_us")
         elif dd < 0:
-            add(+1, "Queda de scrap reduz custos.", "scrap_down_pos")
+            add(+1, "Queda de scrap doméstico (US) reduz custos.", "scrap_down_pos_us")
 
-    # ── REGRA 3: OCC (custo-insumo) ──────────────────────────────────────────
+    # ── REGRA 3: OCC — só QUEDA→+ (gabarito: alta é ambígua, NÃO é -) ─────────
+    # OCC up no gabarito é 39%+/25%- (não negativo); occ_up_neg tinha 62% de erro.
+    # Mantém só o lado limpo (queda de custo de aparas → alívio → +).
     if "occ" in topic_set:
         dd = d("occ")
-        if dd > 0:
-            add(-1, "Alta de OCC pressiona custos de papel/embalagens.", "occ_up_neg")
-        elif dd < 0:
+        if dd < 0:
             add(+1, "Queda de OCC reduz custos de papel/embalagens.", "occ_down_pos")
 
     # ── REGRA 4: demanda ─────────────────────────────────────────────────────
@@ -814,10 +835,17 @@ def _compute_take(
                        "iron_ore", "pellets", "copper", "gold", "pulp", "paper",
                        "tissue", "containerboard"}
     _product_topics = topic_set & _PRODUCT_TOPICS
-    if _product_topics and "prices" in topic_set:
-        # Direção do preço = direção do produto; se neutro, herda de 'prices'.
+    # NÃO exige mais a palavra literal "prices" (a regra antiga perdia "HRC
+    # bullish", "iron ore market rises", "pellet premiums strong" → achatava
+    # centenas de manchetes p/ "="). Dispara quando há SINAL DE PREÇO explícito
+    # (price/market/premium/offers/rally/index/hike/bullish…) OU quando não há
+    # tópico de QUANTIDADE que reivindique a direção — assim "iron ore inventories
+    # rise" continua sendo lido como estoque (REGRA 5), não como preço.
+    _price_signal = bool(_PRICE_SIGNAL_RE.search(norm))
+    _quantity_present = bool(topic_set & _QUANTITY_TOPICS)
+    if _product_topics and (_price_signal or not _quantity_present):
         for prod in sorted(_product_topics):
-            pd = d(prod) or d("prices")
+            pd = d(prod) or (d("prices") if "prices" in topic_set else 0)
             if pd > 0:
                 add(+1, f"Alta de preços de {prod} beneficia produtores.", f"price_{prod}_up_pos")
             elif pd < 0:
@@ -836,13 +864,12 @@ def _compute_take(
     if "closure" in topic_set and not has_covered:
         add(+1, "Fechamento de planta de terceiro reduz oferta.", "closure_pos", conf=0.75)
 
-    # ── REGRA 10: Turkish rebar exports ──────────────────────────────────────
-    if _mentions_turkish_rebar(norm) and "exports" in topic_set:
-        dd = d("exports")
-        if dd > 0:
-            add(-1, "Aumento de exportações de rebar turco eleva competição global.", "turkish_rebar_exports_up_neg")
-        elif dd < 0:
-            add(+1, "Queda de exportações de rebar turco reduz pressão competitiva.", "turkish_rebar_exports_down_pos")
+    # ── REGRA 10: Turkish rebar — é PRODUTO, não inversão (gabarito 8.639) ────
+    # A regra antiga (exports up→- / down→+) tinha 68-84% de ERRO. Rebar turco é
+    # produto vendido no mercado global: a direção de PREÇO já é capturada pela
+    # REGRA 7 (up→+, down→-), verificada 13/13 + 16/16 no gabarito. Inversão
+    # REMOVIDA; a neutralização regional (rest_of_world) segue isentando turkish
+    # rebar para preservar essa direção de produto.
 
     # ── REGRA 11: exports genéricos de empresa coberta ────────────────────────
     if "exports" in topic_set and has_covered and not _mentions_turkish_rebar(norm):
