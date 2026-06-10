@@ -187,6 +187,16 @@ def fetch_all() -> list[RawArticle]:
     except Exception as e:
         log.warning("Reuters scraper falhou: %s", e)
 
+    # 1c) News-sitemaps (cobertura do site inteiro; robusto a mudança de layout).
+    #     Combina com os scrapers de homepage via dedup por URL (ex.: Estadão).
+    try:
+        from .sitemap_scrapers import collect_sitemap_sources
+        sitemap_items = collect_sitemap_sources()
+        all_articles.extend(sitemap_items)
+        log.info("Sitemaps: %d artigos", len(sitemap_items))
+    except Exception as e:
+        log.warning("Sitemap scrapers falharam: %s", e)
+
     # 2) Feeds RSS
     with ThreadPoolExecutor(max_workers=6) as ex:
         futures = {ex.submit(_fetch_one, src): src for src in SOURCES}
