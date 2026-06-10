@@ -14,7 +14,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import requests
 
@@ -82,12 +82,13 @@ HTML_SOURCES = [
         "needs_filter": False,   # site 100% dedicado a steel; conteúdo em turco
     },
     {
-        # RSS oficial está congelado (171 dias) → scraper da página de notícias.
+        # RSS oficial está congelado (>170 dias) → scraper da página de notícias.
         "label": "IBRAM",
         "page_url": "https://ibram.org.br/noticias/",
         "domain": "ibram.org.br",
         "selector": "a[href*='/noticia/']",   # singular = artigo (plural = categoria)
         "needs_filter": False,                 # fonte setorial de mineração
+        "title_attr": True,                    # a âncora envolve o card → usar title=
     },
     {
         # RSS oficial está morto → scraper. Âncoras sem texto → título via slug.
@@ -106,6 +107,17 @@ def _title_from_url(href: str) -> str:
     slug = href.rstrip("/").split("/")[-1]
     words = slug.replace("-", " ").replace("_", " ").strip()
     return words[:1].upper() + words[1:] if words else ""
+
+
+def _canonical_key(href: str) -> str:
+    """Chave de dedup robusta. SMM (metal.com) serve a MESMA matéria com URL
+    percent-encoded vs literal e slug EN vs PT — todas com o mesmo id em
+    /newscontent/<id>; dedup pelo id evita gravar a notícia 2-3×. Para as demais,
+    usa o path normalizado (sem barra final / percent-encoding)."""
+    m = re.search(r"/newscontent/(\d+)", href)
+    if m:
+        return "smm:" + m.group(1)
+    return urlparse(unquote(href)).path.rstrip("/") or href
 
 
 def _scrape_source(src: dict) -> list[RawArticle]:
@@ -147,17 +159,25 @@ def _scrape_source(src: dict) -> list[RawArticle]:
         elif not href.startswith("http"):
             continue
 
-        title = a.get_text(strip=True)
-        # Fallback: título derivado do slug quando a âncora não tem texto
+        # Título: prefere o atributo title= (IBRAM envolve o card inteiro na âncora →
+        # get_text colapsa "categoria + data + LEIA MAIS"); senão o texto da âncora;
+        # senão deriva do slug (âncora sem texto, ex.: Aço Brasil).
+        title = ""
+        if src.get("title_attr"):
+            title = (a.get("title") or "").replace("\xa0", " ").strip()
+        if not title:
+            title = a.get_text(strip=True)
         if (not title or len(title) < 12) and src.get("title_from_slug"):
             title = _title_from_url(href)
         if not title or len(title) < 12:
             continue
 
-        # Dedup local (mesma URL pode aparecer no menu + grid)
-        if href in seen_urls:
+        # Dedup local por chave canônica (mesma matéria pode vir 2-3× com encodings
+        # diferentes — ex.: SMM por id; ver _canonical_key).
+        key = _canonical_key(href)
+        if key in seen_urls:
             continue
-        seen_urls.add(href)
+        seen_urls.add(key)
 
         domain = urlparse(href).netloc.replace("www.", "")
 

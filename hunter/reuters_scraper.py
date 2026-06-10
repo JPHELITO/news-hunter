@@ -44,13 +44,16 @@ _RELEVANT_KW = re.compile(
     r")\b",
     re.I,
 )
-_DATE_SUFFIX = re.compile(r"-\d{4}-\d{2}-\d{2}/?$")
+# Data embutida no slug (sempre presente em URL arc Reuters, geralmente no fim).
+# Lookahead casa em qualquer posição. NÃO removemos "hash final": URLs arc Reuters
+# não têm hash e o strip ⩾6 letras comia a última palavra REAL do título
+# (ex.: "...ipo plans ft" perdia "reports"; "...weigh tariff" perdia "support").
+_DATE_RE = re.compile(r"-\d{4}-\d{2}-\d{2}(?=[-/]|$)")
 
 
 def _title_from_slug(url: str) -> str:
     slug = url.rstrip("/").split("/")[-1]
-    slug = _DATE_SUFFIX.sub("", slug)            # remove sufixo -2026-06-05
-    slug = re.sub(r"-[a-z0-9]{6,}$", "", slug)   # remove hash final ocasional
+    slug = _DATE_RE.sub("", slug)
     words = slug.replace("-", " ").strip()
     return words[:1].upper() + words[1:] if words else ""
 
