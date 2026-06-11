@@ -36,11 +36,12 @@ _YAHOO_RETRIES = 3
 # ───────────────────────────────────────────────────────────────────────────
 # Listas de instrumentos
 # ───────────────────────────────────────────────────────────────────────────
-# Quotes: 14 tickers (mistura B3 / NYSE / BCS / BMV)
+# Quotes: 15 instrumentos (IBOV + 14 ações; mistura B3 / NYSE / BCS / BMV)
 QUOTES_LIST = [
     # (ticker_supabase, name, sector, exchange, provider, query_symbol)
     # Usamos Yahoo para todos (.SA para tickers brasileiros). Brapi tem rate-limit
     # severo no token público; Yahoo v8 chart endpoint é estável e gratuito.
+    ("IBOV",        "Ibovespa",        "index",  "B3",   "yahoo", "^BVSP"),
     ("VALE3.SA",    "Vale",            "mining", "B3",   "yahoo", "VALE3.SA"),
     ("CSNA3.SA",    "CSN",             "steel",  "B3",   "yahoo", "CSNA3.SA"),
     ("CMIN3.SA",    "CSN Mineração",   "mining", "B3",   "yahoo", "CMIN3.SA"),
