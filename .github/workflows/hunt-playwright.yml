@@ -78,6 +78,15 @@ jobs:
             echo "============================================================"
             echo "▶ Playwright iteração $i — $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
             echo "============================================================"
+            # Self-update: puxa o master mais recente antes de cada iteração (espelha o
+            # hunt-loop) → mudanças de código entram no próximo giro (~30 min) sem reiniciar.
+            # Falha graciosa se git não estiver no container (set +e mantém o loop).
+            git config --global --add safe.directory "$(pwd)" 2>/dev/null
+            if git fetch origin master --quiet 2>/dev/null && git reset --hard origin/master --quiet 2>/dev/null; then
+              echo "↻ código sincronizado: $(git rev-parse --short HEAD)"
+            else
+              echo "⚠ self-update pulado (git indisponível no container?)"
+            fi
             start=$(date +%s)
             python hunt.py --playwright || echo "⚠ hunt --playwright falhou na iter $i — continuando"
             elapsed=$(( $(date +%s) - start ))
