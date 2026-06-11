@@ -119,6 +119,40 @@ def _parse_price(text: str) -> float | None:
         return None
 
 
+# Formatos de data que o workspace Platts costuma exibir na coluna "Assessed Date".
+_ASSESSED_DATE_FORMATS = (
+    "%d-%b-%Y",   # 10-Jun-2025
+    "%d %b %Y",   # 10 Jun 2025
+    "%d-%b-%y",   # 10-Jun-25
+    "%d/%m/%Y",   # 10/06/2025
+    "%m/%d/%Y",   # 06/10/2025
+    "%Y-%m-%d",   # 2025-06-10 (ISO)
+    "%b %d, %Y",  # Jun 10, 2025
+    "%d %B %Y",   # 10 June 2025
+)
+
+
+def _parse_assessed_date(text: str | None) -> str | None:
+    """Converte o texto da coluna 'Assessed Date' do Platts em ISO 'YYYY-MM-DD'.
+
+    Tenta o parser ISO nativo e depois vários formatos comuns do workspace;
+    retorna None se nenhum casar (o valor cru é logado para ajuste posterior).
+    """
+    if not text:
+        return None
+    t = text.strip()
+    try:
+        return datetime.fromisoformat(t.replace("Z", "+00:00")).date().isoformat()
+    except (ValueError, TypeError):
+        pass
+    for fmt in _ASSESSED_DATE_FORMATS:
+        try:
+            return datetime.strptime(t, fmt).date().isoformat()
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
 # JS para ler preços direto da tabela AG-Grid renderizada (DOM).
 # Mais robusto que interceptar rede — lê exatamente o que está na tela.
 _DOM_PRICE_JS = """
@@ -126,7 +160,7 @@ _DOM_PRICE_JS = """
   // Lê a watchlist INTEIRA da grid AG-Grid (a 'Dashboard' é a config do usuário):
   // cada linha vira {price, change%, desc}. Descobre as colunas pelo cabeçalho.
   const norm = el => (el.textContent||'').trim().toLowerCase().replace(/\\s+/g,'');
-  let symCol=null, descCol=null, priceCol=null, chgCol=null;
+  let symCol=null, descCol=null, priceCol=null, chgCol=null, dateCol=null, freqCol=null;
   document.querySelectorAll('.ag-header-cell, [role="columnheader"]').forEach(h => {
     const t = norm(h), id = h.getAttribute('col-id');
     if (!id) return;
@@ -134,6 +168,10 @@ _DOM_PRICE_JS = """
     if (!descCol && (t.indexOf('description')!==-1||t==='name'||t==='symbolname'||t==='symboldescription')) descCol=id;
     if (!priceCol&& (t==='price'||t==='bate'||t==='value'||t==='last'||t==='bid'||t==='assessment'||t==='mid')) priceCol=id;
     if (!chgCol  && t.indexOf('change')!==-1 && t.indexOf('%')!==-1) chgCol=id;
+    if (!dateCol && (t.indexOf('assessed')!==-1 || (t.indexOf('assess')!==-1 && t.indexOf('date')!==-1)
+                     || t==='assessmentdate' || t==='assessdate' || t==='asofdate' || t==='date'
+                     || t==='assessmenttime')) dateCol=id;
+    if (!freqCol && (t.indexOf('frequency')!==-1 || t==='freq')) freqCol=id;
   });
   const SYM_RE = /^[A-Z][A-Z0-9]{4,9}$/;          // símbolo Platts (ex.: IODBZ00)
   const cellOf = (row,id) => { if(!id) return null; const c=row.querySelector('[col-id="'+id+'"]'); return c?(c.textContent||'').trim():null; };
@@ -154,10 +192,12 @@ _DOM_PRICE_JS = """
       });
     }
     if (!price) return;
-    out[sym] = {price: price, change: chgCol?cellOf(row,chgCol):null, desc: descCol?cellOf(row,descCol):null};
+    out[sym] = {price: price, change: chgCol?cellOf(row,chgCol):null, desc: descCol?cellOf(row,descCol):null,
+                assessed: dateCol?cellOf(row,dateCol):null, freq: freqCol?cellOf(row,freqCol):null};
   });
   return {rows: out, rowCount: document.querySelectorAll('.ag-row, [role="row"]').length,
-          cols: {sym: !!symCol, desc: !!descCol, price: !!priceCol, chg: !!chgCol}};
+          cols: {sym: !!symCol, desc: !!descCol, price: !!priceCol, chg: !!chgCol,
+                 date: !!dateCol, freq: !!freqCol}};
 }
 """
 
@@ -517,6 +557,17 @@ def _scrape() -> list[RawArticle]:
                     desc = (raw.get("desc") or "").strip()
                     if desc:
                         entry["desc"] = desc
+                    assessed_raw = (raw.get("assessed") or "").strip()
+                    if assessed_raw:
+                        iso = _parse_assessed_date(assessed_raw)
+                        if iso:
+                            entry["assessed_at"] = iso
+                        else:
+                            log.info("platts_scraper: assessed date não parseada p/ %s: %r",
+                                     sym, assessed_raw)
+                    freq = (raw.get("freq") or "").strip()
+                    if freq:
+                        entry["freq"] = freq
                     price_buf[sym] = entry
                 log.info("platts_scraper: %d símbolos capturados via DOM (watchlist inteira)", len(price_buf))
 

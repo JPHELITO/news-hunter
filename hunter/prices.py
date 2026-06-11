@@ -420,6 +420,7 @@ def update_commodities() -> int:
             "price":      d.get("price"),
             "change_pct": d.get("change_pct"),
             "updated_at": _now_iso(),
+            "assessed_at": _now_iso()[:10],   # Yahoo = ao vivo → data de hoje (front mostra "Live")
         })
     # As 4 commodities Platts (Iron Ore 61%, HRC China, Rebar Turkey, Met Coal)
     # são geridas por update_platts_commodities (hunt-playwright 30min) — não
@@ -443,14 +444,17 @@ def update_platts_commodities(platts_prices: dict) -> int:
         if not d or d.get("price") is None:
             log.info("platts: %s (%s) não capturado — mantém valor atual", symbol, name)
             continue
-        rows.append({
+        row = {
             "code":       code,
             "name":       name,
             "unit":       unit,
             "price":      d["price"],
             "change_pct": d.get("change_pct"),
             "updated_at": _now_iso(),
-        })
+        }
+        if d.get("assessed_at"):           # data real do assessment (coluna Assessed Date)
+            row["assessed_at"] = d["assessed_at"]
+        rows.append(row)
     if rows:
         log.info("platts commodities (%d/%d): %s", len(rows), len(PLATTS_COMMODITIES),
                  {r["name"]: r["price"] for r in rows})
