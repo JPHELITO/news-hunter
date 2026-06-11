@@ -114,54 +114,41 @@ def _parse_price(text: str) -> float | None:
 # Mais robusto que interceptar rede — lê exatamente o que está na tela.
 _DOM_PRICE_JS = """
 () => {
-  const targets = ['IODBZ00','STHRZ02','STCBM00','PLVHA00'];
-  const out = {};
-  const chg = {};
-  let priceColId = null;
-  let changeColId = null;
-  // Descobre o col-id das colunas "Price" e "Change%" pelo cabeçalho
+  // Lê a watchlist INTEIRA da grid AG-Grid (a 'Dashboard' é a config do usuário):
+  // cada linha vira {price, change%, desc}. Descobre as colunas pelo cabeçalho.
+  const norm = el => (el.textContent||'').trim().toLowerCase().replace(/\\s+/g,'');
+  let symCol=null, descCol=null, priceCol=null, chgCol=null;
   document.querySelectorAll('.ag-header-cell, [role="columnheader"]').forEach(h => {
-    const t = (h.textContent||'').trim().toLowerCase().replace(/\\s+/g,'');
-    if (!priceColId && (t === 'price' || t === 'bid' || t === 'value' || t === 'last')) {
-      priceColId = h.getAttribute('col-id');
-    }
-    // Change% (não confundir com a coluna "Change" absoluta — exige o '%')
-    if (!changeColId && t.indexOf('change') !== -1 && t.indexOf('%') !== -1) {
-      changeColId = h.getAttribute('col-id');
-    }
+    const t = norm(h), id = h.getAttribute('col-id');
+    if (!id) return;
+    if (!symCol  && (t==='symbol'||t==='code'||t==='ticker'||t==='mdcsymbol')) symCol=id;
+    if (!descCol && (t.indexOf('description')!==-1||t==='name'||t==='symbolname'||t==='symboldescription')) descCol=id;
+    if (!priceCol&& (t==='price'||t==='bate'||t==='value'||t==='last'||t==='bid'||t==='assessment'||t==='mid')) priceCol=id;
+    if (!chgCol  && t.indexOf('change')!==-1 && t.indexOf('%')!==-1) chgCol=id;
   });
-  const rows = document.querySelectorAll('.ag-row, [role="row"]');
-  rows.forEach(row => {
-    let sym = null;
-    const cells = row.querySelectorAll('.ag-cell, [role="gridcell"], td');
-    cells.forEach(c => {
-      const t = (c.textContent||'').trim();
-      if (targets.includes(t)) sym = t;
-    });
-    if (!sym) return;
-    let priceText = null;
-    if (priceColId) {
-      const pc = row.querySelector('[col-id="'+priceColId+'"]');
-      if (pc) priceText = (pc.textContent||'').trim();
-    }
-    if (!priceText) {
-      // Fallback: primeira célula numérica da linha
-      cells.forEach(c => {
-        const t = (c.textContent||'').trim();
-        if (!priceText && /^-?\\d{1,4}([.,]\\d{1,3})?$/.test(t)) priceText = t;
+  const SYM_RE = /^[A-Z][A-Z0-9]{4,9}$/;          // símbolo Platts (ex.: IODBZ00)
+  const cellOf = (row,id) => { if(!id) return null; const c=row.querySelector('[col-id="'+id+'"]'); return c?(c.textContent||'').trim():null; };
+  const out = {};
+  document.querySelectorAll('.ag-row, [role="row"]').forEach(row => {
+    let sym = symCol ? cellOf(row,symCol) : null;
+    if (!sym) {                                   // fallback: célula que pareça símbolo
+      row.querySelectorAll('.ag-cell, [role="gridcell"], td').forEach(c => {
+        const t=(c.textContent||'').trim(); if(!sym && SYM_RE.test(t)) sym=t;
       });
     }
-    if (priceText) out[sym] = priceText;
-    // Change% (autoritativo via col-id; vem com seta/cor, mas só o número importa)
-    if (changeColId) {
-      const cc = row.querySelector('[col-id="'+changeColId+'"]');
-      if (cc) {
-        const ct = (cc.textContent||'').trim();
-        if (ct) chg[sym] = ct;
-      }
+    if (!sym || !SYM_RE.test(sym)) return;        // ignora cabeçalho/linhas de grupo
+    let price = priceCol ? cellOf(row,priceCol) : null;
+    if (!price) {                                 // fallback: 1ª célula numérica
+      row.querySelectorAll('.ag-cell, [role="gridcell"], td').forEach(c => {
+        const t=(c.textContent||'').trim();
+        if(!price && /\\d/.test(t) && /^-?[\\d.,]{1,12}$/.test(t)) price=t;
+      });
     }
+    if (!price) return;
+    out[sym] = {price: price, change: chgCol?cellOf(row,chgCol):null, desc: descCol?cellOf(row,descCol):null};
   });
-  return {prices: out, changes: chg, rowCount: rows.length};
+  return {rows: out, rowCount: document.querySelectorAll('.ag-row, [role="row"]').length,
+          cols: {sym: !!symCol, desc: !!descCol, price: !!priceCol, chg: !!chgCol}};
 }
 """
 
@@ -487,36 +474,42 @@ def _scrape() -> list[RawArticle]:
                     log.debug("platts_scraper: aba Dashboard não clicada: %s", e)
 
                 # Tenta ler do DOM até 3x (a grid pode demorar a popular)
-                dom_prices = {}
-                dom_changes = {}
+                dom_rows = {}
                 row_count = 0
+                cols_found = {}
                 for attempt in range(3):
                     try:
                         res = page.evaluate(_DOM_PRICE_JS)
-                        dom_prices = res.get("prices", {}) if isinstance(res, dict) else {}
-                        dom_changes = res.get("changes", {}) if isinstance(res, dict) else {}
+                        dom_rows = res.get("rows", {}) if isinstance(res, dict) else {}
                         row_count = res.get("rowCount", 0) if isinstance(res, dict) else 0
-                        if dom_prices:
+                        cols_found = res.get("cols", {}) if isinstance(res, dict) else {}
+                        if dom_rows:
                             break
                         page.wait_for_timeout(4_000)
                     except Exception as e:
                         log.debug("platts_scraper: DOM read attempt %d falhou: %s", attempt, e)
                         page.wait_for_timeout(4_000)
 
-                log.info("platts_scraper: DOM grid rows=%d, símbolos lidos=%s",
-                         row_count, list(dom_prices.keys()))
+                log.info("platts_scraper: DOM grid rows=%d, cols=%s, símbolos (%d)=%s",
+                         row_count, cols_found, len(dom_rows), list(dom_rows.keys()))
 
                 # Parseia e mescla no price_buf (DOM tem prioridade sobre rede).
-                # Captura preço + change% (variação percentual diária do assessment).
-                for sym, raw in dom_prices.items():
-                    val = _parse_price(raw)
-                    if val is not None:
-                        entry = {"price": val}
-                        chg = _parse_price(dom_changes.get(sym, ""))
-                        if chg is not None:
-                            entry["change_pct"] = chg
-                        price_buf[sym] = entry
-                        log.info("platts_scraper: %s = %s (DOM, chg=%s)", sym, val, entry.get("change_pct"))
+                # Watchlist INTEIRA: cada linha = {price, change%, desc}.
+                for sym, raw in dom_rows.items():
+                    if not isinstance(raw, dict):
+                        continue
+                    val = _parse_price(raw.get("price"))
+                    if val is None:
+                        continue
+                    entry = {"price": val}
+                    chg = _parse_price(raw.get("change") or "")
+                    if chg is not None:
+                        entry["change_pct"] = chg
+                    desc = (raw.get("desc") or "").strip()
+                    if desc:
+                        entry["desc"] = desc
+                    price_buf[sym] = entry
+                log.info("platts_scraper: %d símbolos capturados via DOM (watchlist inteira)", len(price_buf))
 
                 log.info("platts_scraper: preços finais capturados: %s", list(price_buf.keys()))
             except Exception as e:

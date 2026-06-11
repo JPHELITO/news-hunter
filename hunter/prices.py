@@ -399,18 +399,22 @@ def update_commodities() -> int:
 
 
 def update_platts_commodities(platts_prices: dict) -> int:
-    """Grava as commodities Platts (IODBZ00/STHRZ02/STCBM00/PLVHA00) na tabela.
+    """Grava as commodities Platts na tabela — watchlist 'Dashboard' INTEIRA.
 
-    Chamado quando --playwright capturou preços (hunt-playwright, 30 min).
-    Mapeia cada símbolo → (code, name, unit) via PLATTS_COMMODITIES.
-    Símbolos ausentes são pulados (mantém valor anterior).
+    Chamado quando --playwright capturou preços (hunt-playwright, 30 min). O scraper
+    lê toda a watchlist; cada símbolo vira uma row. Os símbolos core (PLATTS_COMMODITIES)
+    recebem nome/unidade amigáveis; os NOVOS usam a descrição da grid como nome.
+    NOTA: upsert por code — se um símbolo for REMOVIDO da watchlist, a row antiga
+    persiste (não há delete automático). Conferir/limpar manualmente se preciso.
     """
     rows = []
-    for symbol, (code, name, unit) in PLATTS_COMMODITIES.items():
-        d = platts_prices.get(symbol)
+    for symbol, d in platts_prices.items():
         if not d or d.get("price") is None:
-            log.info("platts: %s (%s) não capturado — mantém valor atual", symbol, name)
             continue
+        if symbol in PLATTS_COMMODITIES:
+            code, name, unit = PLATTS_COMMODITIES[symbol]          # core: nome/unidade amigáveis
+        else:
+            code, name, unit = symbol, (d.get("desc") or symbol), ""  # novo: symbol + descrição da grid
         rows.append({
             "code":       code,
             "name":       name,
@@ -420,7 +424,7 @@ def update_platts_commodities(platts_prices: dict) -> int:
             "updated_at": _now_iso(),
         })
     if rows:
-        log.info("platts commodities: %s", {r["name"]: r["price"] for r in rows})
+        log.info("platts commodities (%d): %s", len(rows), {r["name"]: r["price"] for r in rows})
     return _supa_upsert("commodities", rows)
 
 
