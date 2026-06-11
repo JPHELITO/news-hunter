@@ -68,15 +68,44 @@ COMMODITIES_LIST = [
 # Commodities Platts — capturadas da watchlist do workspace (símbolo → meta).
 # code = chave na tabela commodities; o scraper devolve {símbolo: {'price': float}}.
 PLATTS_COMMODITIES = {
-    # platts_symbol: (code, name, unit)
-    "IODBZ00": ("IRON_ORE",     "Iron Ore 61%",    "USD/dmt"),
-    "STHRZ02": ("HRC_CHINA",    "HRC China",       "USD/t"),
-    "STCBM00": ("REBAR_TURKEY", "Rebar Turkey",    "USD/t"),
-    "PLVHA00": ("MET_COAL",     "Asian Met Coal",  "USD/t"),
+    # platts_symbol: (code, name, unit) — watchlist 'Dashboard' do Platts (curada).
+    # Os 4 core mantêm o code amigável (usado p/ ordenar no front). Demais: code = símbolo.
+    "IODBZ00": ("IRON_ORE",     "IO Fines 61%",            "USD/dmt"),
+    "STHRZ02": ("HRC_CHINA",    "HRC China",               "USD/mt"),
+    "STCBM00": ("REBAR_TURKEY", "Rebar Turkey",            "USD/mt"),
+    "PLVHA00": ("MET_COAL",     "HCC FOB AUS Premium",     "USD/mt"),
+    # Iron ore — grades / diff
+    "IOPRM00": ("IOPRM00",      "IO Fines 65%",            "USD/dmt"),
+    "IODFE00": ("IODFE00",      "IO Fines 58%",            "USD/dmt"),
+    "IOMGD00": ("IOMGD00",      "Diff 60/63.5 Fe",         "USD/dmt"),
+    # Iron ore — marcas / blends
+    "IOPBQ00": ("IOPBQ00",      "Pilbara Blend Fines",     "USD/dmt"),
+    "IOBBA00": ("IOBBA00",      "Brazilian Blend Fines",   "USD/dmt"),
+    "IONHA00": ("IONHA00",      "Newman High Grade Fines", "USD/dmt"),
+    "IOMAA00": ("IOMAA00",      "Mining Area C Fines",     "USD/dmt"),
+    "IOJBA00": ("IOJBA00",      "Jimblebar Fines",         "USD/dmt"),
+    # Pellet premium + frete
+    "IOBFC04": ("IOBFC04",      "Pellet Premium",          "USD/dmt"),
+    "IOFBC00": ("IOFBC00",      "Freight Brazil-China",    "USD/wmt"),
+    "IOFAC00": ("IOFAC00",      "Freight Australia-China", "USD/wmt"),
+    # Forwards (curva 62% Fe)
+    "TSIPQ01": ("TSIPQ01",      "FW +1Q",                  "USD/dmt"),
+    "TSIPQ02": ("TSIPQ02",      "FW +2Q",                  "USD/dmt"),
+    "TSIPQ03": ("TSIPQ03",      "FW +3Q",                  "USD/dmt"),
+    "TSIPY01": ("TSIPY01",      "FW +1y",                  "USD/dmt"),
+    # Coal
+    "HCCAU00": ("HCCAU00",      "HCC Low Vol",             "USD/mt"),
 }
 
 # Ordem de exibição no dashboard (códigos)
-COMMODITIES_ORDER = ["IRON_ORE", "HRC_CHINA", "REBAR_TURKEY", "MET_COAL", "COPPER", "GOLD"]
+COMMODITIES_ORDER = [
+    "IRON_ORE", "IOPRM00", "IODFE00", "IOMGD00",
+    "IOPBQ00", "IOBBA00", "IONHA00", "IOMAA00", "IOJBA00",
+    "IOBFC04", "IOFBC00", "IOFAC00",
+    "TSIPQ01", "TSIPQ02", "TSIPQ03", "TSIPY01",
+    "HRC_CHINA", "REBAR_TURKEY", "MET_COAL", "HCCAU00",
+    "COPPER", "GOLD",
+]
 
 # Macro Indicators
 MACRO_YAHOO = [
@@ -399,22 +428,21 @@ def update_commodities() -> int:
 
 
 def update_platts_commodities(platts_prices: dict) -> int:
-    """Grava as commodities Platts na tabela — watchlist 'Dashboard' INTEIRA.
+    """Grava as commodities Platts na tabela — a watchlist 'Dashboard' CURADA.
 
-    Chamado quando --playwright capturou preços (hunt-playwright, 30 min). O scraper
-    lê toda a watchlist; cada símbolo vira uma row. Os símbolos core (PLATTS_COMMODITIES)
-    recebem nome/unidade amigáveis; os NOVOS usam a descrição da grid como nome.
-    NOTA: upsert por code — se um símbolo for REMOVIDO da watchlist, a row antiga
-    persiste (não há delete automático). Conferir/limpar manualmente se preciso.
+    Chamado quando --playwright capturou preços (hunt-playwright, 30 min). Itera
+    PLATTS_COMMODITIES (os símbolos registrados = a watchlist do analista) e grava
+    cada um que foi capturado (preço via feed de rede e/ou DOM). Escopo curado evita
+    puxar ruído de outras abas do workspace. Símbolos não capturados são pulados
+    (mantém o valor anterior). Para ADICIONAR/REMOVER um indicador: editar
+    PLATTS_COMMODITIES aqui + _PRICE_SYMBOLS no platts_scraper.
     """
     rows = []
-    for symbol, d in platts_prices.items():
+    for symbol, (code, name, unit) in PLATTS_COMMODITIES.items():
+        d = platts_prices.get(symbol)
         if not d or d.get("price") is None:
+            log.info("platts: %s (%s) não capturado — mantém valor atual", symbol, name)
             continue
-        if symbol in PLATTS_COMMODITIES:
-            code, name, unit = PLATTS_COMMODITIES[symbol]          # core: nome/unidade amigáveis
-        else:
-            code, name, unit = symbol, (d.get("desc") or symbol), ""  # novo: symbol + descrição da grid
         rows.append({
             "code":       code,
             "name":       name,
@@ -424,7 +452,8 @@ def update_platts_commodities(platts_prices: dict) -> int:
             "updated_at": _now_iso(),
         })
     if rows:
-        log.info("platts commodities (%d): %s", len(rows), {r["name"]: r["price"] for r in rows})
+        log.info("platts commodities (%d/%d): %s", len(rows), len(PLATTS_COMMODITIES),
+                 {r["name"]: r["price"] for r in rows})
     return _supa_upsert("commodities", rows)
 
 

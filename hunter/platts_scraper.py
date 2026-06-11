@@ -32,7 +32,16 @@ log = logging.getLogger(__name__)
 # Símbolos de preço que queremos capturar do workspace Platts:
 #   IODBZ00 = Iron Ore 61% (IODEX CFR China) | STHRZ02 = HRC China
 #   STCBM00 = Rebar Turkey                    | PLVHA00 = Asian Met Coal
-_PRICE_SYMBOLS = {"IODBZ00", "STHRZ02", "STCBM00", "PLVHA00"}
+_PRICE_SYMBOLS = {
+    # Watchlist 'Dashboard' do Platts — capturados via feed de rede (_extract_prices)
+    # e/ou DOM. Mantido em sincronia com PLATTS_COMMODITIES em prices.py.
+    "IODBZ00", "STHRZ02", "STCBM00", "PLVHA00",          # core
+    "IOPRM00", "IODFE00", "IOMGD00",                     # IO grades/diff
+    "IOPBQ00", "IOBBA00", "IONHA00", "IOMAA00", "IOJBA00",  # IO marcas/blends
+    "IOBFC04", "IOFBC00", "IOFAC00",                     # pellet premium + frete
+    "TSIPQ01", "TSIPQ02", "TSIPQ03", "TSIPY01",          # forwards
+    "HCCAU00",                                            # HCC low vol
+}
 
 # Cache de preços preenchido pelo _scrape() como efeito colateral.
 # Lido pelo thread principal após join via get_platts_prices().
