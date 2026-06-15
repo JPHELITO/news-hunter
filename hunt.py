@@ -92,6 +92,15 @@ def main() -> None:
     # enquanto a migration SQL não for rodada no Supabase).
     push_take_fields(articles_filtered)
 
+    # Passo SHADOW da IA de takes (FASE 3). NÃO-FATAL e GATED por dentro
+    # (LLM_TAKES_ENABLED=1 + GITHUB_ACTIONS): no-op até ativarmos. Grava só take_llm*
+    # (o take publicado/Market Pulse não muda durante o shadow).
+    try:
+        from hunter.llm_shadow import run_llm_shadow
+        run_llm_shadow()
+    except Exception as e:
+        log.warning("LLM shadow: passo falhou (não-fatal): %s", e)
+
     # Atualiza cotações, commodities e indicadores macro
     try:
         from hunter.prices import (update_quotes, update_commodities, update_macro,

@@ -4,3 +4,4 @@ python-dotenv>=1.0.0
 playwright==1.52.0
 beautifulsoup4>=4.12.0
 curl_cffi>=0.7.0
+trafilatura>=1.8.0   # FASE 3: extração do corpo do artigo (scraping backstage p/ a IA de takes)
