@@ -36,11 +36,14 @@ _YAHOO_RETRIES = 3
 # ───────────────────────────────────────────────────────────────────────────
 # Listas de instrumentos
 # ───────────────────────────────────────────────────────────────────────────
-# Quotes: 15 instrumentos (IBOV + 14 ações; mistura B3 / NYSE / BCS / BMV)
+# Quotes: 33 instrumentos. Cobertura IBBA (14 ações + IBOV) = default do heatmap;
+# os demais (pares de comparação + índices/ETFs setoriais) só aparecem quando o
+# analista os adiciona pelo filtro do heatmap. Tudo via Yahoo (sem base manual).
 QUOTES_LIST = [
     # (ticker_supabase, name, sector, exchange, provider, query_symbol)
     # Usamos Yahoo para todos (.SA para tickers brasileiros). Brapi tem rate-limit
     # severo no token público; Yahoo v8 chart endpoint é estável e gratuito.
+    # ── Cobertura IBBA (default do heatmap) ──────────────────────────────
     ("IBOV",        "Ibovespa",        "index",  "B3",   "yahoo", "^BVSP"),
     ("VALE3.SA",    "Vale",            "mining", "B3",   "yahoo", "VALE3.SA"),
     ("CSNA3.SA",    "CSN",             "steel",  "B3",   "yahoo", "CSNA3.SA"),
@@ -54,8 +57,28 @@ QUOTES_LIST = [
     ("SCCO",        "Southern Copper", "mining", "NYSE", "yahoo", "SCCO"),
     ("TX",          "Ternium",         "steel",  "NYSE", "yahoo", "TX"),
     ("CMPC.SN",     "CMPC",            "pp",     "BCS",  "yahoo", "CMPC.SN"),
-    ("COPEC.SN",    "Copec",           "mining", "BCS",  "yahoo", "COPEC.SN"),
+    ("COPEC.SN",    "Copec",           "pp",     "BCS",  "yahoo", "COPEC.SN"),
     ("GMEXICOB.MX", "Grupo México",    "mining", "BMV",  "yahoo", "GMEXICOB.MX"),
+    # ── Pares de comparação (não cobertos) ───────────────────────────────
+    ("NUE",         "Nucor",           "steel",  "NYSE", "yahoo", "NUE"),
+    ("MT",          "ArcelorMittal",   "steel",  "NYSE", "yahoo", "MT"),
+    ("BHP",         "BHP Group",       "mining", "NYSE", "yahoo", "BHP"),
+    ("RIO",         "Rio Tinto",       "mining", "NYSE", "yahoo", "RIO"),
+    ("AAL.L",       "Anglo American",  "mining", "LSE",  "yahoo", "AAL.L"),
+    ("FMG.AX",      "Fortescue",       "mining", "ASX",  "yahoo", "FMG.AX"),
+    ("GLEN.L",      "Glencore",        "mining", "LSE",  "yahoo", "GLEN.L"),
+    ("DXCO3.SA",    "Dexco",           "pp",     "B3",   "yahoo", "DXCO3.SA"),
+    ("IP",          "Intl Paper",      "pp",     "NYSE", "yahoo", "IP"),
+    ("UPM.HE",      "UPM-Kymmene",     "pp",     "HEL",  "yahoo", "UPM.HE"),
+    ("VALMT.HE",    "Valmet",          "pp",     "HEL",  "yahoo", "VALMT.HE"),
+    # ── Índices / ETFs setoriais (benchmarks de comparação) ──────────────
+    ("SPX",         "S&P 500",             "index", "US", "yahoo", "^GSPC"),
+    ("MATB11.SA",   "IMAT Materiais (B3)", "index", "B3", "yahoo", "MATB11.SA"),
+    ("GDX",         "Gold Miners ETF",     "index", "US", "yahoo", "GDX"),
+    ("SLX",         "Steel ETF",           "index", "US", "yahoo", "SLX"),
+    ("PICK",        "Metals & Mining ETF", "index", "US", "yahoo", "PICK"),
+    ("COPX",        "Copper Miners ETF",   "index", "US", "yahoo", "COPX"),
+    ("WOOD",        "Timber & Forestry ETF","index","US", "yahoo", "WOOD"),
 ]
 
 # Commodities Yahoo — só Copper e Gold (benchmark global, atualiza a cada 5min).
