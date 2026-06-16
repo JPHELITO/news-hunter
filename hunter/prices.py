@@ -36,49 +36,67 @@ _YAHOO_RETRIES = 3
 # ───────────────────────────────────────────────────────────────────────────
 # Listas de instrumentos
 # ───────────────────────────────────────────────────────────────────────────
-# Quotes: 33 instrumentos. Cobertura IBBA (14 ações + IBOV) = default do heatmap;
-# os demais (pares de comparação + índices/ETFs setoriais) só aparecem quando o
-# analista os adiciona pelo filtro do heatmap. Tudo via Yahoo (sem base manual).
+# Quotes: ~47 instrumentos, agrupados como o "painel de cotações" do heatmap
+# (Cobertura IBBA + Steel / Iron Ore / Gold / Copper / Rare Earths / P&P / Index).
+# Cobertura IBBA + IBOV = default; os demais entram pelo filtro. Tudo via Yahoo.
 QUOTES_LIST = [
     # (ticker_supabase, name, sector, exchange, provider, query_symbol)
-    # Usamos Yahoo para todos (.SA para tickers brasileiros). Brapi tem rate-limit
-    # severo no token público; Yahoo v8 chart endpoint é estável e gratuito.
+    # Setores finos: steel / iron_ore / gold / copper / rare_earths / pp / index.
     # ── Cobertura IBBA (default do heatmap) ──────────────────────────────
-    ("IBOV",        "Ibovespa",        "index",  "B3",   "yahoo", "^BVSP"),
-    ("VALE3.SA",    "Vale",            "mining", "B3",   "yahoo", "VALE3.SA"),
-    ("CSNA3.SA",    "CSN",             "steel",  "B3",   "yahoo", "CSNA3.SA"),
-    ("CMIN3.SA",    "CSN Mineração",   "mining", "B3",   "yahoo", "CMIN3.SA"),
-    ("GGBR4.SA",    "Gerdau",          "steel",  "B3",   "yahoo", "GGBR4.SA"),
-    ("USIM5.SA",    "Usiminas",        "steel",  "B3",   "yahoo", "USIM5.SA"),
-    ("KLBN11.SA",   "Klabin",          "pp",     "B3",   "yahoo", "KLBN11.SA"),
-    ("SUZB3.SA",    "Suzano",          "pp",     "B3",   "yahoo", "SUZB3.SA"),
-    ("RANI3.SA",    "Irani",           "pp",     "B3",   "yahoo", "RANI3.SA"),
-    ("AURA33.SA",   "Aura Minerals",   "mining", "B3",   "yahoo", "AURA33.SA"),
-    ("SCCO",        "Southern Copper", "mining", "NYSE", "yahoo", "SCCO"),
-    ("TX",          "Ternium",         "steel",  "NYSE", "yahoo", "TX"),
-    ("CMPC.SN",     "CMPC",            "pp",     "BCS",  "yahoo", "CMPC.SN"),
-    ("COPEC.SN",    "Copec",           "pp",     "BCS",  "yahoo", "COPEC.SN"),
-    ("GMEXICOB.MX", "Grupo México",    "mining", "BMV",  "yahoo", "GMEXICOB.MX"),
-    # ── Pares de comparação (não cobertos) ───────────────────────────────
-    ("NUE",         "Nucor",           "steel",  "NYSE", "yahoo", "NUE"),
-    ("MT",          "ArcelorMittal",   "steel",  "NYSE", "yahoo", "MT"),
-    ("BHP",         "BHP Group",       "mining", "NYSE", "yahoo", "BHP"),
-    ("RIO",         "Rio Tinto",       "mining", "NYSE", "yahoo", "RIO"),
-    ("AAL.L",       "Anglo American",  "mining", "LSE",  "yahoo", "AAL.L"),
-    ("FMG.AX",      "Fortescue",       "mining", "ASX",  "yahoo", "FMG.AX"),
-    ("GLEN.L",      "Glencore",        "mining", "LSE",  "yahoo", "GLEN.L"),
-    ("DXCO3.SA",    "Dexco",           "pp",     "B3",   "yahoo", "DXCO3.SA"),
-    ("IP",          "Intl Paper",      "pp",     "NYSE", "yahoo", "IP"),
-    ("UPM.HE",      "UPM-Kymmene",     "pp",     "HEL",  "yahoo", "UPM.HE"),
-    ("VALMT.HE",    "Valmet",          "pp",     "HEL",  "yahoo", "VALMT.HE"),
-    # ── Índices / ETFs setoriais (benchmarks de comparação) ──────────────
-    ("SPX",         "S&P 500",             "index", "US", "yahoo", "^GSPC"),
-    ("MATB11.SA",   "IMAT Materiais (B3)", "index", "B3", "yahoo", "MATB11.SA"),
-    ("GDX",         "Gold Miners ETF",     "index", "US", "yahoo", "GDX"),
-    ("SLX",         "Steel ETF",           "index", "US", "yahoo", "SLX"),
-    ("PICK",        "Metals & Mining ETF", "index", "US", "yahoo", "PICK"),
-    ("COPX",        "Copper Miners ETF",   "index", "US", "yahoo", "COPX"),
-    ("WOOD",        "Timber & Forestry ETF","index","US", "yahoo", "WOOD"),
+    ("IBOV",        "Ibovespa",          "index",       "B3",    "yahoo", "^BVSP"),
+    ("VALE3.SA",    "Vale",              "iron_ore",    "B3",    "yahoo", "VALE3.SA"),
+    ("CSNA3.SA",    "CSN",               "steel",       "B3",    "yahoo", "CSNA3.SA"),
+    ("CMIN3.SA",    "CSN Mineração",     "iron_ore",    "B3",    "yahoo", "CMIN3.SA"),
+    ("GGBR4.SA",    "Gerdau",            "steel",       "B3",    "yahoo", "GGBR4.SA"),
+    ("USIM5.SA",    "Usiminas",          "steel",       "B3",    "yahoo", "USIM5.SA"),
+    ("KLBN11.SA",   "Klabin",            "pp",          "B3",    "yahoo", "KLBN11.SA"),
+    ("SUZB3.SA",    "Suzano",            "pp",          "B3",    "yahoo", "SUZB3.SA"),
+    ("RANI3.SA",    "Irani",             "pp",          "B3",    "yahoo", "RANI3.SA"),
+    ("AURA33.SA",   "Aura Minerals",     "gold",        "B3",    "yahoo", "AURA33.SA"),
+    ("SCCO",        "Southern Copper",   "copper",      "NYSE",  "yahoo", "SCCO"),
+    ("TX",          "Ternium",           "steel",       "NYSE",  "yahoo", "TX"),
+    ("CMPC.SN",     "CMPC",              "pp",          "BCS",   "yahoo", "CMPC.SN"),
+    ("COPEC.SN",    "Copec",             "pp",          "BCS",   "yahoo", "COPEC.SN"),
+    ("GMEXICOB.MX", "Grupo México",      "copper",      "BMV",   "yahoo", "GMEXICOB.MX"),
+    # ── Steel ────────────────────────────────────────────────────────────
+    ("MT",          "ArcelorMittal",     "steel",       "NYSE",  "yahoo", "MT"),
+    ("NUE",         "Nucor",             "steel",       "NYSE",  "yahoo", "NUE"),
+    ("CMC",         "Commercial Metals", "steel",       "NYSE",  "yahoo", "CMC"),
+    ("GOAU4.SA",    "Metalúrgica Gerdau","steel",       "B3",    "yahoo", "GOAU4.SA"),
+    ("STLD",        "Steel Dynamics",    "steel",       "NASDAQ","yahoo", "STLD"),
+    # ── Iron ore ─────────────────────────────────────────────────────────
+    ("VALE",        "Vale (NYSE)",       "iron_ore",    "NYSE",  "yahoo", "VALE"),
+    ("FMG.AX",      "Fortescue",         "iron_ore",    "ASX",   "yahoo", "FMG.AX"),
+    ("RIO",         "Rio Tinto",         "iron_ore",    "NYSE",  "yahoo", "RIO"),
+    ("BHP",         "BHP Group",         "iron_ore",    "NYSE",  "yahoo", "BHP"),
+    ("AAL.L",       "Anglo American",    "iron_ore",    "LSE",   "yahoo", "AAL.L"),
+    ("CAP.SN",      "CAP S.A.",          "iron_ore",    "BCS",   "yahoo", "CAP.SN"),
+    ("BRAP3.SA",    "Bradespar",         "iron_ore",    "B3",    "yahoo", "BRAP3.SA"),
+    # ── Gold ─────────────────────────────────────────────────────────────
+    ("AUGO",        "Aura Minerals (Nasdaq)", "gold",   "NASDAQ","yahoo", "AUGO"),
+    ("ARIS",        "Aris Mining",       "gold",        "NYSE",  "yahoo", "ARIS"),
+    ("BVN",         "Buenaventura",      "gold",        "NYSE",  "yahoo", "BVN"),
+    ("AEM",         "Agnico Eagle",      "gold",        "NYSE",  "yahoo", "AEM"),
+    ("B",           "Barrick Mining",    "gold",        "NYSE",  "yahoo", "B"),
+    ("HOC.L",       "Hochschild Mining", "gold",        "LSE",   "yahoo", "HOC.L"),
+    # ── Copper ───────────────────────────────────────────────────────────
+    ("ERO",         "Ero Copper",        "copper",      "NYSE",  "yahoo", "ERO"),
+    ("CS.TO",       "Capstone Copper",   "copper",      "TSX",   "yahoo", "CS.TO"),
+    ("HBM",         "Hudbay Minerals",   "copper",      "NYSE",  "yahoo", "HBM"),
+    # ── Rare earths ──────────────────────────────────────────────────────
+    ("MEI.AX",      "Meteoric Resources","rare_earths", "ASX",   "yahoo", "MEI.AX"),
+    ("VMM.AX",      "Viridis Mining",    "rare_earths", "ASX",   "yahoo", "VMM.AX"),
+    ("ARA.TO",      "Aclara Resources",  "rare_earths", "TSX",   "yahoo", "ARA.TO"),
+    # ── Pulp & Paper ─────────────────────────────────────────────────────
+    ("IP",          "Intl Paper",        "pp",          "NYSE",  "yahoo", "IP"),
+    ("UPM.HE",      "UPM-Kymmene",       "pp",          "HEL",   "yahoo", "UPM.HE"),
+    ("SW",          "Smurfit WestRock",  "pp",          "NYSE",  "yahoo", "SW"),
+    ("STERV.HE",    "Stora Enso",        "pp",          "HEL",   "yahoo", "STERV.HE"),
+    # ── Índices ──────────────────────────────────────────────────────────
+    ("SPX",         "S&P 500",           "index",       "US",    "yahoo", "^GSPC"),
+    ("NASDAQ",      "Nasdaq Composite",  "index",       "US",    "yahoo", "^IXIC"),
+    ("MATB11.SA",   "IMAT Materiais (B3)","index",      "B3",    "yahoo", "MATB11.SA"),
+    ("GDX",         "Gold Miners ETF",   "index",       "US",    "yahoo", "GDX"),
 ]
 
 # Commodities Yahoo — só Copper e Gold (benchmark global, atualiza a cada 5min).
