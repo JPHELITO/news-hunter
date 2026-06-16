@@ -173,6 +173,20 @@ _DOM_PRICE_JS = """
                      || t==='assessmenttime')) dateCol=id;
     if (!freqCol && (t.indexOf('frequency')!==-1 || t==='freq')) freqCol=id;
   });
+  // Fallback robusto: se o cabeçalho da data não casou (nome diferente), detecta a coluna
+  // pelo CONTEÚDO — a coluna cujas células parecem data. (Só roda se as colunas existem no DOM.)
+  if (!dateCol) {
+    const DATE_RE = /\\b\\d{1,2}[-\\s\\/.][A-Za-z]{3,9}\\b|\\b[A-Za-z]{3,9}\\.?\\s+\\d{1,2}\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b/;
+    const votes = {};
+    [...document.querySelectorAll('.ag-row, [role="row"]')].slice(0,50).forEach(r => {
+      r.querySelectorAll('[col-id]').forEach(c => {
+        const id=c.getAttribute('col-id'), tx=(c.textContent||'').trim();
+        if (id && id!==priceCol && id!==chgCol && id!==symCol && DATE_RE.test(tx)) votes[id]=(votes[id]||0)+1;
+      });
+    });
+    let best=null,bn=0; for (const id in votes) if (votes[id]>bn){bn=votes[id];best=id;}
+    if (best && bn>=3) dateCol=best;
+  }
   const SYM_RE = /^[A-Z][A-Z0-9]{4,9}$/;          // símbolo Platts (ex.: IODBZ00)
   const cellOf = (row,id) => { if(!id) return null; const c=row.querySelector('[col-id="'+id+'"]'); return c?(c.textContent||'').trim():null; };
   const out = {};
@@ -505,6 +519,14 @@ def _scrape() -> list[RawArticle]:
             # Navega ao workspace com watchlist de Iron Ore para capturar preços IODEX.
             # Método primário: ler a tabela AG-Grid renderizada (DOM).
             # Fallback: interceptação de rede (price_buf já preenchido via on_response).
+            # ⚠️ Alarga a janela ANTES de abrir a grid: o AG-Grid VIRTUALIZA colunas fora da área
+            # visível à direita — em viewport estreito (1440) a última coluna ("Assessed Date") não
+            # renderiza e o scraper não lê a data (assessed_at congelava em valor antigo). Largura
+            # folgada garante que TODAS as colunas existam no DOM. NÃO reduzir.
+            try:
+                page.set_viewport_size({"width": 2600, "height": 1400}); page.wait_for_timeout(800)
+            except Exception as e:
+                log.debug("platts_scraper: set_viewport_size falhou: %s", e)
             try:
                 page.evaluate(
                     "window.location.hash = "
