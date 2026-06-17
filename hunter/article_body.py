@@ -24,9 +24,10 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
 # Exigem login -> sem corpo na v1 (são ~maioria do volume relevante; Decisão F / FASE 6).
 PAYWALL_DOMAINS = ("spglobal.com", "platts.com", "fastmarkets.com")
 
-# Fontes cujo "corpo" é uma página COMPARTILHADA / não-específica da manchete (FASE 2:
-# SMM resolve várias manchetes de "daily report" pro MESMO texto -> contamina). Usar título+snippet.
-NO_BODY_SOURCES = {"SMM"}
+# Fontes cujo "corpo" e pagina COMPARTILHADA. SMM RE-LIGADO (2026-06-17): o corpo per-artigo
+# (/newscontent/<id>) vem distinto e util; so alguns data-reports servem o aviso "Data Source
+# Statement" no lugar do corpo -> filtrado por _is_boilerplate abaixo, e nao por skip total da fonte.
+NO_BODY_SOURCES: set[str] = set()
 
 # Marcadores de TEASER de paywall (multi-idioma): se aparecem e o corpo é curto, descartar.
 _TEASER_MARKERS = (
@@ -46,6 +47,11 @@ def is_paywalled(url: str) -> bool:
 def _looks_like_teaser(body: str) -> bool:
     low = body.lower()
     return len(body) < TEASER_MAXLEN and any(m in low for m in _TEASER_MARKERS)
+
+
+def _is_boilerplate(body: str) -> bool:
+    # SMM as vezes extrai so o aviso de fonte ("Data Source Statement...") no lugar do corpo real.
+    return body.lstrip()[:60].lower().startswith("data source statement")
 
 
 def _extract(html: str) -> str:
@@ -93,4 +99,6 @@ def fetch_body(url: str, source: str | None = None, timeout: int = 12):
         return None, {"ok": False, "method": None, "chars": len(body), "reason": "vazio/curto"}
     if _looks_like_teaser(body):
         return None, {"ok": False, "method": method, "chars": len(body), "reason": "teaser de paywall"}
+    if _is_boilerplate(body):
+        return None, {"ok": False, "method": method, "chars": len(body), "reason": "boilerplate (data-statement)"}
     return body[:MAX_CHARS], {"ok": True, "method": method, "chars": len(body), "reason": "ok"}
