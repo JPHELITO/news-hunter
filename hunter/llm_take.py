@@ -106,7 +106,9 @@ def _parse_json_take(raw):
     try:
         d = json.loads(raw)
         take = str(d.get("take", "")).strip()
-        if take in ("+", "-", "="):
+        if take.lower().replace("_", " ") in ("no take", "no-take", "none", "notake"):
+            take = "no take"
+        if take in ("+", "-", "=", "no take"):
             conf = d.get("confidence", 0.5)
             conf = float(conf) if isinstance(conf, (int, float, str)) else 0.5
             return {"take": take, "reason": str(d.get("reason", ""))[:200],
@@ -149,7 +151,7 @@ def _call_gemini(p, user_text):
                "generationConfig": {"temperature": 0, "maxOutputTokens": 2048,
                                     "responseMimeType": "application/json",
                                     "responseSchema": {"type": "OBJECT", "properties": {
-                                        "take": {"type": "STRING", "enum": ["+", "-", "="]},
+                                        "take": {"type": "STRING", "enum": ["+", "-", "=", "no take"]},
                                         "reason": {"type": "STRING"},
                                         "confidence": {"type": "NUMBER"}},
                                         "required": ["take", "reason", "confidence"]}}}
