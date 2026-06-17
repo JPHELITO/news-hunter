@@ -72,6 +72,7 @@ HTML_SOURCES = [
         "page_url": "https://news.metal.com/",
         "domain": "metal.com",
         "selector": "a[href*='/newscontent/']",
+        "title_selector": "[class*='__title']",  # o <a> embrulha titulo+resumo+'ha X min'; pega SO o titulo
         "needs_filter": True,
     },
     {
@@ -169,6 +170,11 @@ def _scrape_source(src: dict) -> list[RawArticle]:
         title = ""
         if src.get("title_attr"):
             title = (a.get("title") or "").replace("\xa0", " ").strip()
+        if not title and src.get("title_selector"):
+            # card embrulha titulo + resumo/'ha X min' na mesma ancora → extrai so o elemento do titulo
+            el = a.select_one(src["title_selector"])
+            if el:
+                title = el.get_text(" ", strip=True)
         if not title:
             title = a.get_text(strip=True)
         if (not title or len(title) < 12) and src.get("title_from_slug"):
