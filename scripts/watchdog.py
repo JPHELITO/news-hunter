@@ -25,10 +25,10 @@ THRESHOLDS_MIN = {"platts": 90, "fastmarkets": 90}
 # Auto-adaptativo: SMM (horário) e Ibá (semanal) têm limiares diferentes, sem
 # lista manual. Pega quebra silenciosa (ex.: Estadão) antes de virar problema.
 COVERAGE_WINDOW_DAYS = 21      # janela p/ aprender o ritmo de cada fonte
-COVERAGE_MULT        = 3.5     # alarma se silêncio > 3.5× o gap típico da fonte
-COVERAGE_MIN_H       = 36.0    # nunca alarma antes de 36h (evita falso alarme)
-COVERAGE_MAX_H       = 14 * 24.0  # teto: 14 dias (até fonte rara alarma se sumir)
-COVERAGE_MIN_BASELINE = 3      # precisa de >=3 artigos no período p/ ter baseline
+COVERAGE_MULT        = 5.0     # alarma só se silêncio > 5× o gap típico (era 3.5 → falso alarme)
+COVERAGE_MIN_H       = 72.0    # nunca antes de 72h / 3 dias (setoriais têm ritmo espaçado)
+COVERAGE_MAX_H       = 14 * 24.0  # teto: 14 dias
+COVERAGE_MIN_BASELINE = 5      # precisa de >=5 artigos no período (fontes raras ficam fora do radar)
 
 
 def coverage_threshold_h(count: int, window_h: float) -> float:
@@ -166,15 +166,22 @@ def main() -> int:
         # adaptativo se a cadência cair — bom enxergar quem está raspando o mínimo.
         puladas = ", ".join(f"{s}({n})" for s, n in cov_skipped)
         print(f"  · puladas (baseline < {COVERAGE_MIN_BASELINE} em {COVERAGE_WINDOW_DAYS}d): {puladas}")
-    problems += cov_problems
+    # ── COBERTURA é só INFORMATIVA — NÃO falha o job (era a origem do SPAM diário) ──
+    # Uma fonte setorial quieta NÃO deve te mandar e-mail. Fica logada aqui p/ auditoria.
+    if cov_problems:
+        print("\n[info] Cobertura — fontes silenciosas (apenas monitoramento, NÃO dispara e-mail):")
+        for p in cov_problems:
+            print("  · " + p)
 
+    # ── Só Platts/Fastmarkets (sessões críticas, SEM fallback) fazem o job FALHAR/emailar ──
     if problems:
-        print("\n*** ALERTA — FONTES FORA DO AR / SILENCIOSAS ***")
+        print("\n*** ALERTA CRÍTICO — SESSÃO PLAYWRIGHT FORA DO AR ***")
         for p in problems:
             print("  - " + p)
+        print(">> Conserto: rode o atalho 'Atualizar Platts' (IP confiável) ou re-seed do Fastmarkets.")
         return 1
 
-    print("\nOK — sessões e cobertura normais.")
+    print("\nOK — Platts/Fastmarkets normais. (Cobertura é só informativa acima; não alarma.)")
     return 0
 
 
