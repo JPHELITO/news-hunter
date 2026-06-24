@@ -446,19 +446,21 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
     return n
 
 
-# Commodities cujo HISTÓRICO vem do Yahoo (o live delas também é Yahoo → série consistente).
-# As Platts (iron ore 62%, HRC China, rebar, met coal) NÃO têm API de histórico → acumulam pra frente.
-COMMODITY_HISTORY_YF = {"COPPER": "HG=F", "GOLD": "GC=F"}
+# Commodities cujo HISTÓRICO vem do Yahoo:
+#   IRON_ORE → TIO=F (SGX "Iron Ore 62% Fe CFR China (TSI)" — mesma família do Platts 62%; o preço
+#     ao vivo do tile segue Platts, mas a SÉRIE do spread usa o TSI, que casa quase 1:1 em variação %).
+#   COPPER/GOLD → HG=F/GC=F (o live delas também é Yahoo → série totalmente consistente).
+# As demais Platts (HRC China, rebar, met coal) não têm proxy bom no Yahoo → ACUMULAM pra frente.
+COMMODITY_HISTORY_YF = {"IRON_ORE": "TIO=F", "COPPER": "HG=F", "GOLD": "GC=F"}
 
 
 def update_commodity_history(max_age_hours: float = 18.0) -> int:
     """Mantém `commodities.daily` — a série diária p/ o SPREAD ação×commodity da aba Market.
 
-    - COPPER/GOLD: histórico completo via Yahoo (mensal range=max + cauda diária 1y), consistente
-      com o preço ao vivo (também Yahoo).
-    - Demais (Platts: iron ore 62%, HRC China, rebar, met coal): SEM API de histórico → ACUMULA
-      pra frente, fazendo append do assessment do dia (dedup por data). A série cresce a partir do
-      deploy — em alguns dias o spread ação×minério/HRC ganha corpo.
+    - IRON_ORE/COPPER/GOLD: histórico completo via Yahoo (iron ore = TIO=F TSI 62%; copper/gold =
+      HG=F/GC=F) — mensal range=max + cauda diária 1y. O spread ação×minério já nasce funcionando.
+    - Demais (Platts: HRC China, rebar, met coal): SEM API de histórico → ACUMULA pra frente,
+      fazendo append do assessment do dia (dedup por data). A série cresce a partir do deploy.
     Auto-throttled por `daily_updated_at` (~1×/dia). Espelha o padrão PATCH de update_quote_history.
     Retorna nº de séries atualizadas.
     """
