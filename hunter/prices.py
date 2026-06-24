@@ -446,6 +446,97 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
     return n
 
 
+# Commodities cujo HISTÓRICO vem do Yahoo (o live delas também é Yahoo → série consistente).
+# As Platts (iron ore 62%, HRC China, rebar, met coal) NÃO têm API de histórico → acumulam pra frente.
+COMMODITY_HISTORY_YF = {"COPPER": "HG=F", "GOLD": "GC=F"}
+
+
+def update_commodity_history(max_age_hours: float = 18.0) -> int:
+    """Mantém `commodities.daily` — a série diária p/ o SPREAD ação×commodity da aba Market.
+
+    - COPPER/GOLD: histórico completo via Yahoo (mensal range=max + cauda diária 1y), consistente
+      com o preço ao vivo (também Yahoo).
+    - Demais (Platts: iron ore 62%, HRC China, rebar, met coal): SEM API de histórico → ACUMULA
+      pra frente, fazendo append do assessment do dia (dedup por data). A série cresce a partir do
+      deploy — em alguns dias o spread ação×minério/HRC ganha corpo.
+    Auto-throttled por `daily_updated_at` (~1×/dia). Espelha o padrão PATCH de update_quote_history.
+    Retorna nº de séries atualizadas.
+    """
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return 0
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/commodities?select=code,price,assessed_at,daily,daily_updated_at",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+        rows = r.json() if r.ok else []
+    except Exception as e:
+        log.warning("commodity_history: leitura de estado falhou: %s", e)
+        return 0
+
+    now = datetime.now(timezone.utc)
+    stale = []
+    for row in rows:
+        du = row.get("daily_updated_at")
+        old = True
+        if du:
+            try:
+                age_h = (now - datetime.fromisoformat(du.replace("Z", "+00:00"))).total_seconds() / 3600
+                old = age_h > max_age_hours
+            except Exception:
+                old = True
+        if old:
+            stale.append(row)
+    if not stale:
+        return 0
+
+    # backfill Yahoo das que têm ticker (cobre/ouro) — 1 par de chamadas
+    yf_syms = [COMMODITY_HISTORY_YF[r["code"]] for r in stale if r.get("code") in COMMODITY_HISTORY_YF]
+    daily_yf = fetch_yahoo(yf_syms, range_="1y",  interval="1d") if yf_syms else {}
+    hist_yf  = fetch_yahoo(yf_syms, range_="max", interval="1d") if yf_syms else {}
+
+    h = {"apikey": key, "Authorization": f"Bearer {key}",
+         "Content-Type": "application/json", "Prefer": "return=minimal"}
+    n = 0
+    for row in stale:
+        code = row.get("code")
+        if code in COMMODITY_HISTORY_YF:
+            yf = COMMODITY_HISTORY_YF[code]
+            d1 = (daily_yf.get(yf) or {}).get("series") or []
+            dm = (hist_yf.get(yf) or {}).get("series") or []
+            if not d1 and not dm:
+                continue
+            merged = ([p for p in dm if p[0] < d1[0][0]] + d1) if d1 else dm
+        else:
+            # acumula: append do assessment do dia (Platts não tem histórico)
+            price, assessed = row.get("price"), row.get("assessed_at")
+            if price is None or not assessed:
+                continue
+            try:
+                ep = int(datetime.fromisoformat(str(assessed)[:10] + "T00:00:00+00:00").timestamp())
+            except Exception:
+                continue
+            daily = [p for p in (row.get("daily") or []) if p and p[0] != ep]
+            daily.append([ep, round(float(price), 4)])
+            daily.sort(key=lambda p: p[0])
+            merged = daily[-1000:]
+        try:
+            r = requests.patch(
+                f"{url}/rest/v1/commodities?code=eq.{code}",
+                json={"daily": merged, "daily_updated_at": _now_iso()},
+                headers=h, timeout=15)
+            if r.ok:
+                n += 1
+            else:
+                log.warning("commodity_history PATCH %s erro %s: %s", code, r.status_code, r.text[:150])
+        except Exception as e:
+            log.warning("commodity_history PATCH %s exceção: %s", code, e)
+    if n:
+        log.info("commodity_history: %d séries atualizadas (Yahoo backfill + accrual Platts)", n)
+    return n
+
+
 def update_commodities() -> int:
     """Atualiza preços de commodities. Retorna número de rows escritas."""
     syms = [c[3] for c in COMMODITIES_LIST]

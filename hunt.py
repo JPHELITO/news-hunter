@@ -104,7 +104,8 @@ def main() -> None:
     # Atualiza cotações, commodities e indicadores macro
     try:
         from hunter.prices import (update_quotes, update_commodities, update_macro,
-                                    update_platts_commodities, update_quote_history)
+                                    update_platts_commodities, update_quote_history,
+                                    update_commodity_history)
     except Exception as e:
         log.warning("Preços: import falhou: %s", e)
     else:
@@ -119,6 +120,7 @@ def main() -> None:
         q = _safe("quotes", update_quotes)
         h = _safe("quote_history", update_quote_history)  # série diária (auto-throttle ~1x/dia)
         c = _safe("commodities", update_commodities)       # Copper + Gold (Yahoo)
+        _safe("commodity_history", update_commodity_history)  # commodities.daily p/ o spread (auto-throttle ~1x/dia)
         m = _safe("macro", update_macro)
         if platts_prices:  # Iron Ore 61%, HRC China, Rebar Turkey, Met Coal
             _safe("platts_commodities", update_platts_commodities, platts_prices)
