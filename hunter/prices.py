@@ -156,6 +156,7 @@ MACRO_YAHOO = [
     ("USD_CAD", "USD/CAD",      "C$", "USDCAD=X"),   # câmbio dos exportadores de commodity (Canadá)
     ("USD_AUD", "USD/AUD",      "A$", "USDAUD=X"),   # Austrália
     ("USD_EUR", "USD/EUR",      "€",  "USDEUR=X"),   # Europa
+    ("USD_CNY", "USD/CNY",      "¥",  "USDCNY=X"),   # China (driver de minério/aço)
     ("US10Y",   "US 10Y Yield", "%",  "^TNX"),
 ]
 MACRO_BCB = [
