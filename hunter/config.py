@@ -38,11 +38,15 @@ COMPANIES_INTL = [
     "Tata Steel",
     "CMRG",
     "First Quantum",
-    "Southern Copper",
-    "Grupo Mexico",
+    "Southern Copper", "SCCO",
+    "Grupo Mexico", "GMexico", "Ferromex", "Buenavista",
     "Tia Maria",
-    "CMPC",
+    "CMPC", "Empresas CMPC", "Softys",
+    # COPEC/Arauco estavam AUSENTES — manchete de coberta sem outra keyword era
+    # descartada antes de classificar (bug achado na auditoria 2026-06-25).
+    "Copec", "Empresas Copec", "Arauco", "Celulosa Arauco",
     "APP",             # Asia Pulp & Paper
+    "Bracell", "Sun Paper", "Sateri",   # competidores de celulose (sinal de oferta)
     "Nine Dragons",
     "Resolute Forest",
     "Stora Enso",
@@ -96,6 +100,10 @@ STEEL_PRODUCTS = [
     "ferro-liga", "ferroalloy",
     "minério de ferro",
     "minerais estratégicos",
+    # Benchmarks/grades de minério + cobre (gaps achados na auditoria 2026-06-25)
+    "62%Fe", "65%Fe", "high-grade premium", "low-grade discount", "grade premium",
+    "molybdenum", "moly", "treatment charge", "refining charge", "TC/RC",
+    "Cobre Panama", "Escondida", "Codelco", "Antofagasta",
 ]
 
 # ── Mercado Siderúrgico ────────────────────────────────────────────────────────
@@ -124,6 +132,11 @@ STEEL_MARKET = [
     "cash cost mineração", "cash cost siderurgia",
     "importação de aço", "steel imports", "steel exports",
     "capacidade instalada aço",
+    # Logística/China/ativos (gaps auditoria 2026-06-25)
+    "Capesize", "C3 freight", "frete Capesize",
+    "CMRG", "China Mineral Resources Group",
+    "Pesqueria", "Pesquería",
+    "Mariana", "Brumadinho",
 ]
 
 # ── Pulp & Paper ───────────────────────────────────────────────────────────────
@@ -156,6 +169,9 @@ PULP_PAPER = [
     "pinus", "cavaco de madeira",
     "setor florestal", "indústria de base florestal",
     "Ibá", "ABTCP",
+    # Gaps P&P (auditoria 2026-06-25)
+    "kraftliner", "PIX kraftliner", "recovered fiber", "recovered paper",
+    "EUDR", "EU Deforestation", "NBSK-BEK", "fluff pulp", "dissolving pulp",
 ]
 
 # ── Regulatório & Setorial ────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -25,6 +26,7 @@ log = logging.getLogger(__name__)
 
 BATCH = int(os.environ.get("LLM_SHADOW_BATCH", "30"))
 TIME_BUDGET_S = int(os.environ.get("LLM_SHADOW_BUDGET_S", "180"))
+CATCHUP = int(os.environ.get("LLM_SHADOW_CATCHUP", "8"))   # itens >48h recuperados/rodada (mata a perda permanente)
 MAX_ATTEMPTS = 8
 QUEUE_AGE_ALARM_H = 2
 WINDOW_H = 48
@@ -43,7 +45,11 @@ def _supa():
 
 
 def run_llm_shadow() -> None:
-    """Classifica em sombra os artigos incluídos ainda sem take_llm. Não-fatal."""
+    """Classifica em sombra os incluídos sem take_llm. COBERTAS primeiro (as 13 nunca
+    ficam sem take); recupera a cauda >48h (catch-up, mais-antigo-primeiro); pré-busca
+    corpos em PARALELO (tira a rede do caminho crítico — a IA segue serial/throttlada);
+    disjuntor por rodada (não desperdiça orçamento em provedor com cota estourada).
+    Não-fatal."""
     if not _enabled():
         return
     url, H = _supa()
@@ -52,28 +58,54 @@ def run_llm_shadow() -> None:
     if not llm_take.CHAIN:
         log.warning("LLM shadow: nenhum provedor com chave — pulando")
         return
+    llm_take.reset_run_skips()   # zera o disjuntor de provedor por rodada
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=WINDOW_H)).isoformat()
-    q = (f"{url}/rest/v1/news_articles?select=url,title,source_name"
-         f"&include_in_report=eq.true&take_llm=is.null&take_llm_attempts=lt.{MAX_ATTEMPTS}"
-         f"&or=(published_at.gte.{quote(cutoff)},and(published_at.is.null,found_at.gte.{quote(cutoff)}))"
-         f"&order=found_at.desc&limit={BATCH}")
-    try:
-        r = requests.get(q, headers=H, timeout=30)
-    except Exception as e:
-        log.warning("LLM shadow: query exceção: %s", e)
-        return
-    if not r.ok:
-        if r.status_code in (400, 404) and ("take_llm" in r.text or "does not exist" in r.text):
-            log.warning("LLM shadow: colunas take_llm ausentes — rode scripts/llm_shadow_migration.sql")
-        else:
-            log.warning("LLM shadow: query %s: %s", r.status_code, r.text[:160])
-        return
+    win = (f"&or=(published_at.gte.{quote(cutoff)},"
+           f"and(published_at.is.null,found_at.gte.{quote(cutoff)}))")
+    base = (f"{url}/rest/v1/news_articles?select=url,title,source_name"
+            f"&include_in_report=eq.true&take_llm=is.null&take_llm_attempts=lt.{MAX_ATTEMPTS}")
 
-    pend = r.json()
+    def _q(extra, order="found_at.desc", lim=BATCH):
+        try:
+            r = requests.get(f"{base}{extra}&order={order}&limit={lim}", headers=H, timeout=30)
+        except Exception as e:
+            log.warning("LLM shadow: query exceção: %s", e)
+            return None
+        if not r.ok:
+            if r.status_code in (400, 404) and ("take_llm" in r.text or "does not exist" in r.text):
+                log.warning("LLM shadow: colunas take_llm ausentes — rode scripts/llm_shadow_migration.sql")
+            else:
+                log.warning("LLM shadow: query %s: %s", r.status_code, r.text[:160])
+            return None
+        return r.json()
+
+    general = _q(win)
+    if general is None:
+        return                                                            # erro já logado
+    covered = _q(win + "&take_covered_companies=not.is.null") or []        # as 13 cobertas → prioridade
+    catchup = _q(f"&found_at=lt.{quote(cutoff)}", order="found_at.asc", lim=CATCHUP) or []  # cauda >48h
+
+    seen, pend = set(), []
+    for group in (covered, general, catchup):                             # COBERTAS, depois janela, depois cauda
+        for a in group:
+            u = a.get("url")
+            if u and u not in seen:
+                seen.add(u); pend.append(a)
+    pend = pend[:BATCH + CATCHUP]                                          # bound da pré-busca
     if not pend:
         _check_queue_age(url, H, cutoff)
         return
+
+    bodies = {}                                                           # pré-busca de corpos em PARALELO
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {ex.submit(fetch_body, a["url"], a.get("source_name")): a["url"]
+                for a in pend if a.get("url")}
+        for f in as_completed(futs):
+            try:
+                bodies[futs[f]] = (f.result() or (None,))[0]
+            except Exception:
+                bodies[futs[f]] = None
 
     t0 = time.time()
     done = 0
@@ -81,19 +113,18 @@ def run_llm_shadow() -> None:
         if time.time() - t0 > TIME_BUDGET_S:
             log.info("LLM shadow: orçamento de %ds atingido — resto na próxima rodada", TIME_BUDGET_S)
             break
-        url_a, title, src = a.get("url"), a.get("title", ""), a.get("source_name")
+        url_a, title = a.get("url"), a.get("title", "")
         if not url_a:
             continue
-        body, _meta = fetch_body(url_a, source=src)
-        res = llm_take.classify(title, source=None, body=(body or None))   # Decisão G: SEM fonte
+        res = llm_take.classify(title, source=None, body=(bodies.get(url_a) or None))   # Decisão G: SEM fonte
         if res is None:
             _bump_attempt(url, H, url_a)
             continue
         _save(url, H, url_a, res)
         done += 1
 
-    log.info("LLM shadow: %d/%d classificados (chain=%s, attempts=%s)",
-             done, len(pend), llm_take.CHAIN, llm_take.chain_status()["attempts"])
+    log.info("LLM shadow: %d/%d classificados (cobertas=%d catch-up=%d chain=%s attempts=%s)",
+             done, len(pend), len(covered), len(catchup), llm_take.CHAIN, llm_take.chain_status()["attempts"])
     _check_queue_age(url, H, cutoff)
 
 

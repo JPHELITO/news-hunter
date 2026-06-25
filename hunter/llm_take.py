@@ -42,6 +42,16 @@ ATTEMPTS = {p: 0 for p in PROVIDERS}
 _LAST_CALL = {p: 0.0 for p in PROVIDERS}
 LAST_ERRORS: list[str] = []
 
+# Disjuntor POR RODADA: se um provedor responde "cota dura estourada" (429 longo /
+# teto mensal), ele é pulado no RESTO da rodada — evita desperdiçar o orçamento
+# tentando-o item a item. NÃO altera a ORDEM da cadeia (Mistral segue 1ª e volta
+# a ser usada sozinha quando renovar — a 1ª chamada da rodada testa de novo).
+_RUN_SKIP: set = set()
+
+def reset_run_skips() -> None:
+    """Zera o disjuntor (chamar no início de cada run do shadow)."""
+    _RUN_SKIP.clear()
+
 # ── Prompts (carregados 1x, lazy) ───────────────────────────────────────────────
 _SYSTEM: str | None = None
 _FEWSHOT: list[dict] | None = None
@@ -204,9 +214,14 @@ def classify(headline, source=None, body=None):
     user_text = _user_text(headline, source=source, body=body)
     errors = []
     for p in CHAIN:
+        if p in _RUN_SKIP:                      # cota dura já estourada nesta rodada → pula (sem desperdiçar tempo)
+            errors.append(f"{p}: skip(rate-limited this run)")
+            continue
         result, why = _try_provider(p, user_text)
         if result:
             return {**result, "provider": p, "model": PROVIDERS[p]["model"]}
+        if why == "rate_limited":               # teto duro → não re-tenta no resto da rodada (auto-cura na próxima)
+            _RUN_SKIP.add(p)
         errors.append(f"{p}: {why}")
     LAST_ERRORS = errors
     return None

@@ -676,6 +676,19 @@ def _mentions_capacity_cut(norm: str) -> bool:
 # 3. REGRAS DE EXCLUSÃO
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Fontes de baixo aproveitamento (jornais amplos BR, 2-11% viram take): mantêm o
+# PORTÃO APERTADO — no_market_take_detected segue EXCLUINDO (protege a cota das IAs
+# do ruído). As demais (curadas/setoriais) têm o portão AFROUXADO: o que o robô não
+# entende vira INCLUSÃO p/ a IA decidir (ela tem "no take"). Auditoria 2026-06-25.
+_LOW_YIELD_SOURCES = frozenset([
+    "metropoles", "g1 economia", "veja", "exame", "uol economia",
+])
+def _gate_is_tight(source: str) -> bool:
+    """True = portão apertado (tabloide BR): exclui o que não tem take. False =
+    fonte curada/setorial: deixa entrar p/ a IA decidir (ela tem 'no take')."""
+    return normalize_text(source or "") in _LOW_YIELD_SOURCES
+
+
 def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     """
     Decide se a notícia deve ser excluída do relatório.
@@ -713,9 +726,13 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     if _PERSONAL_FINANCE_RE.search(norm) and not covered:
         return True, "personal_finance"
 
-    # 3. Sem tópicos, sem empresa coberta E sem player de indústria → baixa relevância
+    # 3. Sem tópicos, sem empresa coberta E sem player de indústria → baixa relevância.
+    #    PORTÃO AFROUXADO (2026-06-25): só EXCLUI nas fontes de baixo aproveitamento
+    #    (tabloides BR). Nas curadas/setoriais NÃO exclui aqui — segue p/ classify_take,
+    #    que deixa entrar p/ a IA decidir (ela tem "no take"). Mata as exclusões falsas.
     if not topics and not covered and not detect_industry_players(text):
-        return True, "no_market_take_detected"
+        if _gate_is_tight(source):
+            return True, "no_market_take_detected"
 
     # 3+4. Tópicos de aço de baixo valor (pig iron, billet, wire rod, plate) como
     #      ASSUNTO PRIMÁRIO — só eles + modificadores genéricos e sem empresa
@@ -1111,18 +1128,35 @@ def classify_take(text: str, metadata: dict | None = None) -> dict:
             region = "brazil"
 
     # ── Verificação de relevância pós-setor ──────────────────────────────────
+    # PORTÃO AFROUXADO (2026-06-25): tabloides BR continuam EXCLUINDO; curadas/
+    # setoriais ENTRAM p/ a IA decidir (sector 'unknown', take robô '=' placeholder —
+    # o take PUBLICADO é o take_llm; o robô não baliza o pulse). Mata exclusões falsas.
     if sector == "unknown" and not covered and not industry:
+        _src = meta.get("source_name", "") or meta.get("source", "") or ""
+        if _gate_is_tight(_src):
+            return {
+                "include_in_report":          False,
+                "exclusion_reason":           "no_market_take_detected",
+                "sector":                     "unknown",
+                "region":                     region,
+                "normalized_topics":          topics,
+                "covered_companies_mentioned": covered,
+                "take":                       "=",
+                "take_reason":                "Sem setor ou empresa reconhecida (fonte de baixo aproveitamento).",
+                "confidence":                 0.0,
+                "matched_rules":              ["excluded"],
+            }
         return {
-            "include_in_report":          False,
-            "exclusion_reason":           "no_market_take_detected",
+            "include_in_report":          True,
+            "exclusion_reason":           None,
             "sector":                     "unknown",
             "region":                     region,
             "normalized_topics":          topics,
             "covered_companies_mentioned": covered,
             "take":                       "=",
-            "take_reason":                "Sem setor ou empresa reconhecida.",
+            "take_reason":                "Roteada p/ a IA decidir (sem tópico do robô; fonte curada).",
             "confidence":                 0.0,
-            "matched_rules":              ["excluded"],
+            "matched_rules":              ["llm_review"],
         }
 
     # ── Exclusão de Europa (P&P) sem empresa coberta ──────────────────────────
