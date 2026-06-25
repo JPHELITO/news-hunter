@@ -40,4 +40,15 @@ SOURCES = [
     {"label": "ABTCP",                 "url": "https://newspulpaper.com/feed/",                  "filter": False},
     # Instituto Aço Brasil e IBRAM: RSS morto/congelado → movidos para
     # html_scrapers.py (scraping da página de notícias).
+
+    # ══ INTERNACIONAL — proxy de sentimento Ásia/Oceania/Europa ═══════════════
+    # Publicam ANTES do Brasil acordar → leitura antecipada do dia (China=minério/
+    # aço/celulose; Austrália=mineração; Europa=aço/P&P). Adicionadas 2026-06-25
+    # (auditoria de fontes). RSS oficiais, EN (o classificador lê EN), verificadas ao vivo.
+    # Setoriais estreitas = filter=False (aceita tudo); amplas = filter=True (keyword).
+    {"label": "GMK Center",            "url": "https://gmk.center/en/feed/",                          "filter": False},  # aço + minério global (EUROFER/China/trade)
+    {"label": "China Pulp & Paper",    "url": "https://www.chinapulppaper.com/?format=feed&type=rss", "filter": False},  # P&P China → demanda p/ Suzano/Klabin/Eldorado
+    {"label": "Papnews",               "url": "https://www.papnews.com/feed/",                        "filter": False},  # P&P global/Europa (já cita nomes BR)
+    {"label": "SCMP China",            "url": "https://www.scmp.com/rss/318421/feed",                 "filter": True},   # China economia/demanda (amplo → keyword)
+    {"label": "Australian Mining",     "url": "https://www.australianmining.com.au/feed/",            "filter": True},   # mineração AU: Rio/BHP/FMG (amplo → keyword)
 ]
