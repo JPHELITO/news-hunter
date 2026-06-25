@@ -91,6 +91,7 @@ SECTOR_KEYWORDS = {
         "Ibá", "ABTCP",
         # empresas
         "Suzano", "Klabin", "Eldorado", "Irani", "CMPC",
+        "Copec", "Empresas Copec", "Arauco", "Softys",
         "Stora Enso", "UPM", "Sappi", "APP", "Nine Dragons",
         "Resolute", "International Paper", "WestRock", "Smurfit Kappa",
     },
