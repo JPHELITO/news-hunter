@@ -41,6 +41,16 @@ SITEMAP_SOURCES = [
         "url": "https://www.noticiasdemineracao.com/news-sitemap.xml",
         "needs_filter": False,
     },
+    {
+        # China economia/indústria/policy (EN) — proxy de MADRUGADA p/ minério/aço/
+        # celulose, antes do BR acordar. news-sitemap padrão Google (news:title +
+        # publication_date), ~100 itens na janela. AMPLO (notícia geral da China) →
+        # keyword filtra p/ commodity/economia. Adicionada 2026-06-25.
+        "label": "Global Times",
+        "domain": "globaltimes.cn",
+        "url": "https://www.globaltimes.cn/sitemap.xml",
+        "needs_filter": True,
+    },
 ]
 
 _DATE_SUFFIX = re.compile(r"-\d{4}-\d{2}-\d{2}/?$")

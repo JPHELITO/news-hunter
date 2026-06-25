@@ -104,6 +104,19 @@ HTML_SOURCES = [
         "needs_filter": False,                 # fonte setorial de siderurgia
         "title_from_slug": True,
     },
+    {
+        # P&P global/EUA (Smurfit Westrock, Graphic Packaging, Metsä, UPM, price
+        # increases) — sem RSS. Artigos em /AAAAnews/MM-DD-AAAAslug.html → href_re;
+        # o TEXTO da âncora já é a manchete limpa (sem title_from_slug). Adicionada
+        # 2026-06-25. Obs.: sem published_at (scraper) → 1ª run ingere o arquivo
+        # visível de uma vez (transiente, depois só novos por ignore-duplicates).
+        "label": "PaperAge",
+        "page_url": "https://www.paperage.com/",
+        "domain": "paperage.com",
+        "href_re": r"/20\d\dnews/\d{2}-\d{2}-\d{4}",
+        "needs_filter": False,                 # fonte setorial de P&P (EN)
+        "max_links": 25,                       # home lista o ano todo (newest-first) → pega só as recentes
+    },
 ]
 
 
@@ -154,7 +167,7 @@ def _scrape_source(src: dict) -> list[RawArticle]:
     articles: list[RawArticle] = []
     base = url
 
-    for a in links[:150]:  # limite por página (href_re traz +âncoras, incl. dups de imagem)
+    for a in links[:src.get("max_links", 150)]:  # limite por página (href_re traz +âncoras, incl. dups de imagem); max_links opcional p/ fontes c/ arquivo longo na home
         href = a.get("href", "").strip()
         if not href:
             continue
