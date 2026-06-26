@@ -146,6 +146,8 @@ def run_llm_shadow() -> None:
         _save(url, H, url_a, res)
         done += 1
 
+    if done < len(pend) and llm_take.LAST_ERRORS:   # diagnóstico: por que itens ficaram SEM take (motivo por provedor)
+        log.warning("LLM shadow: provedores que falharam (último item all-fail): %s", llm_take.LAST_ERRORS)
     log.info("LLM shadow: %d/%d classificados (cobertas=%d catch-up=%d chain=%s attempts=%s)",
              done, len(pend), len(covered), len(catchup), llm_take.CHAIN, llm_take.chain_status()["attempts"])
     _check_queue_age(url, H, cutoff)
