@@ -26,7 +26,10 @@ log = logging.getLogger(__name__)
 
 BATCH = int(os.environ.get("LLM_SHADOW_BATCH", "30"))
 TIME_BUDGET_S = int(os.environ.get("LLM_SHADOW_BUDGET_S", "180"))
-CATCHUP = int(os.environ.get("LLM_SHADOW_CATCHUP", "8"))   # itens >48h recuperados/rodada (mata a perda permanente)
+CATCHUP = int(os.environ.get("LLM_SHADOW_CATCHUP", "0"))   # 0 = OFF. Drenar o backlog >48h ESTOUROU a cota das IAs grátis
+                                                           # (Mistral fora até 30/06 -> sobrou só Cerebras ~300-400/dia) e deixou
+                                                           # as notícias NOVAS sem take. Religar (ex.: 4) SÓ com folga de cota.
+DAILY_BUDGET = int(os.environ.get("LLM_DAILY_BUDGET", "350"))   # teto diário de classificações (segurança < capacidade das IAs grátis). SUBIR quando a Mistral voltar (30/06).
 MAX_ATTEMPTS = 8
 QUEUE_AGE_ALARM_H = 2
 WINDOW_H = 48
@@ -42,6 +45,18 @@ def _supa():
     if not (url and key):
         return None, None
     return url, {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
+def _used_today(url, H) -> int:
+    """Quantas classificações já saíram HOJE (UTC) — p/ não estourar a cota das IAs grátis."""
+    try:
+        t0 = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        r = requests.get(f"{url}/rest/v1/news_articles?select=url&take_llm_at=gte.{quote(t0)}",
+                         headers={**H, "Prefer": "count=exact", "Range": "0-0"}, timeout=15)
+        cr = r.headers.get("content-range", "")
+        return int(cr.split("/")[-1]) if "/" in cr and cr.split("/")[-1].isdigit() else 0
+    except Exception:
+        return 0
 
 
 def run_llm_shadow() -> None:
@@ -83,8 +98,16 @@ def run_llm_shadow() -> None:
     general = _q(win)
     if general is None:
         return                                                            # erro já logado
-    covered = _q(win + "&take_covered_companies=not.is.null") or []        # as 13 cobertas → prioridade
-    catchup = _q(f"&found_at=lt.{quote(cutoff)}", order="found_at.asc", lim=CATCHUP) or []  # cauda >48h
+    covered = _q(win + "&take_covered_companies=not.is.null") or []        # as 13 cobertas → prioridade ABSOLUTA
+    # TRAVA DE COTA DIÁRIA: acima do budget a rodada só classifica COBERTAS — as 13 nunca ficam sem take
+    # e não estouramos a cota das IAs grátis (causa do incidente 2026-06-26, com a Mistral fora).
+    used = _used_today(url, H)
+    if used >= DAILY_BUDGET:
+        general = []
+        log.warning("LLM shadow: budget diário %d/%d atingido -> só cobertas nesta rodada", used, DAILY_BUDGET)
+    # catch-up da cauda >48h SÓ com CATCHUP>0, DENTRO do budget E com a fila NOVA vazia — nunca rouba cota das frescas.
+    catchup = (_q(f"&found_at=lt.{quote(cutoff)}", order="found_at.asc", lim=CATCHUP) or []) \
+              if (CATCHUP > 0 and used < DAILY_BUDGET and len(general) < BATCH) else []
 
     seen, pend = set(), []
     for group in (covered, general, catchup):                             # COBERTAS, depois janela, depois cauda
