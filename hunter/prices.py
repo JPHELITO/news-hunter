@@ -157,6 +157,9 @@ MACRO_YAHOO = [
     ("USD_AUD", "USD/AUD",      "A$", "USDAUD=X"),   # Austrália
     ("USD_EUR", "USD/EUR",      "€",  "USDEUR=X"),   # Europa
     ("USD_CNY", "USD/CNY",      "¥",  "USDCNY=X"),   # China (driver de minério/aço)
+    ("USD_MXN", "USD/MXN",      "MX$", "USDMXN=X"),  # México (Grupo México negocia em MXN)
+    ("USD_CLP", "USD/CLP",      "CLP$","USDCLP=X"),  # Chile (CMPC/Copec negociam em CLP)
+    ("USD_PEN", "USD/PEN",      "S/",  "USDPEN=X"),  # Peru (cobertura futura)
     ("US10Y",   "US 10Y Yield", "%",  "^TNX"),
 ]
 MACRO_BCB = [
