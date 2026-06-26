@@ -32,7 +32,9 @@ PROVIDERS = {
     "groq": {"style": "openai", "url": "https://api.groq.com/openai/v1/chat/completions",
              "model": os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
              "key": os.environ.get("GROQ_API_KEY", ""), "throttle": 25.0},
-    "gemini": {"style": "gemini", "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+    "gemini": {"style": "gemini", "model": os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+               # 2026-06-26: troca de 2.5-flash-lite (só 20 req/dia na nossa conta — gargalo) p/ 3.1-flash-lite
+               # (500 req/dia, confirmado no painel AI Studio + doc oficial; modelo Flash-Lite => suporta systemInstruction + JSON).
                "key": os.environ.get("GEMINI_API_KEY", ""), "throttle": 4.5},
 }
 CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "mistral,cerebras,groq,gemini").split(",")
