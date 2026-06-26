@@ -220,8 +220,9 @@ def classify(headline, source=None, body=None):
         result, why = _try_provider(p, user_text)
         if result:
             return {**result, "provider": p, "model": PROVIDERS[p]["model"]}
-        if why == "rate_limited":               # teto duro → não re-tenta no resto da rodada (auto-cura na próxima)
-            _RUN_SKIP.add(p)
+        if why == "rate_limited" or why.startswith("auth") or why.startswith("http 4"):
+            _RUN_SKIP.add(p)                     # falha PERSISTENTE (cota 429 / chave 401-403 / erro de cliente 4xx) →
+                                                 # não re-tenta no resto da rodada (não desperdiça orçamento; auto-cura na próxima)
         errors.append(f"{p}: {why}")
     LAST_ERRORS = errors
     return None
