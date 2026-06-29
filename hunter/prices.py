@@ -11,9 +11,14 @@ Chamadas a partir de hunt.py uma vez por iteração do hunt-loop.
 """
 from __future__ import annotations
 
+import base64
+import itertools
+import json
 import logging
 import os
+import re
 import time
+import zlib
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -544,6 +549,139 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
     if n:
         log.info("commodity_history: %d séries atualizadas (Yahoo backfill + accrual Platts)", n)
     return n
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Iron Ore 62% Fe CFR China (USD/t) — Trading Economics (SÓ para a aba Market)
+# ───────────────────────────────────────────────────────────────────────────
+# Fonte: a página /commodity/iron-ore do Trading Economics. ⚠️ ATENÇÃO AO SÍMBOLO:
+#   SCO:COM = "Iron Ore" = 62% Fe CFR China spot, em USD/T  ← É ESTE (o que queremos)
+#   IOE:COM = "Iron Ore CNY" = contrato de Dalian, em CNY/T ← NÃO usar (yuan, contrato chinês)
+# O token (TEChartsToken, formato AAAAMMDD:usuario) EXPIRA → re-extrair da página a cada run.
+# Decode: base64 → XOR(chave cíclica) → zlib inflate → JSON. Isto NÃO toca no IRON_ORE da home
+# (Platts 61%): grava um code SEPARADO (IRON_ORE_62) que só a aba Market consome.
+TE_IRON_PAGE = "https://tradingeconomics.com/commodity/iron-ore"
+TE_IRON_SYMBOL = "SCO:COM"                                   # 62% Fe CFR China, USD/T
+TE_OBFUSCATION_KEY = b"tradingeconomics-charts-core-api-key"  # XOR cíclico (fixo no JS do TE)
+
+
+def _te_extract_tokens() -> tuple[str | None, str | None]:
+    """Baixa a página do TE e extrai (datasource, token). Token EXPIRA → sempre re-extrair."""
+    try:
+        r = requests.get(TE_IRON_PAGE, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=15)
+        r.raise_for_status()
+        html = r.text
+        ds = re.search(r"TEChartsDatasource\s*=\s*'([^']+)'", html)
+        tok = re.search(r"TEChartsToken\s*=\s*'([^']+)'", html)
+        return (ds.group(1) if ds else None, tok.group(1) if tok else None)
+    except Exception as e:
+        log.warning("TE iron ore: extração de tokens falhou: %s", e)
+        return None, None
+
+
+def _te_decode(content: bytes) -> dict | None:
+    """base64 → XOR(chave cíclica) → zlib inflate → json.loads."""
+    try:
+        b = base64.b64decode(content)
+    except Exception:
+        b = content
+    x = bytes(c ^ k for c, k in zip(b, itertools.cycle(TE_OBFUSCATION_KEY)))
+    for wbits in (47, 31, 15, -15):
+        try:
+            return json.loads(zlib.decompress(x, wbits))
+        except Exception:
+            continue
+    return None
+
+
+def fetch_te_iron_ore_62(span: str = "10y") -> dict | None:
+    """Minério 62% Fe CFR China (USD/t) do Trading Economics (símbolo SCO:COM).
+
+    Uma única chamada (span=10y, interval=1d) traz a série diária inteira + a ponta.
+    Retorna {'price','change_pct','assessed_at','series':[[epoch,close],...]} ou None.
+    Guarda de unidade: SÓ aceita USD/T (se vier CNY = Dalian, aborta — série errada).
+    """
+    ds, token = _te_extract_tokens()
+    if not ds or not token:
+        return None
+    url = f"{ds}/markets/{TE_IRON_SYMBOL}?span={span}&interval=1d"
+    try:
+        r = requests.get(url, headers={
+            "x-api-key": token,
+            "User-Agent": HEADERS["User-Agent"],
+            "Origin": "https://tradingeconomics.com",
+            "Referer": "https://tradingeconomics.com/",
+        }, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        log.warning("TE iron ore: GET falhou: %s", e)
+        return None
+    data = _te_decode(r.content)
+    try:
+        s0 = (data.get("series") or [None])[0]
+        rows = s0.get("data") or []
+        unit = (s0.get("unit") or "").upper()
+    except Exception:
+        log.warning("TE iron ore: payload inesperado / decode falhou")
+        return None
+    if "USD" not in unit:
+        log.warning("TE iron ore: unidade %r != USD/T (provável Dalian/CNY) — ignorando", unit)
+        return None
+    series = [[int(p[0]), round(float(p[1]), 4)] for p in rows if p and p[1] is not None]
+    if len(series) < 2:
+        return None
+    last = rows[-1]
+    return {
+        "price":       round(float(last[1]), 4),
+        "change_pct":  round(float(last[2]), 4) if len(last) > 2 and last[2] is not None else None,
+        "assessed_at": datetime.fromtimestamp(int(last[0]), tz=timezone.utc).date().isoformat(),
+        "series":      series,
+    }
+
+
+def update_iron_ore_62_te(max_age_hours: float = 3.0) -> int:
+    """Grava IRON_ORE_62 (minério 62% Fe CFR China, USD/t — Trading Economics) — só p/ a aba Market.
+
+    Auto-throttled por `daily_updated_at` (~poucas vezes/dia; o 62% é assessment DIÁRIO, não tick).
+    A mesma chamada atualiza preço (ponta), change_pct, assessed_at E o histórico commodities.daily.
+    """
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return 0
+    # throttle: só rebusca se ausente ou velho (uma leitura barata)
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/commodities?code=eq.IRON_ORE_62&select=daily_updated_at",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+        existing = r.json() if r.ok else []
+    except Exception:
+        existing = []
+    if existing and existing[0].get("daily_updated_at"):
+        try:
+            du = existing[0]["daily_updated_at"].replace("Z", "+00:00")
+            age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(du)).total_seconds() / 3600
+            if age_h <= max_age_hours:
+                return 0
+        except Exception:
+            pass
+    te = fetch_te_iron_ore_62()
+    if not te:
+        return 0
+    row = {
+        "code":             "IRON_ORE_62",
+        "name":             "Iron Ore 62% CFR China",
+        "unit":             "USD/t",
+        "price":            te["price"],
+        "change_pct":       te["change_pct"],
+        "assessed_at":      te["assessed_at"],
+        "daily":            te["series"][-2600:],   # ~10 anos diário
+        "daily_updated_at": _now_iso(),
+        "updated_at":       _now_iso(),
+    }
+    log.info("iron ore 62%% (TE SCO:COM): %s USD/t @ %s (%d pts)",
+             te["price"], te["assessed_at"], len(te["series"]))
+    return _supa_upsert("commodities", [row])
 
 
 def update_commodities() -> int:
