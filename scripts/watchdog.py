@@ -42,11 +42,13 @@ def _age_min(iso: str, now: datetime) -> float:
     return (now - t).total_seconds() / 60
 
 
-def check_coverage(url: str, headers: dict, now: datetime) -> tuple[list[str], list[tuple]]:
+def check_coverage(url: str, headers: dict, now: datetime) -> tuple[list[str], list[tuple], list[tuple]]:
     """Lê news_articles (janela) e detecta fontes silenciosas além do próprio ritmo.
 
-    Retorna (problemas, relatório). Derivado dos dados (sem lista fixa de fontes):
-    monitora toda fonte com >= COVERAGE_MIN_BASELINE artigos na janela.
+    Retorna SEMPRE uma 3-tupla (problemas, relatório, puladas) — derivado dos dados
+    (sem lista fixa de fontes): monitora toda fonte com >= COVERAGE_MIN_BASELINE artigos.
+    ⚠️ Os 3 elementos são obrigatórios: o chamador desempacota 3. Um `return [], []`
+    no caminho de erro derrubava o watchdog inteiro (ValueError) → e-mail de falso alarme.
     """
     # ISO sem offset (+00:00 quebraria a URL — o '+' vira espaço). found_at é UTC.
     since = (now - timedelta(days=COVERAGE_WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -62,7 +64,7 @@ def check_coverage(url: str, headers: dict, now: datetime) -> tuple[list[str], l
             batch = r.json()
         except Exception as e:
             print(f"WATCHDOG: erro lendo news_articles p/ cobertura: {e}", file=sys.stderr)
-            return [], []
+            return [], [], []   # 3-tupla obrigatória (o chamador desempacota 3) — NÃO voltar p/ 2
         if not isinstance(batch, list) or not batch:
             break
         rows.extend(batch)
