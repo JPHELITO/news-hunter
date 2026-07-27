@@ -426,6 +426,26 @@ def extract_article_container(soup, url: str = ""):
                 el.decompose()
         return container
 
+    if domain in ("portalcelulose.com.br", "www.portalcelulose.com.br"):
+        # Tema WordPress (tagDiv/JNews): o corpo real vive em .td-post-content /
+        # .entry-content. O <article> genérico engloba "posts relacionados", tags e
+        # social como IRMÃOS do corpo → pegar o container justo evita esse ruído.
+        container = (
+            soup.select_one(".td-post-content")
+            or soup.select_one(".entry-content")
+            or soup.select_one(".post-content")
+            or soup.select_one("[class*='post-content']")
+        )
+        if container:
+            for el in container.select(
+                ".td-post-related, .td-related-title, .jeg_post_tags,"
+                " .td-post-source-tags, .td-post-sharing, .post-tags, .tags,"
+                " [class*='related'], [class*='share'], .code-block,"
+                " .wp-block-buttons, script, style, form, iframe"
+            ):
+                el.decompose()
+        return container
+
     # Fallback genérico
     return (
         soup.find("article")
@@ -518,11 +538,22 @@ def _bs4_extract(raw_html: str) -> str:
         "figure > figcaption",  # captions sem imagem pai = fragmento inútil
     ]):
         tag.decompose()
-    for tag in soup.find_all(class_=re.compile(
-        r"\b(related|share|social|ads?|cookie|promo|sponsored"
-        r"|newsletter|subscribe|toolbar|caption-credit)\b",
+    # Ruído por CLASSE. Fronteira própria (início/fim OU separadores - _) porque \b trata
+    # "_" como caractere de palavra e deixava passar jeg_post_tags/td_post_related. Dois passes:
+    #  (1) tokens completos (related, tags, ads…);  (2) prefixos PT que variam a terminação
+    #      (relacionad→relacionada/os). bs4 casa o regex em cada classe do elemento.
+    _noise_token = re.compile(
+        r"(?:^|[\s_-])(related|share|social|ads?|cookie|promo|sponsored|banner"
+        r"|newsletter|subscribe|toolbar|caption-credit|tags?|publicidade|paywall)(?=$|[\s_-])",
         re.I,
-    )):
+    )
+    _noise_prefix = re.compile(
+        r"(?:^|[\s_-])(relacionad|leia-?tamb|veja-?tamb|saiba-?mais|mais-?lid|assine|compartilh)",
+        re.I,
+    )
+    for tag in soup.find_all(class_=_noise_token):
+        tag.decompose()
+    for tag in soup.find_all(class_=_noise_prefix):
         tag.decompose()
 
     out: list[str] = []

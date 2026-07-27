@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html as _html_mod
 import logging
+import re
 import threading
 from pathlib import Path
 from urllib.parse import urlparse
@@ -25,11 +26,21 @@ def _cookies_dir() -> Path:
     except Exception:
         return Path(__file__).resolve().parent.parent.parent / "news_generator" / "cookies"
 
-# domínio → provider da sessão viva do news-hunter (Supabase source_sessions)
-_SUPA_PROVIDER = {"core.spglobal.com": "platts", "dashboard.fastmarkets.com": "fastmarkets"}
+# domínio → provider da sessão viva do news-hunter (Supabase source_sessions).
+# As 4 fontes autenticadas do clipping usam o MESMO keep-alive do Platts/FM:
+#   pull_session  → puxa a sessão rolada-pra-frente ANTES de raspar
+#   save_state    → regrava a sessão renovada DEPOIS de um scrape bem-sucedido
+# → a sessão "rola pra frente" a cada uso e quase nunca expira. Valor/Estadão ainda
+# ganham um toque periódico (clipping.keepalive) p/ nunca esfriar entre clippings.
+_SUPA_PROVIDER = {
+    "core.spglobal.com":          "platts",
+    "dashboard.fastmarkets.com":  "fastmarkets",
+    "valor.globo.com":            "valor",
+    "www.estadao.com.br":         "estadao",
+}
 
 def _ensure_session(domain: str) -> None:
-    """Platts/Fastmarkets: rola a sessão viva do Supabase p/ o cookies dir antes de raspar."""
+    """Puxa a sessão viva do Supabase (roll-forward) p/ o cookies dir antes de raspar."""
     prov = _SUPA_PROVIDER.get(domain)
     if not prov:
         return
@@ -38,6 +49,19 @@ def _ensure_session(domain: str) -> None:
         ps.pull_session(prov)
     except Exception as e:
         log.warning("reader: pull_session(%s) indisponível: %s", prov, e)
+
+def _roll_forward(domain: str, ctx) -> None:
+    """Regrava a sessão renovada de volta no store (roll-forward), IGUAL Platts/FM.
+    Chamado só quando o scrape confirmou sessão viva (corpo real). Best-effort —
+    nunca sobregrava o store com uma sessão morta (só rola quando deu certo)."""
+    prov = _SUPA_PROVIDER.get(domain)
+    if not prov:
+        return
+    try:
+        from hunter import playwright_session as ps
+        ps.save_state(ctx, prov)
+    except Exception as e:
+        log.warning("reader: save_state(%s) indisponível: %s", prov, e)
 
 def _norm_domain(netloc: str) -> str:
     d = (netloc or "").lower()
@@ -67,12 +91,14 @@ _SITE_CONFIG: dict[str, dict] = {
     "dashboard.fastmarkets.com": {
         "state_file": "fastmarkets_state.json",
         "title": ["h1", "[class*='headline']", "[class*='article-title']", "[class*='ArticleTitle']"],
+        # Preferir o corpo mais JUSTO primeiro (article-body) e só depois os containers
+        # mais amplos (.content-container costuma englobar related/most-read/newsletter).
         "body": [
-            ".content-container",
-            ".article-container",
             "[class*='article-body']",
             "[class*='ArticleBody']",
             "[class*='articleBody']",
+            ".article-container",
+            ".content-container",
             "article",
         ],
     },
@@ -115,6 +141,25 @@ def _is_login_related(url: str) -> bool:
     """True se a URL indica página de login/auth."""
     u = url.lower()
     return "id.globo.com" in u or "login.globo.com" in u or "contas.globo.com" in u or "/login" in u
+
+
+# Marcadores da tela de assinatura do Valor. Quando a sessão morre, o .wall vem como
+# um CTA de assinatura em vez do artigo → estes termos o denunciam. Só derrubam blocos
+# CURTOS: um artigo real e longo NÃO é rejeitado mesmo que cite "assinante" no texto.
+_VALOR_SUB_MARKERS = (
+    "assine o valor", "assine agora", "já é assinante", "ja e assinante",
+    "para continuar lendo", "conteúdo exclusivo para assinantes",
+    "conteudo exclusivo para assinantes", "faça seu login", "faca seu login",
+    "seja assinante", "acesso ilimitado", "assine já", "assine ja",
+)
+
+
+def _looks_like_sub_screen(html: str) -> bool:
+    """True se o HTML parece a tela de assinatura (bloco curto com CTA de paywall)."""
+    txt = _html_mod.unescape(re.sub(r"<[^>]+>", " ", html or "")).lower()
+    if len(txt) > 800:          # artigo real e longo → nunca é só a tela de assinatura
+        return False
+    return any(m in txt for m in _VALOR_SUB_MARKERS)
 
 
 def _state_file_for(domain: str) -> str | None:
@@ -259,12 +304,18 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                     _no_pw  = _dv.get("no_paywall", False)
                     _has_pw = _dv.get("has_paywall", False)
                     _parts: list[str] = []
-                    # Lide (.content-text) só incluída quando não há paywall ativo,
-                    # pois sem login o content_text pode conter texto da tela de assinatura.
-                    if _dv.get("content_text") and (_no_pw or not _has_pw):
-                        _parts.append(_dv["content_text"])
-                    if _dv.get("wall") and _no_pw:
-                        _parts.append(_dv["wall"])
+                    # Inclui lide (.content-text) E corpo (.wall) sempre que NÃO houver
+                    # paywall ATIVO bloqueando (ou seja: logado). Não exige mais a classe
+                    # explícita no-paywall — era ela que fazia o Valor sair só com o lide.
+                    # A guarda _looks_like_sub_screen descarta um bloco curto que seja só a
+                    # tela de assinatura (sessão morta). Logado, o artigo sai INTEIRO.
+                    _open = _no_pw or not _has_pw
+                    _ct = _dv.get("content_text") or ""
+                    _wl = _dv.get("wall") or ""
+                    if _ct and _open and not _looks_like_sub_screen(_ct):
+                        _parts.append(_ct)
+                    if _wl and _open and not _looks_like_sub_screen(_wl):
+                        _parts.append(_wl)
                     if _parts:
                         body_html = article_to_safe_html("\n".join(_parts))
                         # Sessão OK — limpa alerta anterior se existir
@@ -303,6 +354,9 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                         pass
                 if not title:
                     title = page.title().strip()
+                # Sessão viva confirmada (corpo real) → rola a sessão pra frente no store
+                if body_html:
+                    _roll_forward(domain, ctx)
                 # Retorna direto — pula o bloco genérico abaixo
                 return title, body_html
 
@@ -382,6 +436,9 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                         pass
                 if not title:
                     title = page.title().strip()
+                # Sessão viva confirmada (corpo real) → rola a sessão pra frente no store
+                if body_html:
+                    _roll_forward(domain, ctx)
                 return title, body_html
 
             else:

@@ -1,0 +1,58 @@
+name: Clipinator — keep-alive das sessões (Valor/Estadão)
+# Mantém as sessões autenticadas do Valor e do Estadão SEMPRE frescas — o mesmo que o loop
+# hunt-playwright faz por Platts/Fastmarkets. A cada ~6h: puxa a sessão viva do store
+# (source_sessions no Supabase), abre a página do site e regrava a versão renovada (roll-forward).
+# Assim a sessão "rola pra frente" continuamente e quase nunca chega a expirar → o Valor sai
+# sempre logado (artigo na íntegra). Repo público = minutos ilimitados.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"        # a cada 6 horas
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clipinator-keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.52.0-jammy
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-clip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Seed session files from secrets (só p/ 1ª rodada; o store roda depois)
+        env:
+          VALOR_STATE_JSON:   ${{ secrets.VALOR_STATE_JSON }}
+          ESTADAO_STATE_JSON: ${{ secrets.ESTADAO_STATE_JSON }}
+        run: |
+          mkdir -p /tmp/cookies
+          [ -n "$VALOR_STATE_JSON" ]   && echo "$VALOR_STATE_JSON"   > /tmp/cookies/valor_state.json
+          [ -n "$ESTADAO_STATE_JSON" ] && echo "$ESTADAO_STATE_JSON" > /tmp/cookies/estadao_state.json
+          echo "seed pronto (o pull_session do store tem prioridade quando existir)"
+
+      - name: Rolar as sessões pra frente
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          COOKIES_DIR:          /tmp/cookies
+          PYTHONIOENCODING:     utf-8
+        run: python -m clipping.keepalive
