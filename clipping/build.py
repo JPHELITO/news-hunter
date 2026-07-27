@@ -90,7 +90,7 @@ SECTOR_ORDER   = ["SM", "PP", "NR", "CEMENT"]
 _VALID_SECTORS = frozenset(SECTOR_ORDER)
 
 TAKE_SYMBOL    = {"+": "(+)", "=": "(=)", "-": "(-)"}
-TAKE_COLOR_HEX = {"+": "00B050", "=": "595959", "-": "FF0000"}
+TAKE_COLOR_HEX = {"+": "00B050", "-": "FF0000"}   # "=" fica PRETO (sem cor) — igual à referência
 
 
 @dataclass
@@ -530,7 +530,7 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
 
     FONT = "Arial"
     # Largura do conteúdo A5 com as margens do template (6237 DXA = 4.33 in)
-    CONTENT_WIDTH = Inches(4.15)
+    CONTENT_WIDTH = Inches(4.33)
 
     # Abre template → herda logo no header, estilos, numeração e tamanho de página
     doc = Document(str(_TEMPLATE_PATH)) if _TEMPLATE_PATH.exists() else Document()
@@ -628,16 +628,14 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
         _zero_spacing(p)
         p.paragraph_format.space_before = Pt(4)
         _justify(p)
-        _para_shading(p, "000000")                          # fundo preto
-        _run(p, text, bold=True, size_pt=14, color_hex="FFFFFF")
+        _run(p, text, bold=True, size_pt=16, color_hex="FFFFFF", hl="black")  # highlight preto (largura do texto)
 
     def _heading_sector(text: str) -> None:
         """Barra preta: STEEL & MINING / PULP & PAPER / etc."""
         p = doc.add_paragraph()
         _zero_spacing(p)
         _justify(p)
-        _para_shading(p, "000000")                          # fundo preto (faltava antes)
-        _run(p, text, bold=True, size_pt=14, color_hex="FFFFFF")
+        _run(p, text, bold=True, size_pt=16, color_hex="FFFFFF", hl="black")  # highlight preto (largura do texto)
 
     def _blank() -> None:
         p = doc.add_paragraph()
@@ -695,12 +693,30 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
         color_el = OxmlElement("w:color")
         color_el.set(qn("w:val"), "000000")
         rPr.append(color_el)
-        u_el = OxmlElement("w:u")
-        u_el.set(qn("w:val"), "single")
-        rPr.append(u_el)
+        # (sem sublinhado — igual à referência: link em preto liso)
         r.append(rPr)
         t = OxmlElement("w:t")
         t.text = text
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        r.append(t)
+        hl_el.append(r)
+        para._p.append(hl_el)
+
+    def _mailto_run(para, email: str, *, size_pt: float = 10) -> None:
+        """E-mail como hyperlink AZUL SUBLINHADO (mailto) — igual à referência."""
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT
+        rId = para.part.relate_to(f"mailto:{email}", RT.HYPERLINK, is_external=True)
+        hl_el = OxmlElement("w:hyperlink")
+        hl_el.set("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", rId)
+        r   = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        rFonts = OxmlElement("w:rFonts"); rFonts.set(qn("w:ascii"), FONT); rFonts.set(qn("w:hAnsi"), FONT)
+        rPr.append(rFonts)
+        sz = OxmlElement("w:sz"); sz.set(qn("w:val"), str(int(size_pt * 2))); rPr.append(sz)
+        color_el = OxmlElement("w:color"); color_el.set(qn("w:val"), "0000FF"); rPr.append(color_el)
+        u_el = OxmlElement("w:u"); u_el.set(qn("w:val"), "single"); rPr.append(u_el)
+        r.append(rPr)
+        t = OxmlElement("w:t"); t.text = email
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
         r.append(t)
         hl_el.append(r)
@@ -731,9 +747,7 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
         color_el.set(qn("w:val"), "000000")
         rPr.append(color_el)
         # Sublinhado simples — sinaliza que o título é clicável
-        u_el = OxmlElement("w:u")
-        u_el.set(qn("w:val"), "single")
-        rPr.append(u_el)
+        # (sem sublinhado — igual à referência: link em preto liso)
         r.append(rPr)
         t = OxmlElement("w:t")
         t.text = text
@@ -781,10 +795,10 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
             _justify(p)
             _add_numPr(p)
 
-            take_color = TAKE_COLOR_HEX.get(item.take, "595959")
+            take_color = TAKE_COLOR_HEX.get(item.take)   # "=" → None → preto
             take_sym   = TAKE_SYMBOL.get(item.take, "(=)")
 
-            _run(p, f"{SECTOR_LABEL[sector_key]} –\xa0", bold=True, size_pt=11)
+            _run(p, f"{SECTOR_LABEL[sector_key]} -\xa0", bold=True, size_pt=11)   # hífen (headlines), como na referência
             _hyperlink_run(p, item.title, bm_names[item.url])
             # Artigos bilíngues: adiciona " \ Título traduzido" após o original
             if item.translated_title:
@@ -847,15 +861,11 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
          "Equity Research – Steel & Mining, Pulp and Paper and Cement",
          "t. +55 11 3073 3031  m.+55 11 99674 1242",
          "daniel.sasson@itaubba.com"),
-        ("Edgard Pinto de Souza",
-         "Equity Research – Steel & Mining, Pulp and Paper and Cement",
-         "t. +55 11 3073 3228  m.+55 11 95062 8972",
-         "edgard.souza@itaubba.com"),
         ("Marcelo Furlan Palhares, CFA",
          "Equity Research – Steel & Mining, Pulp and Paper and Cement",
          "t. +55 11 3073 3357  m.+55 11 97464 2801",
          "marcelo.palhares@itaubba.com"),
-        ("João Paulo Luka Helito",
+        ("João Paulo Luka Helito, CNPI",
          "Equity Research – Steel & Mining, Pulp and Paper and Cement",
          "t.+55 11 3073 3005  m.+55 11 93452 7535",
          "joao.helito@itaubba.com"),
@@ -865,10 +875,13 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
         _zero_spacing(p_name)
         p_name.paragraph_format.space_before = Pt(6)
         _run(p_name, name, bold=True, size_pt=10, color_hex="FF5000")
-        for line in (role, phone, email):
+        for line in (role, phone):
             p_line = doc.add_paragraph()
             _zero_spacing(p_line)
             _run(p_line, line, size_pt=10)
+        p_mail = doc.add_paragraph()
+        _zero_spacing(p_mail)
+        _mailto_run(p_mail, email, size_pt=10)   # e-mail = link azul sublinhado (igual à referência)
 
     _blank()
 
@@ -892,21 +905,20 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
             p_title.paragraph_format.space_after  = Pt(2)
             _justify(p_title)
             title_display = f"{item.title} (Original)" if item.translated_title else item.title
-            _run(p_title, title_display, bold=True, size_pt=11, hl="yellow")
+            _run(p_title, title_display, bold=True, size_pt=12, hl="yellow")
             _add_bookmark(p_title, bm_name)
 
             # ── Source ────────────────────────────────────────────────────────
             p_src = doc.add_paragraph()
             _zero_spacing(p_src)
-            p_src.paragraph_format.space_after = Pt(4)
             _justify(p_src)
             _run(p_src, f"Source: {item.source_name}",
-                 italic=True, size_pt=8, color_hex="888888")
+                 italic=True, size_pt=12)   # 12pt itálico PRETO, sem espaçamento (igual à referência)
 
             # ── Corpo do artigo ───────────────────────────────────────────────
             blocks = _html_to_blocks(item.body) if item.body else []
 
-            def _body_para(size_pt=9.5, bold=False, italic=False,
+            def _body_para(size_pt=9, bold=False, italic=False,
                            color_hex=None, indent_dxa=0,
                            space_before_pt=0, space_after_pt=4):
                 """Cria parágrafo de corpo com espaçamento padrão do leitor."""
@@ -917,7 +929,7 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
                 sp.set(qn("w:beforeAutospacing"), "0")
                 sp.set(qn("w:after"),  str(int(space_after_pt * 20)))
                 sp.set(qn("w:afterAutospacing"),  "0")
-                sp.set(qn("w:line"),      "360")
+                sp.set(qn("w:line"),      "240")
                 sp.set(qn("w:lineRule"), "auto")
                 pPr.append(sp)
                 _justify(p)
@@ -939,7 +951,7 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
                     btype = block["type"]
                     if btype == "text":
                         p = _body_para()
-                        _run(p, block["text"], size_pt=9.5, bold=block.get("bold", False))
+                        _run(p, block["text"], size_pt=9, bold=block.get("bold", False))
                     elif btype == "h3":
                         p = _body_para(space_before_pt=6, space_after_pt=2)
                         _run(p, block["text"], bold=True, size_pt=10.5)
@@ -952,7 +964,7 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
                     elif btype == "list_item":
                         if item_domain == "core.spglobal.com":
                             p = _body_para()
-                            _run(p, block["text"], size_pt=9.5)
+                            _run(p, block["text"], size_pt=9)
                         else:
                             p = _body_para(space_after_pt=2)
                             pPr = p._p.get_or_add_pPr()
@@ -960,8 +972,8 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
                             ind.set(qn("w:left"),    "280")
                             ind.set(qn("w:hanging"), "180")
                             pPr.append(ind)
-                            _run(p, "•\xa0", bold=True, size_pt=9.5)
-                            _run(p, block["text"], size_pt=9.5)
+                            _run(p, "•\xa0", bold=True, size_pt=9)
+                            _run(p, block["text"], size_pt=9)
                     elif btype == "image":
                         _add_image_para(block["src"], item.url)
 
@@ -978,15 +990,14 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
                 _justify(p_tr_title)
                 _run(p_tr_title,
                      f"{item.translated_title} (Free Translation)",
-                     bold=True, size_pt=11, hl="yellow")
+                     bold=True, size_pt=12, hl="yellow")
 
                 # Source da tradução
                 p_tr_src = doc.add_paragraph()
                 _zero_spacing(p_tr_src)
-                p_tr_src.paragraph_format.space_after = Pt(4)
                 _justify(p_tr_src)
                 _run(p_tr_src, f"Source: {item.source_name}",
-                     italic=True, size_pt=8, color_hex="888888")
+                     italic=True, size_pt=12)
 
                 # Corpo traduzido
                 trans_blocks = _html_to_blocks(item.translated_body) if item.translated_body else []
