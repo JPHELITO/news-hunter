@@ -59,6 +59,58 @@ _SYSTEM: str | None = None
 _FEWSHOT: list[dict] | None = None
 _PROMPT_FP: str = "?"
 
+# ── Correções do analista (Onda 5): few-shot dinâmico, SEM custo de IA ──────────
+# A cada run do Actions o processo é novo → _load_prompts relê estas correções e as
+# anexa ao few-shot base. O analista corrigir (ou manter) um take no clipping ensina a IA.
+CORRECTION_DAYS = int(os.environ.get("LLM_CORRECTION_DAYS", "60"))
+CORRECTION_MAX  = int(os.environ.get("LLM_CORRECTION_MAX", "20"))   # teto total de exemplos
+_CORR_MAX_ERR   = 14     # erros (a IA errou → o analista trocou) — prioridade
+_CORR_MAX_REINF = 6      # reforços (a IA acertou → o analista manteve)
+_CORR_PER_CLASS = 8      # teto por classe (+/-/=) p/ não enviesar
+
+
+def _load_corrections() -> list[dict]:
+    """take_corrections recentes → exemplos few-shot {headline, take, reason, confidence}.
+    Erros primeiro + amostra de reforços; teto por classe; take = o que o ANALISTA escolheu
+    (o certo). Best-effort: sem Supabase/tabela → []. Não faz nenhuma chamada de IA."""
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return []
+    try:
+        from datetime import datetime, timedelta, timezone
+        since = (datetime.now(timezone.utc) - timedelta(days=CORRECTION_DAYS)).date().isoformat()
+        r = requests.get(
+            f"{url}/rest/v1/take_corrections"
+            f"?select=headline,source_name,take_ai,take_analyst,changed"
+            f"&created_at=gte.{since}&order=changed.desc,created_at.desc&limit=200",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+        if not r.ok:
+            return []
+        rows = r.json()
+    except Exception as e:
+        log.warning("take_corrections indisponível: %s", e)
+        return []
+
+    per_class = {"+": 0, "-": 0, "=": 0}
+    errs: list[dict] = []
+    reinf: list[dict] = []
+    for row in rows:
+        ta = (row.get("take_analyst") or "").strip()
+        hl = (row.get("headline") or "").strip()
+        if ta not in ("+", "-", "=") or not hl:
+            continue
+        if per_class[ta] >= _CORR_PER_CLASS:
+            continue
+        bucket, cap = (errs, _CORR_MAX_ERR) if row.get("changed") else (reinf, _CORR_MAX_REINF)
+        if len(bucket) >= cap:
+            continue
+        bucket.append({"headline": hl, "take": ta,
+                       "reason": f"Analyst-curated take ({row.get('source_name') or 'clipping'}).",
+                       "confidence": 0.9})
+        per_class[ta] += 1
+    return (errs + reinf)[:CORRECTION_MAX]
+
 
 def _load_prompts():
     """Supabase llm_prompts (produção) -> $LLM_PROMPTS_DIR (dev). Lança se nada achar."""
@@ -95,6 +147,14 @@ def _load_prompts():
 
     _SYSTEM = system
     _FEWSHOT = [json.loads(l) for l in (fewshot_raw or "").splitlines() if l.strip()]
+    # Onda 5: anexa as correções do analista (few-shot dinâmico; relê a cada run do Actions).
+    try:
+        corr = _load_corrections()
+        if corr:
+            _FEWSHOT = _FEWSHOT + corr
+            log.info("few-shot: +%d exemplo(s) de correções do analista", len(corr))
+    except Exception as e:
+        log.warning("few-shot corrections: %s", e)
     _PROMPT_FP = hashlib.sha256((_SYSTEM + json.dumps(_FEWSHOT, sort_keys=True)).encode()).hexdigest()[:12]
     log.info("LLM prompts carregados (fp=%s, few-shot=%d)", _PROMPT_FP, len(_FEWSHOT))
 
