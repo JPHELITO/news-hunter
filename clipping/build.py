@@ -264,38 +264,55 @@ def _fetch_body_regular(url: str) -> str:
         from bs4 import BeautifulSoup as _BS
         from .html_utils import article_to_safe_html, extract_article_container
 
-        resp = _req.get(
-            url,
-            headers={"User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            )},
-            timeout=15,
-            allow_redirects=True,
-        )
-        if resp.status_code != 200:
-            log.debug("clipping: auto-fetch HTTP %d em %s", resp.status_code, url)
+        html = ""
+        try:   # curl_cffi (impersonate) — passa em sites que bloqueiam requests puro (ex.: Portal Celulose)
+            from curl_cffi import requests as _creq
+            r = _creq.get(url, impersonate="chrome124", timeout=20, allow_redirects=True)
+            if r.status_code == 200:
+                html = r.text
+        except Exception:
+            html = ""
+        if not html:   # fallback requests puro
+            resp = _req.get(
+                url,
+                headers={"User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )},
+                timeout=15,
+                allow_redirects=True,
+            )
+            if resp.status_code != 200:
+                log.debug("clipping: auto-fetch HTTP %d em %s", resp.status_code, url)
+                return ""
+            html = resp.text
+
+        soup = _BS(html, "lxml")
+
+        # Extrai o container ANTES de limpar (o decompose global removia o <article> em alguns
+        # temas WordPress, ex.: Portal Celulose) — depois limpa o ruído só DENTRO do container.
+        container = extract_article_container(soup, url)
+        if not container:
+            for _sel in (".entry-content", ".post-content", ".td-post-content",
+                         "article", "[role=main]", "main"):
+                _c = soup.select_one(_sel)
+                if _c and len(_c.get_text(strip=True)) > 200:
+                    container = _c
+                    break
+        if not container:
             return ""
-
-        soup = _BS(resp.text, "lxml")
-
-        # Remove elementos não-conteúdo globais (antes da extração por domínio)
-        for tag in soup.find_all([
+        for tag in container.find_all([
             "nav", "header", "footer", "aside",
             "script", "style", "iframe", "noscript", "form",
         ]):
             tag.decompose()
-        for tag in soup.find_all(class_=re.compile(
+        for tag in container.find_all(class_=re.compile(
             r"(^|\b)(ad|ads|banner|popup|cookie|subscribe|paywall|"
             r"menu|sidebar|share|social|comment|promo|newsletter)(\b|$)",
             re.I,
         )):
             tag.decompose()
-
-        container = extract_article_container(soup, url)
-        if not container:
-            return ""
 
         body = article_to_safe_html(str(container))
         if body and len(body) > 100:

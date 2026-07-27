@@ -47,6 +47,8 @@ jobs:
           PLATTS_CREDENTIALS:      ${{ secrets.PLATTS_CREDENTIALS }}
           FASTMARKETS_STATE_JSON:  ${{ secrets.FASTMARKETS_STATE_JSON }}
           FASTMARKETS_CREDENTIALS: ${{ secrets.FASTMARKETS_CREDENTIALS }}
+          VALOR_STATE_JSON:        ${{ secrets.VALOR_STATE_JSON }}
+          ESTADAO_STATE_JSON:      ${{ secrets.ESTADAO_STATE_JSON }}
         run: |
           mkdir -p /tmp/cookies
           if [ -n "$PLATTS_STATE_JSON" ]; then
@@ -56,6 +58,9 @@ jobs:
           [ -n "$PLATTS_CREDENTIALS" ] && echo "$PLATTS_CREDENTIALS" > /tmp/cookies/platts_credentials.json
           [ -n "$FASTMARKETS_STATE_JSON" ]  && echo "$FASTMARKETS_STATE_JSON"  > /tmp/cookies/fastmarkets_state.json
           [ -n "$FASTMARKETS_CREDENTIALS" ] && echo "$FASTMARKETS_CREDENTIALS" > /tmp/cookies/fastmarkets_credentials.json
+          # Valor precisa da sessão logada (Globo); Estadão funciona sem (bypass Zephr), sessão é bônus.
+          [ -n "$VALOR_STATE_JSON" ]   && echo "$VALOR_STATE_JSON"   > /tmp/cookies/valor_state.json
+          [ -n "$ESTADAO_STATE_JSON" ] && echo "$ESTADAO_STATE_JSON" > /tmp/cookies/estadao_state.json
           echo "sessões preparadas"
 
       - name: Processar a fila de clippings (drena e encerra)
