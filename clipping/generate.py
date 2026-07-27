@@ -20,7 +20,7 @@ from .build import (
     ClippingItem, build_docx, detect_sector, _BILINGUAL_DOMAINS, _translate_to_english,
 )
 from .bodies import fetch_body, norm_domain
-from .eml import build_eml_bytes
+from .eml import build_eml_bytes, build_html
 
 log = logging.getLogger(__name__)
 
@@ -68,8 +68,11 @@ def build_from_payload(payload: list[dict], d: date | None = None, fetch: bool =
     docx = build_docx(items, d, config)
     docx_name = f"clipping_{d.strftime('%Y%m%d')}.docx"
     eml = build_eml_bytes(items, d, docx_bytes=docx, docx_name=docx_name, config=config)
+    html = build_html(items, d, config)                       # prévia inline (mesmo HTML do e-mail)
     return {"docx": docx, "eml": eml, "docx_name": docx_name,
-            "eml_name": f"clipping_{d.strftime('%Y%m%d')}.eml", "items": items, "errors": errors}
+            "eml_name": f"clipping_{d.strftime('%Y%m%d')}.eml",
+            "html": html, "html_name": f"clipping_{d.strftime('%Y%m%d')}.html",
+            "items": items, "errors": errors}
 
 
 def main():

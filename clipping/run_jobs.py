@@ -103,12 +103,14 @@ def process(job: dict) -> None:
         base = f"clippings/{jid}"
         _upload(f"{base}/{res['docx_name']}", res["docx"], DOCX_CT)
         _upload(f"{base}/{res['eml_name']}", res["eml"], "message/rfc822")
+        _upload(f"{base}/{res['html_name']}", res["html"].encode("utf-8"), "text/html; charset=utf-8")
         # corpos que falharam (url, motivo) → gravados no job p/ o front oferecer "colar e regerar"
         errs = [{"url": u, "reason": r} for (u, r) in (res.get("errors") or [])]
         patch_job(jid, {
             "status": "done",
             "docx_path": _sign(f"{base}/{res['docx_name']}"),
             "eml_path": _sign(f"{base}/{res['eml_name']}"),
+            "preview_path": _sign(f"{base}/{res['html_name']}"),   # prévia inline (HTML)
             "error": None, "errors": errs, "finished_at": _now(), "updated_at": _now(),
         })
         log.info("job %s DONE (%d itens, %d avisos)", jid, len(res["items"]), len(res["errors"]))
