@@ -1,0 +1,69 @@
+name: Clipinator — aquecer corpos (À PARTE do news hunter)
+# Pré-raspa e GUARDA os corpos das notícias candidatas em clipping_bodies (tabela separada), p/ o
+# clipping ficar instantâneo (clique = corpo pronto) e o Word sair rápido (reusa o guardado).
+# NÃO toca no news hunter: só LÊ o news_articles e escreve em clipping_bodies (tabela própria).
+# Compartilha apenas a sessão keep-alive (Platts/FM), que este processo só rola pra frente.
+# Repo público = minutos ilimitados; cada rodada é limitada por --budget.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 * * * *"        # de hora em hora (min 20, p/ não colidir com o hunt-loop)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clipinator-warm
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.52.0-jammy
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-clip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt python-docx deep-translator lxml Pillow
+
+      - name: Write session files from secrets
+        env:
+          PLATTS_STATE_JSON:       ${{ secrets.PLATTS_STATE_JSON }}
+          PLATTS_CREDENTIALS:      ${{ secrets.PLATTS_CREDENTIALS }}
+          FASTMARKETS_STATE_JSON:  ${{ secrets.FASTMARKETS_STATE_JSON }}
+          FASTMARKETS_CREDENTIALS: ${{ secrets.FASTMARKETS_CREDENTIALS }}
+          VALOR_STATE_JSON:        ${{ secrets.VALOR_STATE_JSON }}
+          ESTADAO_STATE_JSON:      ${{ secrets.ESTADAO_STATE_JSON }}
+        run: |
+          mkdir -p /tmp/cookies
+          if [ -n "$PLATTS_STATE_JSON" ]; then
+            echo "$PLATTS_STATE_JSON" | base64 -d | gunzip > /tmp/cookies/platts_state.json \
+              || echo "$PLATTS_STATE_JSON" > /tmp/cookies/platts_state.json
+          fi
+          [ -n "$PLATTS_CREDENTIALS" ] && echo "$PLATTS_CREDENTIALS" > /tmp/cookies/platts_credentials.json
+          [ -n "$FASTMARKETS_STATE_JSON" ]  && echo "$FASTMARKETS_STATE_JSON"  > /tmp/cookies/fastmarkets_state.json
+          [ -n "$FASTMARKETS_CREDENTIALS" ] && echo "$FASTMARKETS_CREDENTIALS" > /tmp/cookies/fastmarkets_credentials.json
+          [ -n "$VALOR_STATE_JSON" ]   && echo "$VALOR_STATE_JSON"   > /tmp/cookies/valor_state.json
+          [ -n "$ESTADAO_STATE_JSON" ] && echo "$ESTADAO_STATE_JSON" > /tmp/cookies/estadao_state.json
+          echo "sessões preparadas"
+
+      - name: Aquecer os corpos (lê news_articles, escreve clipping_bodies)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          COOKIES_DIR:          /tmp/cookies
+          PYTHONIOENCODING:     utf-8
+        run: python -m clipping.warm_bodies --budget 900 --limit 80

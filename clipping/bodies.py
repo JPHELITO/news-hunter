@@ -10,13 +10,62 @@ Retorna '' quando não conseguiu — o Word/e-mail mostram um aviso no lugar.
 from __future__ import annotations
 
 import logging
-from urllib.parse import urlparse
+import os
+from urllib.parse import quote, urlparse
 
 log = logging.getLogger(__name__)
 
 # fontes com raspador dedicado (Playwright + sessão)
 _AUTH = frozenset(["core.spglobal.com", "dashboard.fastmarkets.com",
                    "valor.globo.com", "www.estadao.com.br"])
+
+
+# ── Armazém de corpos (clipping_bodies no Supabase — 100% à parte do news hunter) ──
+# O aquecedor grava aqui; a geração e a prévia leem daqui. Só o clipping usa esta tabela.
+def _supa() -> tuple[str, str]:
+    return (os.environ.get("SUPABASE_URL", "").rstrip("/"),
+            os.environ.get("SUPABASE_SERVICE_KEY", ""))
+
+
+def get_stored_body(url: str) -> dict | None:
+    """Corpo já guardado em clipping_bodies (ou None). {body, translated_title, translated_body}."""
+    su, key = _supa()
+    if not su or not key:
+        return None
+    try:
+        import requests
+        r = requests.get(
+            f"{su}/rest/v1/clipping_bodies?url=eq.{quote(url, safe='')}"
+            f"&select=body,translated_title,translated_body,char_len&limit=1",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+        if r.ok and r.json():
+            row = r.json()[0]
+            if (row.get("char_len") or 0) > 80:
+                return row
+    except Exception as e:
+        log.debug("get_stored_body(%s): %s", url, e)
+    return None
+
+
+def store_body(url: str, title: str, source_name: str, body: str,
+               translated_title: str = "", translated_body: str = "", status: str = "ok") -> None:
+    """Upsert do corpo em clipping_bodies (best-effort). Sem Supabase → no-op."""
+    su, key = _supa()
+    if not su or not key:
+        return
+    try:
+        import requests
+        requests.post(
+            f"{su}/rest/v1/clipping_bodies?on_conflict=url",
+            json=[{"url": url, "title": title or "", "source_name": source_name or "",
+                   "body": body or "", "translated_title": translated_title or "",
+                   "translated_body": translated_body or "", "status": status,
+                   "char_len": len(body or "")}],
+            headers={"apikey": key, "Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json",
+                     "Prefer": "resolution=merge-duplicates,return=minimal"}, timeout=20)
+    except Exception as e:
+        log.warning("store_body(%s): %s", url, e)
 
 
 def norm_domain(url: str) -> str:

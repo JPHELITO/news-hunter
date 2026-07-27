@@ -19,7 +19,7 @@ from pathlib import Path
 from .build import (
     ClippingItem, build_docx, detect_sector, _BILINGUAL_DOMAINS, _translate_to_english,
 )
-from .bodies import fetch_body, norm_domain
+from .bodies import fetch_body, norm_domain, get_stored_body, store_body
 from .eml import build_eml_bytes, build_html
 
 log = logging.getLogger(__name__)
@@ -29,33 +29,55 @@ _LANG = {"valor.globo.com": "Portuguese", "www.estadao.com.br": "Portuguese",
          "www.elfinanciero.com.mx": "Spanish"}
 
 
+def _fetch_and_translate(url: str, dom: str, title: str) -> tuple[str, str, str]:
+    """Raspa o corpo + traduz (bilíngue) → (body_html, translated_title, translated_body).
+    Usado pela geração (fallback ao vivo) E pelo aquecedor (clipping/warm_bodies.py)."""
+    body = fetch_body(url) or ""
+    tt = tb = ""
+    if body and dom in _BILINGUAL_DOMAINS:
+        try:
+            _tt, _tb = _translate_to_english(title, body, _LANG.get(dom, "Portuguese"))
+            if _tt:
+                tt, tb = _tt, _tb
+        except Exception as e:
+            log.warning("clipping: tradução falhou (%s): %s", url, e)
+    return body, tt, tb
+
+
 def _to_item(row: dict, fetch: bool, errors: list) -> ClippingItem:
     url = row["url"]
     dom = norm_domain(url)
     take = row.get("take") or "="
     sector = row.get("sector") if row.get("sector") in _VALID_SECTORS else ""
-    body = row.get("body") or ""
-    if fetch and not body:
-        body = fetch_body(url)
-        if not body:
+    title = row.get("title") or url
+    src = row.get("source_name") or dom
+    body = row.get("body") or ""          # 1) corpo colado no payload (item 8) tem prioridade
+    tt = tb = ""
+    if not body:                          # 2) corpo já guardado pelo aquecedor → INSTANTÂNEO
+        stored = get_stored_body(url)
+        if stored:
+            body = stored.get("body") or ""
+            tt   = stored.get("translated_title") or ""
+            tb   = stored.get("translated_body") or ""
+    if fetch and not body:                # 3) fallback: raspa ao vivo E guarda p/ a próxima vez
+        body, tt, tb = _fetch_and_translate(url, dom, title)
+        if body:
+            store_body(url, title, src, body, tt, tb)
+        else:
             errors.append((url, "corpo não obtido"))
-    it = ClippingItem(
-        url=url,
-        title=row.get("title") or url,
-        source_name=row.get("source_name") or dom,
-        body=body,
-        matched_keywords=[],
-        domain=dom,
-        take=take,
-        sector=(sector or detect_sector(dom, [], row.get("title") or "")),
-    )
-    if dom in _BILINGUAL_DOMAINS and it.body:
+    it = ClippingItem(url=url, title=title, source_name=src, body=body,
+                      matched_keywords=[], domain=dom, take=take,
+                      sector=(sector or detect_sector(dom, [], title)))
+    # tradução: usa a guardada; senão, corpo veio do payload (colado) e é bilíngue → traduz agora
+    if not tt and body and dom in _BILINGUAL_DOMAINS:
         try:
-            tt, tb = _translate_to_english(it.title, it.body, _LANG.get(dom, "Portuguese"))
-            if tt:
-                it.translated_title, it.translated_body = tt, tb
+            _tt, _tb = _translate_to_english(title, body, _LANG.get(dom, "Portuguese"))
+            if _tt:
+                tt, tb = _tt, _tb
         except Exception as e:
             log.warning("clipping: tradução falhou (%s): %s", url, e)
+    if tt:
+        it.translated_title, it.translated_body = tt, tb
     return it
 
 
