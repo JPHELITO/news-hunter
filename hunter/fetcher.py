@@ -95,6 +95,21 @@ def _fetch_one(source: dict) -> list[RawArticle]:
 
     n_entries = len(feed.entries)
     if n_entries == 0:
+        # 200 com 0 entradas costuma ser CHALLENGE do Cloudflare servido como HTML (não RSS) ao
+        # IP de datacenter. O fallback de _http_get só dispara em 401/403/429 → esse caso passava
+        # batido e sumia a fonte em silêncio. Tenta curl_cffi (TLS Chrome), que costuma receber o
+        # feed real. (Foi o que gutava o Mining.com no CI sem erro visível.)
+        try:
+            from curl_cffi import requests as creq
+            r2 = creq.get(url, impersonate="chrome", timeout=TIMEOUT)
+            feed2 = feedparser.parse(r2.content)
+            if len(feed2.entries) > 0:
+                log.info("Feed [%s] recuperado via curl_cffi (0 -> %d entradas)", label, len(feed2.entries))
+                feed = feed2
+                n_entries = len(feed.entries)
+        except Exception as e:
+            log.debug("curl_cffi retry (0 entradas) falhou [%s]: %s", label, e)
+    if n_entries == 0:
         log.warning("Feed VAZIO [%s] HTTP 200 mas 0 entradas (possível bloqueio de conteúdo): %s",
                     label, url)
         return []

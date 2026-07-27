@@ -11,12 +11,16 @@ filter=True  → feed geral → aplica keyword matching
 SOURCES = [
     # ══ MINING.COM — feeds por commodity ══════════════════════════════════════
     # (os feeds de CATEGORIA steel/mining retornam 404 — só existem os de commodity)
-    # filter=True (keyword): Mining.com é AMPLO (ouro, lítio, urânio…) → aceitar tudo
-    # floodaria ~93 extras/ciclo fora do foco. Keyword mantém iron-ore/copper/nickel +
-    # empresas cobertas (Vale, Aura, Kinross). NÃO é fonte setorial estreita.
-    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/iron-ore/feed/", "filter": True},
-    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/copper/feed/",   "filter": True},
-    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/nickel/feed/",   "filter": True},
+    # ⚠️ 2026-07-27: iron-ore/copper/nickel são TEMÁTICOS e on-topic (Vale faz minério +
+    # base metals) → filter=False (aceita tudo, só title-blocklist), como as outras setoriais.
+    # Antes tinham filter=True (keyword), mas "gold"/"copper"/"nickel" NÃO estão em ALL_KEYWORDS
+    # (só "iron ore"), então gutavam os feeds: medido copper 42%, nickel 31% passavam — o resto
+    # sumia do feed E do clipping. GOLD FICA filter=True: ~94% é júnior fora da cobertura
+    # (Barrick/Newmont/Agnico) — aceitar-tudo inundaria e queimaria as 4 IAs grátis; as cobertas
+    # (Aura/Kinross/Eldorado) seguem passando por keyword.
+    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/iron-ore/feed/", "filter": False},
+    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/copper/feed/",   "filter": False},
+    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/nickel/feed/",   "filter": False},
     {"label": "Mining.com",            "url": "https://www.mining.com/commodity/gold/feed/",     "filter": True},
 
     # ══ BRASIL — Imprensa econômica (RSS oficiais) ════════════════════════════
