@@ -1,0 +1,67 @@
+name: Clipinator — gerar clipping (sob demanda)
+# SOB DEMANDA: NÃO fica em loop. Roda quando é disparado (workflow_dispatch) — o disparo vem do
+# Supabase quando você clica "Gerar" na dashboard (Database Webhook no INSERT de clipping_jobs →
+# GitHub workflow_dispatch). Cada disparo drena a fila de jobs pending e encerra.
+#
+# `python -m clipping.run_jobs` já reivindica e processa TODOS os pending (claim atômico) e sai.
+# Cron diário só como rede de segurança (pega algum job que tenha ficado pendente).
+# Repo público = minutos ilimitados; sem consumo ocioso (nada roda entre os cliques).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "50 9 * * *"       # 06:50 BRT — rede de segurança diária (drena o que sobrou)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clipinator-generate    # serializa disparos concorrentes (o claim já é atômico)
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.52.0-jammy
+    timeout-minutes: 20         # geração é curta; teto de segurança
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-clip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt python-docx deep-translator lxml Pillow
+
+      - name: Write session files from secrets
+        env:
+          PLATTS_STATE_JSON:       ${{ secrets.PLATTS_STATE_JSON }}
+          PLATTS_CREDENTIALS:      ${{ secrets.PLATTS_CREDENTIALS }}
+          FASTMARKETS_STATE_JSON:  ${{ secrets.FASTMARKETS_STATE_JSON }}
+          FASTMARKETS_CREDENTIALS: ${{ secrets.FASTMARKETS_CREDENTIALS }}
+        run: |
+          mkdir -p /tmp/cookies
+          if [ -n "$PLATTS_STATE_JSON" ]; then
+            echo "$PLATTS_STATE_JSON" | base64 -d | gunzip > /tmp/cookies/platts_state.json \
+              || echo "$PLATTS_STATE_JSON" > /tmp/cookies/platts_state.json
+          fi
+          [ -n "$PLATTS_CREDENTIALS" ] && echo "$PLATTS_CREDENTIALS" > /tmp/cookies/platts_credentials.json
+          [ -n "$FASTMARKETS_STATE_JSON" ]  && echo "$FASTMARKETS_STATE_JSON"  > /tmp/cookies/fastmarkets_state.json
+          [ -n "$FASTMARKETS_CREDENTIALS" ] && echo "$FASTMARKETS_CREDENTIALS" > /tmp/cookies/fastmarkets_credentials.json
+          echo "sessões preparadas"
+
+      - name: Processar a fila de clippings (drena e encerra)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          COOKIES_DIR:          /tmp/cookies
+          PYTHONIOENCODING:     utf-8
+        run: python -m clipping.run_jobs
