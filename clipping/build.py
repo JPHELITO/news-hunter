@@ -19,7 +19,6 @@ OUT_DIR = _ROOT / "out"
 
 _SM_DOMAINS    = {"core.spglobal.com", "www.mining.com"}
 _PP_DOMAINS    = {"dashboard.fastmarkets.com"}
-_CEMENT_DOMAINS = {"www.elfinanciero.com.mx"}
 
 
 def _nfkd(s: str) -> str:
@@ -45,35 +44,20 @@ _PP_KWS = {_nfkd(k) for k in [
     "eucalipto", "bhkp", "bekp", "pulp", "paper", "klbn", "suzb",
 ]}
 
-_CEMENT_KWS = {_nfkd(k) for k in [
-    "votorantim", "intercement", "csn cimentos", "nassau cimentos",
-    "itambe", "lafarge holcim", "lafargeHolcim", "cemex", "gcc",
-    "grupo mexico", "cement", "cimento", "clinker",
-]}
-
-
 def detect_sector(domain: str, matched_keywords: list[str], title: str) -> str:
-    """Returns 'SM', 'PP', 'NR' or 'CEMENT'."""
+    """Returns 'SM', 'PP' or 'NR'. (Cement removido — não cobrimos mais.)"""
     if domain in _SM_DOMAINS:
         return "SM"
     if domain in _PP_DOMAINS:
         return "PP"
-    if domain in _CEMENT_DOMAINS:
-        return "CEMENT"
 
-    kws    = {_nfkd(k) for k in matched_keywords}
+    kws     = {_nfkd(k) for k in matched_keywords}
     title_n = _nfkd(title)
 
-    sm_score     = len(kws & _SM_KWS)     + sum(1 for k in _SM_KWS     if k in title_n)
-    pp_score     = len(kws & _PP_KWS)     + sum(1 for k in _PP_KWS     if k in title_n)
-    cement_score = len(kws & _CEMENT_KWS) + sum(1 for k in _CEMENT_KWS if k in title_n)
+    sm_score = len(kws & _SM_KWS) + sum(1 for k in _SM_KWS if k in title_n)
+    pp_score = len(kws & _PP_KWS) + sum(1 for k in _PP_KWS if k in title_n)
 
-    best = max(sm_score, pp_score, cement_score)
-    if best == 0:
-        return "SM"
-    if cement_score == best:
-        return "CEMENT"
-    if pp_score == best:
+    if pp_score > sm_score:
         return "PP"
     return "SM"
 
@@ -81,12 +65,11 @@ def detect_sector(domain: str, matched_keywords: list[str], title: str) -> str:
 # ── Data model ────────────────────────────────────────────────────────────────
 
 SECTOR_LABEL: dict[str, str] = {
-    "SM":     "STEEL & MINING",
-    "PP":     "PULP & PAPER",
-    "NR":     "NATURAL RESOURCES",
-    "CEMENT": "CEMENT",
+    "NR": "NATURAL RESOURCES",
+    "SM": "STEEL & MINING",
+    "PP": "PULP & PAPER",
 }
-SECTOR_ORDER   = ["SM", "PP", "NR", "CEMENT"]
+SECTOR_ORDER   = ["NR", "SM", "PP"]   # ordem fixa no clipping (usuário 2026-07-27): NR → S&M → P&P
 _VALID_SECTORS = frozenset(SECTOR_ORDER)
 
 TAKE_SYMBOL    = {"+": "(+)", "=": "(=)", "-": "(-)"}

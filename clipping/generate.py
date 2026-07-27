@@ -24,7 +24,7 @@ from .eml import build_eml_bytes
 
 log = logging.getLogger(__name__)
 
-_VALID_SECTORS = {"SM", "PP", "NR", "CEMENT"}
+_VALID_SECTORS = {"SM", "PP", "NR"}
 _LANG = {"valor.globo.com": "Portuguese", "www.estadao.com.br": "Portuguese",
          "www.elfinanciero.com.mx": "Spanish"}
 
