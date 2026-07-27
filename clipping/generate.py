@@ -59,14 +59,15 @@ def _to_item(row: dict, fetch: bool, errors: list) -> ClippingItem:
     return it
 
 
-def build_from_payload(payload: list[dict], d: date | None = None, fetch: bool = True) -> dict:
+def build_from_payload(payload: list[dict], d: date | None = None, fetch: bool = True,
+                       config: dict | None = None) -> dict:
     d = d or date.today()
     rows = sorted(payload, key=lambda r: r.get("pos", 0))
     errors: list = []
     items = [_to_item(r, fetch, errors) for r in rows]
-    docx = build_docx(items, d)
+    docx = build_docx(items, d, config)
     docx_name = f"clipping_{d.strftime('%Y%m%d')}.docx"
-    eml = build_eml_bytes(items, d, docx_bytes=docx, docx_name=docx_name)
+    eml = build_eml_bytes(items, d, docx_bytes=docx, docx_name=docx_name, config=config)
     return {"docx": docx, "eml": eml, "docx_name": docx_name,
             "eml_name": f"clipping_{d.strftime('%Y%m%d')}.eml", "items": items, "errors": errors}
 

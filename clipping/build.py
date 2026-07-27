@@ -522,7 +522,8 @@ def _update_banner_date(body_el, d: date) -> None:
                 pass
 
 
-def _build_word(items: list[ClippingItem], d: date) -> bytes:
+def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) -> bytes:
+    config = config or {}
     from docx import Document
     from docx.shared import Pt, Inches
     from docx.oxml.ns import qn
@@ -784,6 +785,19 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
     bm_names = {item.url: f"art{i}" for i, item in enumerate(items)}
 
     # ══════════════════════════════════════════════════════════════════════════
+    # INTRO / MENSAGEM (configurável — vai no topo; o mesmo texto entra no e-mail)
+    # ══════════════════════════════════════════════════════════════════════════
+    _intro = (config.get("intro") or {})
+    if _intro.get("on") and (_intro.get("text") or "").strip():
+        for _line in _intro["text"].splitlines():
+            p = doc.add_paragraph()
+            _zero_spacing(p)
+            _justify(p)
+            if _line.strip():
+                _run(p, _line, size_pt=12)
+        _blank()
+
+    # ══════════════════════════════════════════════════════════════════════════
     # SECTOR HEADLINES
     # ══════════════════════════════════════════════════════════════════════════
     _heading_index("Sector Headlines")
@@ -811,47 +825,40 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
     # ══════════════════════════════════════════════════════════════════════════
     # RECENT PUBLICATIONS
     # ══════════════════════════════════════════════════════════════════════════
-    _heading_index("Recent Publications")
-
-    try:
-        from .store import get_recent_publications
-        pubs = get_recent_publications(10)
-    except Exception as e:
-        log.warning("clipping: erro ao buscar publicações: %s", e)
-        pubs = []
-
-    if pubs:
-        for pub in pubs:
-            title      = pub.get("title", "").strip()
-            pdf_url    = pub.get("pdf_url", "").strip()
-            report_url = pub.get("report_url", "").strip()
-            if not title:
+    # helper reusado por Recent Publications e Earnings Review — bullet "SETOR – título (link)"
+    def _pub_bullets(pub_list):
+        for pub in (pub_list or []):
+            name = (pub.get("name") or pub.get("title") or "").strip()
+            if not name:
                 continue
-            # Detecta setor pelo título (sem domain/matched_keywords — usa só texto)
-            sector_key  = detect_sector("", [], title)
-            sector_label = SECTOR_LABEL.get(sector_key, "STEEL & MINING")
-
-            p = doc.add_paragraph()
-            _zero_spacing(p)
-            _justify(p)
-            _add_numPr(p)
-
-            _run(p, f"{sector_label} –\xa0", bold=True, size_pt=11)
-            # Título do relatório como hyperlink direto para o PDF
-            link_url = pdf_url or report_url
-            if link_url:
-                _external_hyperlink_run(p, title, link_url, size_pt=11)
+            sec  = pub.get("sector") if pub.get("sector") in _VALID_SECTORS else "SM"
+            link = (pub.get("link") or pub.get("pdf_url") or pub.get("report_url") or "").strip()
+            p = doc.add_paragraph(); _zero_spacing(p); _justify(p); _add_numPr(p)
+            _run(p, f"{SECTOR_LABEL.get(sec, 'STEEL & MINING')} –\xa0", bold=True, size_pt=11)
+            if link:
+                _external_hyperlink_run(p, name, link, size_pt=11)
             else:
-                _run(p, title, size_pt=11)
+                _run(p, name, size_pt=11)
+
+    _heading_index("Recent Publications")
+    _recent = config.get("recent_publications") or []
+    if _recent:
+        _pub_bullets(_recent)
     else:
-        # Nenhuma publicação disponível — instrução discreta
         p_empty = doc.add_paragraph()
         _zero_spacing(p_empty)
-        _run(p_empty,
-             "[Publicações não disponíveis — execute uma busca para atualizar]",
+        _run(p_empty, "[Sem publicações — adicione na tela do Clipinator]",
              italic=True, size_pt=9, color_hex="888888")
-
     _blank()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # EARNINGS REVIEW (opcional — toggle + nome editável, ex.: "2Q26 Review")
+    # ══════════════════════════════════════════════════════════════════════════
+    _er = config.get("earnings_review") or {}
+    if _er.get("on"):
+        _heading_index((_er.get("label") or "Earnings Review").strip() or "Earnings Review")
+        _pub_bullets(_er.get("items"))
+        _blank()
 
     # ══════════════════════════════════════════════════════════════════════════
     # CONTACTS
@@ -1020,14 +1027,13 @@ def _build_word(items: list[ClippingItem], d: date) -> bytes:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def build_docx(items: "list[ClippingItem]", d: date | None = None) -> bytes:
+def build_docx(items: "list[ClippingItem]", d: date | None = None, config: dict | None = None) -> bytes:
     """Gera o .docx (bytes) a partir de ClippingItems JÁ com corpo preenchido.
 
-    Caminho de INTEGRAÇÃO com a dashboard: o job traz url/title/source/take/sector e o corpo é
-    buscado à parte (scrapers/sessões); aqui só montamos o Word no estilo da casa. Bypassa o
-    generate_clipping (que lia do SQLite local do clipinator antigo).
+    config (opcional): {intro:{on,text}, recent_publications:[{name,sector,link}],
+    earnings_review:{on,label,items:[{name,sector,link}]}} — vindo da tela do Clipinator.
     """
-    return _build_word(list(items), d or date.today())
+    return _build_word(list(items), d or date.today(), config)
 
 
 def domain_supported(url: str) -> bool:

@@ -99,7 +99,7 @@ def process(job: dict) -> None:
     payload = job.get("payload") or []
     d = date.fromisoformat(job["ref_date"]) if job.get("ref_date") else date.today()
     try:
-        res = build_from_payload(payload, d, fetch=True)
+        res = build_from_payload(payload, d, fetch=True, config=job.get("config"))
         base = f"clippings/{jid}"
         _upload(f"{base}/{res['docx_name']}", res["docx"], DOCX_CT)
         _upload(f"{base}/{res['eml_name']}", res["eml"], "message/rfc822")

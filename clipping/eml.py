@@ -60,7 +60,34 @@ def _take_html(take: str) -> str:
     return f'&nbsp;<b><span style="color:#{col}">{sym}</span></b>' if sym else ""
 
 
-def build_html(items: list[ClippingItem], d: date) -> str:
+def _pub_html(title_label: str, pub_list) -> str:
+    """Bloco de publicações no e-mail (Recent Publications / Earnings Review)."""
+    lis = []
+    for pub in (pub_list or []):
+        name = _esc((pub.get("name") or "").strip())
+        if not name:
+            continue
+        sec   = SECTOR_LABEL.get(pub.get("sector"), pub.get("sector") or "")
+        link  = (pub.get("link") or "").strip()
+        title = f'<a href="{_esc(link)}">{name}</a>' if link else name
+        lis.append(f'<li style="{_PB}"><b>{_esc(sec)} &ndash;</b> {title}</li>')
+    if not lis:
+        return ""
+    hdr = f'{_P}<b><span style="font-size:14.0pt;color:#FF5000">{_esc(title_label)}</span></b></p>'
+    return hdr + f'<ul type="disc">{"".join(lis)}</ul>' + BLANK
+
+
+def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -> str:
+    config = config or {}
+    intro = config.get("intro") or {}
+    intro_html = ""
+    if intro.get("on") and (intro.get("text") or "").strip():
+        intro_html = "".join(
+            (f'{_P}{_esc(ln)}</p>' if ln.strip() else BLANK) for ln in intro["text"].splitlines()
+        ) + BLANK
+    _er = config.get("earnings_review") or {}
+    recent_html   = _pub_html("Recent Publications", config.get("recent_publications"))
+    earnings_html = _pub_html(_er.get("label") or "Earnings Review", _er.get("items")) if _er.get("on") else ""
     header = (f'{_PC}<b><span style="font-size:18.0pt;color:#FF5000">'
               f'*** Equity Research Daily &ndash; {_esc(_fmt_date(d))} ***</span></b></p>')
 
@@ -104,7 +131,8 @@ def build_html(items: list[ClippingItem], d: date) -> str:
 
     return ('<html><head><meta charset="utf-8"></head>'
             '<body lang="EN-US" style="word-wrap:break-word">'
-            f'{header}{BLANK}{index_block}{BLANK}{contacts_block}{BLANK}{"".join(sections)}'
+            f'{intro_html}{header}{BLANK}{index_block}{BLANK}{recent_html}{earnings_html}'
+            f'{contacts_block}{BLANK}{"".join(sections)}'
             '</body></html>')
 
 
@@ -122,14 +150,15 @@ def build_plain_text(items: list[ClippingItem], d: date) -> str:
 
 def build_eml_bytes(items: list[ClippingItem], d: date | None = None,
                     docx_bytes: bytes | None = None,
-                    docx_name: str | None = None) -> bytes:
+                    docx_name: str | None = None,
+                    config: dict | None = None) -> bytes:
     d = d or date.today()
     msg = EmailMessage()
     msg["Subject"] = f"Equity Research Daily - {_fmt_date(d)}"
     msg["From"] = ""
     msg["To"] = ""
     msg.set_content(build_plain_text(items, d), charset="utf-8")
-    msg.add_alternative(build_html(items, d), subtype="html")
+    msg.add_alternative(build_html(items, d, config), subtype="html")
     if docx_bytes:
         name = docx_name or f"clipping_{d.strftime('%Y%m%d')}.docx"
         msg.add_attachment(
