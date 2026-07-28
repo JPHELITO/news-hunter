@@ -56,24 +56,34 @@ def _parse_date(entry) -> Optional[datetime]:
     return None
 
 
-def _http_get(url: str) -> tuple[int, bytes]:
-    """GET com fallback curl_cffi quando bloqueado (401/403/429).
+# Domínios com Cloudflare AGRESSIVO no IP de datacenter (Actions) → usar curl_cffi (TLS de Chrome)
+# DE CARA, não só como fallback. O Mining.com parou de coletar em ~15/jul/2026 (0 desde então):
+# o Cloudflare passou a devolver "200 + página de desafio" (não 403), que escapava do fallback.
+_FORCE_CURL_DOMAINS = ("mining.com",)
 
-    Cloudflare bloqueia o TLS fingerprint do `requests` a partir de IP de
-    datacenter (ex: Mining.com 403, Estadão sitemap 401 no GitHub Actions) e
-    rate-limit devolve 429. curl_cffi imita o TLS do Chrome e costuma passar.
-    Se não estiver instalado, retorna o código original.
+
+def _http_get(url: str) -> tuple[int, bytes]:
+    """GET com curl_cffi (TLS de Chrome) forçado p/ Cloudflare, e fallback em 401/403/429.
+
+    Cloudflare bloqueia o TLS fingerprint do `requests` a partir de IP de datacenter
+    (ex: Mining.com, Estadão sitemap no GitHub Actions). curl_cffi imita o Chrome e passa.
     """
-    resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-    if resp.status_code in (401, 403, 429):
-        try:
-            from curl_cffi import requests as creq
-            r2 = creq.get(url, impersonate="chrome", timeout=TIMEOUT)
-            log.info("curl_cffi fallback [%s]: HTTP %d", url, r2.status_code)
-            return r2.status_code, r2.content
-        except Exception as e:
-            log.debug("curl_cffi indisponível/falhou: %s", e)
-    return resp.status_code, resp.content
+    from urllib.parse import urlparse as _up
+    host = (_up(url).hostname or "").lower()
+    force = any(host == d or host.endswith("." + d) for d in _FORCE_CURL_DOMAINS)
+    resp = None
+    if not force:
+        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        if resp.status_code not in (401, 403, 429):
+            return resp.status_code, resp.content
+    try:
+        from curl_cffi import requests as creq
+        r2 = creq.get(url, impersonate="chrome124", timeout=TIMEOUT)
+        log.info("curl_cffi %s [%s]: HTTP %d", "forcado" if force else "fallback", url, r2.status_code)
+        return r2.status_code, r2.content
+    except Exception as e:
+        log.debug("curl_cffi indisponível/falhou: %s", e)
+    return (resp.status_code, resp.content) if resp is not None else (0, b"")
 
 
 def _fetch_one(source: dict) -> list[RawArticle]:
