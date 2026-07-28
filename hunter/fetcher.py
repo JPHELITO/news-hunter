@@ -86,6 +86,53 @@ def _http_get(url: str) -> tuple[int, bytes]:
     return (resp.status_code, resp.content) if resp is not None else (0, b"")
 
 
+def _is_force_curl(url: str) -> bool:
+    from urllib.parse import urlparse as _up
+    host = (_up(url).hostname or "").lower()
+    return any(host == d or host.endswith("." + d) for d in _FORCE_CURL_DOMAINS)
+
+
+def _playwright_feed(url: str) -> bytes | None:
+    """Busca o feed via NAVEGADOR REAL (Playwright), num thread dedicado (o fetch_all roda em
+    ThreadPool). Resolve o desafio JS do Cloudflare que bloqueia requests E curl_cffi no IP de
+    datacenter. Só funciona onde o Playwright está instalado (loop hunt-playwright); senão None.
+    Faz 2 visitas: a 1ª dispara/resolve o challenge (seta cf_clearance), a 2ª pega o XML do feed."""
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+    except Exception:
+        return None
+    out: dict = {}
+
+    def _job():
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                try:
+                    browser = p.chromium.launch(headless=True, channel="chrome",
+                                                args=["--disable-blink-features=AutomationControlled"])
+                except Exception:
+                    browser = p.chromium.launch(headless=True,
+                                                args=["--disable-blink-features=AutomationControlled"])
+                ctx = browser.new_context(user_agent=HEADERS.get("User-Agent", ""))
+                page = ctx.new_page()
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=35_000)
+                    page.wait_for_timeout(5_000)                      # deixa o challenge resolver
+                    r = page.goto(url, wait_until="domcontentloaded", timeout=25_000)  # já com cf_clearance
+                    out["data"] = r.body() if r else None
+                except Exception as e:
+                    log.debug("playwright_feed goto falhou [%s]: %s", url, e)
+                browser.close()
+        except Exception as e:
+            log.debug("playwright_feed job falhou [%s]: %s", url, e)
+
+    import threading
+    t = threading.Thread(target=_job, daemon=True)
+    t.start()
+    t.join(timeout=70)
+    return out.get("data")
+
+
 def _fetch_one(source: dict) -> list[RawArticle]:
     """Busca e parseia um único feed RSS. Retorna lista de RawArticle."""
     label = source["label"]
@@ -93,11 +140,16 @@ def _fetch_one(source: dict) -> list[RawArticle]:
     needs_filter = source.get("filter", True)
 
     try:
-        status, content = _http_get(url)
-        if status != 200:
-            # Bloqueio (403/401/429) aparece aqui — diagnóstico no log do GitHub.
-            log.warning("Feed BLOQUEADO/ERRO [%s] HTTP %d: %s", label, status, url)
-            return []
+        content = None
+        if _is_force_curl(url):
+            # Cloudflare-duro (mining.com): navegador real PRIMEIRO — requests E curl_cffi são
+            # bloqueados no IP de datacenter. None se o Playwright não existe (loop RSS puro).
+            content = _playwright_feed(url)
+        if not content:
+            status, content = _http_get(url)
+            if status != 200 or not content:
+                log.warning("Feed BLOQUEADO/ERRO [%s] HTTP %s: %s", label, status, url)
+                return []
         feed = feedparser.parse(content)
     except Exception as e:
         log.warning("Feed EXCEÇÃO [%s] %s: %s", label, url, e)
