@@ -946,12 +946,14 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         _heading_sector(SECTOR_LABEL[sector_key])
         _blanks(1)       # cabeçalho do setor → 1º artigo: 1 linha ("daqui pra frente tudo tem espaçamento de linhas")
 
-        for item in sector_items:
+        for _ii, item in enumerate(sector_items):
+            if _ii > 0:
+                _blanks(1)   # entre notícias: +1 linha em branco → 2 linhas (o corpo já dá ~1 linha via space_after)
             bm_name = bm_names[item.url]
 
             # ── Título: bold, highlight amarelo, bookmarked ───────────────────
-            # Título/Source/Corpo = conjunto tight (sem espaçamento interno). O gap para o
-            # artigo anterior vem do space_after (~1 linha) do último parágrafo do corpo dele.
+            # Título/Source/Corpo = conjunto tight (sem espaçamento interno). Entre notícias há
+            # ~2 linhas (space_after ~1 linha do último parágrafo do corpo + 1 linha em branco acima).
             # Para artigos bilíngues: sufixo "(Original)" no título.
             p_title = doc.add_paragraph()
             _zero_spacing(p_title)
