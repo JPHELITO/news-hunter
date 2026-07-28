@@ -40,6 +40,20 @@ def _esc(s) -> str:
     return escape(str(s or ""), quote=False)
 
 
+def _intro_line_html(ln: str) -> str:
+    """Converte [texto](url) em <a href>, escapando o resto (link na mensagem de abertura)."""
+    import re
+    out, pos = [], 0
+    for m in re.finditer(r'\[([^\]]+)\]\((https?://[^)\s]+)\)', ln):
+        if m.start() > pos:
+            out.append(_esc(ln[pos:m.start()]))
+        out.append(f'<a href="{escape(m.group(2), quote=True)}">{_esc(m.group(1))}</a>')
+        pos = m.end()
+    if pos < len(ln):
+        out.append(_esc(ln[pos:]))
+    return "".join(out)
+
+
 def _fmt_date(d: date) -> str:
     return f"{d.day:02d} {MONTH_EN[d.month]} {d.year}"
 
@@ -83,7 +97,7 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
     intro_html = ""
     if intro.get("on") and (intro.get("text") or "").strip():
         intro_html = "".join(
-            (f'{_P}{_esc(ln)}</p>' if ln.strip() else BLANK) for ln in intro["text"].splitlines()
+            (f'{_P}{_intro_line_html(ln)}</p>' if ln.strip() else BLANK) for ln in intro["text"].splitlines()
         ) + BLANK
     _er = config.get("earnings_review") or {}
     recent_html   = _pub_html("Recent Publications", config.get("recent_publications"))

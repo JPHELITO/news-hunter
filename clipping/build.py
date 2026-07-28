@@ -654,13 +654,10 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         # bm_end: no final do parágrafo (após todos os runs)
         p.append(bm_end)
 
-    def _external_hyperlink_run(para, text: str, url: str, *, size_pt: float = 9.5) -> None:
-        """Run com hyperlink externo (URL) — abre no browser.
-
-        Usado nas publicações de research: o título do relatório como link
-        para o PDF do portal Itaú BBA Smart.
-        Estilo: sublinhado preto, tamanho configurável — mesma família visual do corpo.
-        """
+    def _external_hyperlink_run(para, text: str, url: str, *, size_pt: float = 9.5,
+                                color: str = "000000", underline: bool = False) -> None:
+        """Run com hyperlink externo (URL) — abre no browser. color/underline configuráveis:
+        publicações = preto liso (padrão); link na mensagem de abertura = azul sublinhado."""
         from docx.opc.constants import RELATIONSHIP_TYPE as RT
         rId = para.part.relate_to(url, RT.HYPERLINK, is_external=True)
         hl_el = OxmlElement("w:hyperlink")
@@ -675,9 +672,10 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         sz.set(qn("w:val"), str(int(size_pt * 2)))   # Word: 2 × pt
         rPr.append(sz)
         color_el = OxmlElement("w:color")
-        color_el.set(qn("w:val"), "000000")
+        color_el.set(qn("w:val"), color)
         rPr.append(color_el)
-        # (sem sublinhado — igual à referência: link em preto liso)
+        if underline:
+            u_el = OxmlElement("w:u"); u_el.set(qn("w:val"), "single"); rPr.append(u_el)
         r.append(rPr)
         t = OxmlElement("w:t")
         t.text = text
@@ -777,7 +775,16 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
             _zero_spacing(p)
             _justify(p)
             if _line.strip():
-                _run(p, _line, size_pt=12)
+                # converte [texto](url) em hyperlink azul sublinhado; resto = texto normal
+                _pos = 0
+                for _m in re.finditer(r'\[([^\]]+)\]\((https?://[^)\s]+)\)', _line):
+                    if _m.start() > _pos:
+                        _run(p, _line[_pos:_m.start()], size_pt=12)
+                    _external_hyperlink_run(p, _m.group(1), _m.group(2), size_pt=12,
+                                            color="0000FF", underline=True)
+                    _pos = _m.end()
+                if _pos < len(_line):
+                    _run(p, _line[_pos:], size_pt=12)
         _blank()
 
     # ══════════════════════════════════════════════════════════════════════════
