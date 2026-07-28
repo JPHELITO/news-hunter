@@ -79,6 +79,14 @@ TAKE_COLOR_HEX = {"+": "00B050", "-": "FF0000"}   # "=" fica PRETO (sem cor) —
 # grupo 1 = texto em negrito · grupos 2/3 = (texto, url) do link.
 _INLINE_RE = re.compile(r'\*\*(.+?)\*\*|\[([^\]]+)\]\((https?://[^)\s]+)\)')
 
+
+def _is_platts_boilerplate(text: str) -> bool:
+    """True se o parágrafo é EXATAMENTE 'Platts is part of S&P Global Energy' (com/sem ponto
+    final). Removido a pedido do usuário. Se houver texto DEPOIS (ex.: 'Platts, part of S&P
+    Global Energy, assessed…'), NÃO casa → o parágrafo é mantido."""
+    t = (text or "").strip().rstrip(".").strip().lower()
+    return t == "platts is part of s&p global energy"
+
 # Analistas padrão do bloco de contatos (fallback quando o admin não configura em config['analysts']).
 _DEFAULT_ANALYSTS: list[dict] = [
     {"name":  "Daniel Sasson, CFA",
@@ -145,6 +153,8 @@ def _html_to_blocks(html_body: str) -> list[dict]:
 
     def _add_text(text: str, bold: bool = False) -> None:
         text = _clean(text)
+        if _is_platts_boilerplate(text):   # remove o boilerplate solto "Platts is part of S&P Global Energy"
+            return
         if text and len(text) > 3:
             blocks.append({"type": "text", "text": text, "bold": bold})
 
@@ -801,10 +811,9 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
             log.debug("clipping: imagem não inserida (%s): %s", src[:80], e)
 
     # ── Ordem dos setores ─────────────────────────────────────────────────────
-    seen_sectors: list[str] = []
-    for item in items:
-        if item.sector not in seen_sectors:
-            seen_sectors.append(item.sector)
+    # Ordem dos setores no clipping = ordem CANÔNICA NR → SM → PP (SECTOR_ORDER), NUNCA a
+    # ordem do payload → S&M SEMPRE antes de P&P (exigência do usuário). Só entra setor presente.
+    seen_sectors: list[str] = [s for s in SECTOR_ORDER if any(it.sector == s for it in items)]
 
     bm_names = {item.url: f"art{i}" for i, item in enumerate(items)}
 
@@ -940,20 +949,22 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
     # ══════════════════════════════════════════════════════════════════════════
     # CORPOS DOS ARTIGOS POR SETOR
     # ══════════════════════════════════════════════════════════════════════════
-    for sector_key in seen_sectors:
+    for _si, sector_key in enumerate(seen_sectors):
         sector_items = [it for it in items if it.sector == sector_key]
 
+        if _si > 0:
+            _blanks(2)   # entre setores: 2 linhas (a 1ª seção já teve as 2 do último analista → setor)
         _heading_sector(SECTOR_LABEL[sector_key])
-        _blanks(1)       # cabeçalho do setor → 1º artigo: 1 linha ("daqui pra frente tudo tem espaçamento de linhas")
+        _blanks(1)       # cabeçalho do setor → 1º artigo: 1 linha
 
         for _ii, item in enumerate(sector_items):
             if _ii > 0:
-                _blanks(1)   # entre notícias: +1 linha em branco → 2 linhas (o corpo já dá ~1 linha via space_after)
+                _blanks(2)   # entre notícias: 2 linhas em branco (do último parágrafo → título da próxima)
             bm_name = bm_names[item.url]
 
             # ── Título: bold, highlight amarelo, bookmarked ───────────────────
-            # Título/Source/Corpo = conjunto tight (sem espaçamento interno). Entre notícias há
-            # ~2 linhas (space_after ~1 linha do último parágrafo do corpo + 1 linha em branco acima).
+            # Título/Source/Corpo = conjunto tight (sem espaçamento interno). Parágrafos do
+            # corpo são separados por 1 linha em branco (em _render_blocks); entre notícias, 2.
             # Para artigos bilíngues: sufixo "(Original)" no título.
             p_title = doc.add_paragraph()
             _zero_spacing(p_title)
@@ -976,9 +987,10 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
 
             def _body_para(size_pt=9, bold=False, italic=False,
                            color_hex=None, indent_dxa=0,
-                           space_before_pt=0, space_after_pt=10):
-                """Cria parágrafo de corpo. space_after=10pt (~1 linha) separa os parágrafos do
-                scraping p/ não virar texto corrido; também dá a 1 linha entre artigos consecutivos."""
+                           space_before_pt=0, space_after_pt=0):
+                """Cria parágrafo de corpo TIGHT (space_after=0). A separação de 1 linha entre os
+                parágrafos do scraping é feita por LINHAS EM BRANCO reais em _render_blocks
+                (o usuário quer 'pular uma linha' de verdade, não só espaçamento)."""
                 p = doc.add_paragraph()
                 pPr = p._p.get_or_add_pPr()
                 sp = OxmlElement("w:spacing")
@@ -997,15 +1009,21 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
                 return p
 
             def _render_blocks(blocks_list: list[dict], item_domain: str) -> None:
-                """Renderiza lista de blocos como parágrafos Word."""
+                """Renderiza os blocos como parágrafos Word, com 1 LINHA EM BRANCO real entre
+                cada bloco (parágrafos do scraping não viram texto corrido)."""
                 if not blocks_list:
                     p = doc.add_paragraph()
                     _zero_spacing(p)
                     _run(p, "[Corpo do artigo não disponível]",
                          italic=True, size_pt=9, color_hex="888888")
                     return
+                _prev = None
                 for block in blocks_list:
                     btype = block["type"]
+                    # 1 linha em branco entre blocos — exceto antes do 1º e entre bullets consecutivos
+                    if _prev is not None and not (_prev == "list_item" and btype == "list_item"):
+                        _blanks(1)
+                    _prev = btype
                     if btype == "text":
                         p = _body_para()
                         _run(p, block["text"], size_pt=9, bold=block.get("bold", False))
