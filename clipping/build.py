@@ -1011,6 +1011,11 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
             def _render_blocks(blocks_list: list[dict], item_domain: str) -> None:
                 """Renderiza os blocos como parágrafos Word, com 1 LINHA EM BRANCO real entre
                 cada bloco (parágrafos do scraping não viram texto corrido)."""
+                # Platts: os "bullets" do corpo eram os highlights (resumo em negrito), que o
+                # usuário pediu p/ REMOVER. O corpo do Platts não tem lista real → descarta os
+                # list_item ANTES de renderizar (conserta também corpos já cacheados com highlights).
+                if item_domain == "core.spglobal.com":
+                    blocks_list = [b for b in blocks_list if b.get("type") != "list_item"]
                 if not blocks_list:
                     p = doc.add_paragraph()
                     _zero_spacing(p)
