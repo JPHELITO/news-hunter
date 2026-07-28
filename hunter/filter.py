@@ -124,9 +124,12 @@ def _ambiguous_pattern() -> re.Pattern:
 # excluir os INFINITIVOS + "tudo" é seguro — não bloqueia manchete verdadeira.
 # "tudo" mata a novela "Vale Tudo" e a expressão "Vale tudo para …" (a empresa nunca
 # aparece como "Vale tudo"; se vier "Vale: tudo sobre a mineradora", o ':' quebra o \s+).
+# "do sil[íi]cio" = "Vale do Silício" (Silicon Valley — tecnologia, não a mineradora).
+# SEGURO: "Vale do Rio Doce" (nome histórico da empresa) e "Vale do Aço" (região
+# siderúrgica de MG) NÃO casam "do silício" → seguem passando.
 _VALE_IDIOM = re.compile(
-    r"\s+(?:tudo|a\s+pena|lembrar|destacar|ressaltar|citar|notar|mencionar|frisar|"
-    r"salientar|dizer|conferir|registrar|comentar|observar|pontuar)\b",
+    r"\s+(?:tudo|do\s+sil[íi]cio|a\s+pena|lembrar|destacar|ressaltar|citar|notar|"
+    r"mencionar|frisar|salientar|dizer|conferir|registrar|comentar|observar|pontuar)\b",
     re.IGNORECASE,
 )
 

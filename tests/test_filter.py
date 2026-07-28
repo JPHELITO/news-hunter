@@ -179,6 +179,14 @@ class TestFalseFriendsBlocked:
         assert not _passes("‘Vale tudo para salvar a democracia’, diz político em evento",
                            "política", "InfoMoney")
 
+    def test_vale_silicio_blocked(self):
+        """'Vale do Silício' (Silicon Valley) não é a mineradora."""
+        assert not _passes("Vale do Silício racha no debate sobre regulação de IA", "tecnologia", "InfoMoney")
+
+    def test_vale_do_rio_doce_ainda_passa(self):
+        """'Vale do Rio Doce' (nome histórico da empresa) NÃO pode ser bloqueado."""
+        assert _passes("Companhia Vale do Rio Doce eleva produção de minério", "trimestre", "Estadão")
+
     def test_vale_empresa_apos_dois_pontos_passa(self):
         """'Vale: tudo sobre a mineradora' — o ':' quebra o \\s+ do idioma → segue passando."""
         assert _passes("Vale: tudo sobre a mineradora nesta temporada de resultados",
