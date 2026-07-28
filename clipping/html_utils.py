@@ -120,12 +120,23 @@ PLATTS_DOM_WALK_JS: str = r"""(function() {
 
     var items  = [];
     var imgIdx = 0;
+    var tblIdx = 0;
 
     for (var i = 0; i < container.children.length; i++) {
         var el   = container.children[i];
         var tag  = el.tagName;
-        var imgs = (tag === 'IMG') ? [el] : Array.prototype.slice.call(el.querySelectorAll('img'));
 
+        /* TABELA (<table> real no DOM): marca um slot p/ screenshot (print fiel).
+           Checa ANTES de imagem/texto p/ não achatar a tabela num parágrafo embolado. */
+        var tbls = (tag === 'TABLE') ? [el] : Array.prototype.slice.call(el.querySelectorAll('table'));
+        if (tbls.length > 0) {
+            for (var k = 0; k < tbls.length; k++) {
+                items.push({t: 'table', idx: tblIdx++});
+            }
+            continue;
+        }
+
+        var imgs = (tag === 'IMG') ? [el] : Array.prototype.slice.call(el.querySelectorAll('img'));
         if (imgs.length > 0) {
             /* Um slot de imagem por <img> encontrado */
             for (var j = 0; j < imgs.length; j++) {
@@ -203,44 +214,54 @@ def platts_dom_items_to_html(data: dict, page, *, strip_related: bool = True) ->
     except Exception:
         pass
 
-    # ── Highlights → lista de bullets ────────────────────────────────────────
-    if hl_text and hl_text.strip():
-        hl_lines = [l.strip() for l in hl_text.splitlines() if len(l.strip()) > 5]
-        if hl_lines:
-            li_items = "".join(f"<li>{_he.escape(l)}</li>" for l in hl_lines)
-            parts.append(f"<ul>{li_items}</ul>")
+    # ── Highlights (.newsSection-highlights): NÃO incluídos (decisão do usuário) ──
+    # O bloco de resumo em NEGRITO que a Platts põe no topo era a única parte do
+    # cabeçalho que entrava no clipping → removido. Só o corpo (+ tabelas/imagens) entra.
+    # (data/autor/tag/toolbar já ficam FORA do .newsSection-body, nunca capturados.)
+    _ = hl_text  # mantido no walker p/ uso futuro; não renderizado aqui
 
-    img_locs = page.locator(".newsSection-body").first.locator("img")
+    img_locs   = page.locator(".newsSection-body").first.locator("img")
+    table_locs = page.locator(".newsSection-body").first.locator("table")
+
+    def _shot(loc, *, element: bool = False):  # noqa: ANN001, ANN202
+        """Screenshot do elemento → <img> base64 embutido, ou None se falhar.
+        element=True → loc.screenshot() (pega a TABELA inteira, mesmo mais larga que a
+        viewport); element=False → page.screenshot(clip=bb) (evita o overlay de zoom das imagens)."""
+        try:
+            try:
+                loc.scroll_into_view_if_needed(timeout=3_000)
+            except Exception:
+                pass
+            try:
+                page.evaluate(_HIDE_OVERLAYS_JS)   # overlays que reaparecem após o scroll
+            except Exception:
+                pass
+            png = None
+            if element:
+                png = loc.screenshot(timeout=6_000)
+            else:
+                bb = loc.bounding_box()
+                if bb and bb["width"] > 10 and bb["height"] > 10:
+                    png = page.screenshot(clip=bb)
+            if png and len(png) > 500:
+                b64 = _b64.b64encode(png).decode()
+                return f'<img src="data:image/png;base64,{b64}" alt="" class="reader-img">'
+        except Exception:
+            pass
+        return None
 
     for item in items:
         t = item.get("t", "p")
 
         if t == "img":
-            idx = item.get("idx", 0)
-            try:
-                loc = img_locs.nth(idx)
-                # Rola o elemento para a viewport antes de capturar
-                try:
-                    loc.scroll_into_view_if_needed(timeout=3_000)
-                except Exception:
-                    pass
-                # Re-aplica hide de overlays após scroll (alguns reaparecem)
-                try:
-                    page.evaluate(_HIDE_OVERLAYS_JS)
-                except Exception:
-                    pass
-                # Usa page.screenshot(clip=bb) em vez de element.screenshot()
-                # para não acionar hover/focus que mostram overlays Angular
-                bb = loc.bounding_box()
-                if bb and bb["width"] > 10 and bb["height"] > 10:
-                    png = page.screenshot(clip=bb)
-                    if png and len(png) > 500:
-                        b64 = _b64.b64encode(png).decode()
-                        parts.append(
-                            f'<img src="data:image/png;base64,{b64}" alt="" class="reader-img">'
-                        )
-            except Exception:
-                pass
+            html = _shot(img_locs.nth(item.get("idx", 0)))            # clip=bb: não aciona zoom-overlay
+            if html:
+                parts.append(html)
+
+        elif t == "table":
+            html = _shot(table_locs.nth(item.get("idx", 0)), element=True)   # tabela inteira → print fiel
+            if html:
+                parts.append(html)
 
         elif t in ("h1", "h2", "h3", "h4", "h5", "h6"):
             v = _he.escape((item.get("v") or "").strip())
