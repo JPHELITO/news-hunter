@@ -41,13 +41,16 @@ def _esc(s) -> str:
 
 
 def _intro_line_html(ln: str) -> str:
-    """Converte [texto](url) em <a href>, escapando o resto (link na mensagem de abertura)."""
+    """Converte **negrito** e [texto](url) na mensagem de abertura; escapa o resto."""
     import re
     out, pos = [], 0
-    for m in re.finditer(r'\[([^\]]+)\]\((https?://[^)\s]+)\)', ln):
+    for m in re.finditer(r'\*\*(.+?)\*\*|\[([^\]]+)\]\((https?://[^)\s]+)\)', ln):
         if m.start() > pos:
             out.append(_esc(ln[pos:m.start()]))
-        out.append(f'<a href="{escape(m.group(2), quote=True)}">{_esc(m.group(1))}</a>')
+        if m.group(1) is not None:                       # **negrito**
+            out.append(f'<b>{_esc(m.group(1))}</b>')
+        else:                                            # [texto](url)
+            out.append(f'<a href="{escape(m.group(3), quote=True)}">{_esc(m.group(2))}</a>')
         pos = m.end()
     if pos < len(ln):
         out.append(_esc(ln[pos:]))
@@ -136,11 +139,15 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
             sections.append(f'{_P}<span style="color:#555">Source:</span> '
                             f'<a href="{_esc(it.url)}">{_esc(it.url)}</a></p>{BLANK}')
 
-    # ── Contatos ──
+    # ── Contatos (analistas configuráveis no admin — fallback = CONTACTS) ──
+    _analysts = (config or {}).get("analysts") or None
+    _clist = ([(a.get("name", ""), a.get("email", "")) for a in _analysts
+               if (a.get("name") or a.get("email"))] if _analysts else CONTACTS)
     contacts = [f'{_P}<b><span style="color:#FF5000">Equity Research</span></b></p>']
-    for name, mail in CONTACTS:
-        contacts.append(f'{_PJ}<b><span style="font-size:10.0pt">{_esc(name)} /</span></b>&nbsp;'
-                        f'<a href="mailto:{mail}"><span style="font-size:10.0pt">{mail}</span></a></p>')
+    for name, mail in _clist:
+        _mailhtml = (f'&nbsp;<a href="mailto:{escape(mail, quote=True)}">'
+                     f'<span style="font-size:10.0pt">{_esc(mail)}</span></a>') if mail else ""
+        contacts.append(f'{_PJ}<b><span style="font-size:10.0pt">{_esc(name)} /</span></b>{_mailhtml}</p>')
     contacts_block = "".join(contacts)
 
     return ('<html><head><meta charset="utf-8"></head>'

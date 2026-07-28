@@ -106,6 +106,7 @@ def main():
     ap.add_argument("--title", default="")
     ap.add_argument("--source", default="")
     ap.add_argument("--no-fetch", action="store_true")
+    ap.add_argument("--config", help="JSON com intro/recent_publications/earnings_review/analysts")
     ap.add_argument("--date")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent / "out"))
     a = ap.parse_args()
@@ -120,7 +121,8 @@ def main():
         ap.error("use --payload ou --url")
 
     d = date.fromisoformat(a.date) if a.date else date.today()
-    res = build_from_payload(payload, d, fetch=not a.no_fetch)
+    _cfg = json.loads(Path(a.config).read_text(encoding="utf-8")) if a.config else None
+    res = build_from_payload(payload, d, fetch=not a.no_fetch, config=_cfg)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     (out / res["docx_name"]).write_bytes(res["docx"])
     (out / res["eml_name"]).write_bytes(res["eml"])

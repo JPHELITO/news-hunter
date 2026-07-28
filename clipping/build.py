@@ -75,6 +75,26 @@ _VALID_SECTORS = frozenset(SECTOR_ORDER)
 TAKE_SYMBOL    = {"+": "(+)", "=": "(=)", "-": "(-)"}
 TAKE_COLOR_HEX = {"+": "00B050", "-": "FF0000"}   # "=" fica PRETO (sem cor) — igual à referência
 
+# Marcação inline da "Mensagem de abertura": **negrito** e [texto](url).
+# grupo 1 = texto em negrito · grupos 2/3 = (texto, url) do link.
+_INLINE_RE = re.compile(r'\*\*(.+?)\*\*|\[([^\]]+)\]\((https?://[^)\s]+)\)')
+
+# Analistas padrão do bloco de contatos (fallback quando o admin não configura em config['analysts']).
+_DEFAULT_ANALYSTS: list[dict] = [
+    {"name":  "Daniel Sasson, CFA",
+     "role":  "Equity Research – Steel & Mining, Pulp and Paper and Cement",
+     "phone": "t. +55 11 3073 3031  m.+55 11 99674 1242",
+     "email": "daniel.sasson@itaubba.com"},
+    {"name":  "Marcelo Furlan Palhares, CFA",
+     "role":  "Equity Research – Steel & Mining, Pulp and Paper and Cement",
+     "phone": "t. +55 11 3073 3357  m.+55 11 97464 2801",
+     "email": "marcelo.palhares@itaubba.com"},
+    {"name":  "João Paulo Luka Helito, CNPI",
+     "role":  "Equity Research – Steel & Mining, Pulp and Paper and Cement",
+     "phone": "t.+55 11 3073 3005  m.+55 11 93452 7535",
+     "email": "joao.helito@itaubba.com"},
+]
+
 
 @dataclass
 class ClippingItem:
@@ -610,7 +630,6 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         Fundo preto, texto branco — mesma linguagem visual dos cabeçalhos de setor."""
         p = doc.add_paragraph()
         _zero_spacing(p)
-        p.paragraph_format.space_before = Pt(4)
         _justify(p)
         _run(p, text, bold=True, size_pt=16, color_hex="FFFFFF", hl="black")  # highlight preto (largura do texto)
 
@@ -624,6 +643,30 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
     def _blank() -> None:
         p = doc.add_paragraph()
         _zero_spacing(p)
+
+    def _blanks(n: int = 1) -> None:
+        """Insere n linhas em branco (parágrafos vazios). Unidade de espaçamento entre
+        seções — a marca de parágrafo é fixada em Arial 11 p/ altura de linha previsível."""
+        for _ in range(max(0, n)):
+            p = doc.add_paragraph()
+            _zero_spacing(p)
+            pPr = p._p.get_or_add_pPr()
+            rPr = OxmlElement("w:rPr")
+            rf  = OxmlElement("w:rFonts"); rf.set(qn("w:ascii"), FONT); rf.set(qn("w:hAnsi"), FONT)
+            rPr.append(rf)
+            sz  = OxmlElement("w:sz"); sz.set(qn("w:val"), "22"); rPr.append(sz)   # 11pt
+            pPr.append(rPr)
+
+    def _intro_para_fmt(para) -> None:
+        """Formato do parágrafo da Mensagem de abertura (referência): justificado,
+        entrelinha 'ao menos 16pt' (w:line=320, atLeast), sem espaço antes/depois."""
+        pPr = para._p.get_or_add_pPr()
+        sp  = OxmlElement("w:spacing")
+        sp.set(qn("w:before"), "0"); sp.set(qn("w:beforeAutospacing"), "0")
+        sp.set(qn("w:after"),  "0"); sp.set(qn("w:afterAutospacing"),  "0")
+        sp.set(qn("w:line"), "320"); sp.set(qn("w:lineRule"), "atLeast")   # 16pt = 320 twips
+        pPr.append(sp)
+        _justify(para)
 
     # Bookmarks para hyperlinks internos.
     # Inicia em 100 para evitar colisão com IDs já presentes no template.docx.
@@ -769,28 +812,35 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
     # INTRO / MENSAGEM (configurável — vai no topo; o mesmo texto entra no e-mail)
     # ══════════════════════════════════════════════════════════════════════════
     _intro = (config.get("intro") or {})
-    if _intro.get("on") and (_intro.get("text") or "").strip():
+    _has_intro = bool(_intro.get("on") and (_intro.get("text") or "").strip())
+    if _has_intro:
+        _blanks(1)   # logo do Itaú → Mensagem de abertura: 1 linha
         for _line in _intro["text"].splitlines():
             p = doc.add_paragraph()
-            _zero_spacing(p)
-            _justify(p)
+            _intro_para_fmt(p)   # justificado + entrelinha ao menos 16pt (Arial 11)
             if _line.strip():
-                # converte [texto](url) em hyperlink azul sublinhado; resto = texto normal
+                # **negrito** e [texto](url) na mesma linha; resto = texto normal
                 _pos = 0
-                for _m in re.finditer(r'\[([^\]]+)\]\((https?://[^)\s]+)\)', _line):
+                for _m in _INLINE_RE.finditer(_line):
                     if _m.start() > _pos:
-                        _run(p, _line[_pos:_m.start()], size_pt=12)
-                    _external_hyperlink_run(p, _m.group(1), _m.group(2), size_pt=12,
-                                            color="0000FF", underline=True)
+                        _run(p, _line[_pos:_m.start()], size_pt=11)
+                    if _m.group(1) is not None:                        # **negrito**
+                        _run(p, _m.group(1), bold=True, size_pt=11)
+                    else:                                              # [texto](url)
+                        _external_hyperlink_run(p, _m.group(2), _m.group(3), size_pt=11,
+                                                color="0000FF", underline=True)
                     _pos = _m.end()
                 if _pos < len(_line):
-                    _run(p, _line[_pos:], size_pt=12)
-        _blank()
+                    _run(p, _line[_pos:], size_pt=11)
+        _blanks(2)   # Mensagem de abertura → Sector Headlines: 2 linhas
+    else:
+        _blanks(2)   # sem mensagem: logo do Itaú → Sector Headlines: 2 linhas
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTOR HEADLINES
     # ══════════════════════════════════════════════════════════════════════════
     _heading_index("Sector Headlines")
+    _blanks(1)       # Sector Headlines → notícias: 1 linha
 
     for sector_key in seen_sectors:
         for item in [it for it in items if it.sector == sector_key]:
@@ -810,7 +860,7 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
             _run(p, f" [{item.source_name}]", bold=True, size_pt=11)
             _run(p, f" {take_sym}", bold=True, size_pt=11, color_hex=take_color)
 
-    _blank()
+    _blanks(2)       # última notícia → Recent Publications: 2 linhas
 
     # ══════════════════════════════════════════════════════════════════════════
     # RECENT PUBLICATIONS
@@ -831,6 +881,7 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
                 _run(p, name, size_pt=11)
 
     _heading_index("Recent Publications")
+    _blanks(1)       # Recent Publications → publicações: 1 linha
     _recent = config.get("recent_publications") or []
     if _recent:
         _pub_bullets(_recent)
@@ -839,48 +890,52 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         _zero_spacing(p_empty)
         _run(p_empty, "[Sem publicações — adicione na tela do Clipinator]",
              italic=True, size_pt=9, color_hex="888888")
-    _blank()
+    # (o gap para a próxima seção é inserido por ela — Preview ou analistas)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # EARNINGS REVIEW (opcional — toggle + nome editável, ex.: "2Q26 Review")
+    # EARNINGS REVIEW / "PREVIEW" (opcional — toggle + nome editável, ex.: "2Q26 Review")
     # ══════════════════════════════════════════════════════════════════════════
     _er = config.get("earnings_review") or {}
     if _er.get("on"):
+        _blanks(2)   # última publicação (Recent) → Preview: 2 linhas
         _heading_index((_er.get("label") or "Earnings Review").strip() or "Earnings Review")
+        _blanks(1)   # título do Preview → publicações: 1 linha
         _pub_bullets(_er.get("items"))
-        _blank()
+        _blanks(2)   # última publicação do Preview → analistas: 2 linhas
+    else:
+        _blanks(2)   # sem Preview: última publicação (Recent) → analistas: 2 linhas
 
     # ══════════════════════════════════════════════════════════════════════════
-    # CONTACTS
+    # CONTACTS (analistas configuráveis no admin — fallback = _DEFAULT_ANALYSTS)
     # ══════════════════════════════════════════════════════════════════════════
-    _CONTACTS = [
-        ("Daniel Sasson, CFA",
-         "Equity Research – Steel & Mining, Pulp and Paper and Cement",
-         "t. +55 11 3073 3031  m.+55 11 99674 1242",
-         "daniel.sasson@itaubba.com"),
-        ("Marcelo Furlan Palhares, CFA",
-         "Equity Research – Steel & Mining, Pulp and Paper and Cement",
-         "t. +55 11 3073 3357  m.+55 11 97464 2801",
-         "marcelo.palhares@itaubba.com"),
-        ("João Paulo Luka Helito, CNPI",
-         "Equity Research – Steel & Mining, Pulp and Paper and Cement",
-         "t.+55 11 3073 3005  m.+55 11 93452 7535",
-         "joao.helito@itaubba.com"),
-    ]
-    for name, role, phone, email in _CONTACTS:
-        p_name = doc.add_paragraph()
-        _zero_spacing(p_name)
-        p_name.paragraph_format.space_before = Pt(6)
-        _run(p_name, name, bold=True, size_pt=10, color_hex="FF5000")
-        for line in (role, phone):
+    _contacts = config.get("analysts") or _DEFAULT_ANALYSTS
+    _rendered_any = False
+    for _c in _contacts:
+        _name  = (_c.get("name")  or "").strip()
+        _role  = (_c.get("role")  or "").strip()
+        _phone = (_c.get("phone") or "").strip()
+        _email = (_c.get("email") or "").strip()
+        if not (_name or _email):
+            continue
+        if _rendered_any:
+            _blanks(1)   # entre analistas: 1 linha (conjunto nome→email)
+        _rendered_any = True
+        if _name:
+            p_name = doc.add_paragraph()
+            _zero_spacing(p_name)
+            _run(p_name, _name, bold=True, size_pt=10, color_hex="FF5000")
+        for _line in (_role, _phone):
+            if not _line:
+                continue
             p_line = doc.add_paragraph()
             _zero_spacing(p_line)
-            _run(p_line, line, size_pt=10)
-        p_mail = doc.add_paragraph()
-        _zero_spacing(p_mail)
-        _mailto_run(p_mail, email, size_pt=10)   # e-mail = link azul sublinhado (igual à referência)
+            _run(p_line, _line, size_pt=10)
+        if _email:
+            p_mail = doc.add_paragraph()
+            _zero_spacing(p_mail)
+            _mailto_run(p_mail, _email, size_pt=10)   # e-mail = link azul sublinhado (igual à referência)
 
-    _blank()
+    _blanks(2)       # último analista → STEEL & MINING: 2 linhas
 
     # ══════════════════════════════════════════════════════════════════════════
     # CORPOS DOS ARTIGOS POR SETOR
@@ -889,16 +944,18 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         sector_items = [it for it in items if it.sector == sector_key]
 
         _heading_sector(SECTOR_LABEL[sector_key])
-        _blank()
+        _blanks(1)       # cabeçalho do setor → 1º artigo: 1 linha ("daqui pra frente tudo tem espaçamento de linhas")
 
         for item in sector_items:
             bm_name = bm_names[item.url]
 
             # ── Título: bold, highlight amarelo, bookmarked ───────────────────
+            # Título/Source/Corpo = conjunto tight (sem espaçamento interno). O gap para o
+            # artigo anterior vem do space_after (~1 linha) do último parágrafo do corpo dele.
             # Para artigos bilíngues: sufixo "(Original)" no título.
             p_title = doc.add_paragraph()
             _zero_spacing(p_title)
-            p_title.paragraph_format.space_before = Pt(4)
+            p_title.paragraph_format.space_before = Pt(0)
             p_title.paragraph_format.space_after  = Pt(2)
             _justify(p_title)
             title_display = f"{item.title} (Original)" if item.translated_title else item.title
@@ -917,8 +974,9 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
 
             def _body_para(size_pt=9, bold=False, italic=False,
                            color_hex=None, indent_dxa=0,
-                           space_before_pt=0, space_after_pt=4):
-                """Cria parágrafo de corpo com espaçamento padrão do leitor."""
+                           space_before_pt=0, space_after_pt=10):
+                """Cria parágrafo de corpo. space_after=10pt (~1 linha) separa os parágrafos do
+                scraping p/ não virar texto corrido; também dá a 1 linha entre artigos consecutivos."""
                 p = doc.add_paragraph()
                 pPr = p._p.get_or_add_pPr()
                 sp = OxmlElement("w:spacing")
@@ -1000,15 +1058,8 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
                 trans_blocks = _html_to_blocks(item.translated_body) if item.translated_body else []
                 _render_blocks(trans_blocks, item.domain)
 
-            # Separador visual entre artigos (espaço extra, sem conteúdo)
-            p_sep = doc.add_paragraph()
-            pPr_sep = p_sep._p.get_or_add_pPr()
-            sp_sep = OxmlElement("w:spacing")
-            sp_sep.set(qn("w:before"),           "120")  # 6pt antes
-            sp_sep.set(qn("w:beforeAutospacing"), "0")
-            sp_sep.set(qn("w:after"),             "0")
-            sp_sep.set(qn("w:afterAutospacing"),  "0")
-            pPr_sep.append(sp_sep)
+            # Sem separador extra entre artigos: o space_after (~1 linha) do último parágrafo
+            # do corpo já dá a separação de 1 linha para o próximo artigo (ou p/ o próximo setor).
 
     buf = io.BytesIO()
     doc.save(buf)
