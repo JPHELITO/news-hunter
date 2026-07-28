@@ -136,7 +136,11 @@ STEEL_MARKET = [
     "Capesize", "C3 freight", "frete Capesize",
     "CMRG", "China Mineral Resources Group",
     "Pesqueria", "Pesquería",
-    "Mariana", "Brumadinho",
+    # "Mariana" ISOLADO saiu (2026-07-28): é nome próprio comuníssimo (pessoa) →
+    # casava fofoca ("filha ... Mariana"). A tragédia é referida por frase
+    # específica (e já há "barragem de rejeitos"/"rompimento barragem" acima).
+    "barragem de Mariana", "tragédia de Mariana", "desastre de Mariana",
+    "Mariana dam", "Mariana disaster", "Brumadinho",
 ]
 
 # ── Pulp & Paper ───────────────────────────────────────────────────────────────
@@ -156,7 +160,11 @@ PULP_PAPER = [
     # Papel (termos compostos)
     "papel e celulose", "pulp and paper",
     "papel kraft", "packaging paper", "papel embalagem",
-    "paperboard", "cartão", "cartão para embalagem",
+    # "cartão" ISOLADO saiu (2026-07-28): casava "cartão de crédito", "cartão
+    # amarelo/vermelho (futebol)", "cartão SIM"… Mantemos só as formas inequívocas
+    # do setor (papelcartão / cartão para embalagem / cartonboard).
+    "paperboard", "papelcartão", "papel-cartão", "cartonboard",
+    "cartão para embalagem", "cartão de embalagem", "cartão duplex",
     "tissue paper", "papel tissue", "papel higiênico industrial",
     "containerboard", "papelão ondulado", "caixas onduladas",
     "corrugated board",

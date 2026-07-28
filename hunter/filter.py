@@ -119,11 +119,13 @@ def _ambiguous_pattern() -> re.Pattern:
     return re.compile(r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)")  # SEM IGNORECASE
 
 
-# "Vale" + infinitivo = expressão idiomática ("Vale lembrar/destacar/a pena…"), NÃO a
+# "Vale" + expressão idiomática ("Vale lembrar/destacar/a pena…" / "Vale Tudo"), NÃO a
 # empresa. Notícia real da Vale usa 3ª pessoa ("Vale registra/anuncia/eleva"), então
-# excluir os INFINITIVOS é seguro — não bloqueia manchete verdadeira.
+# excluir os INFINITIVOS + "tudo" é seguro — não bloqueia manchete verdadeira.
+# "tudo" mata a novela "Vale Tudo" e a expressão "Vale tudo para …" (a empresa nunca
+# aparece como "Vale tudo"; se vier "Vale: tudo sobre a mineradora", o ':' quebra o \s+).
 _VALE_IDIOM = re.compile(
-    r"\s+(?:a\s+pena|lembrar|destacar|ressaltar|citar|notar|mencionar|frisar|"
+    r"\s+(?:tudo|a\s+pena|lembrar|destacar|ressaltar|citar|notar|mencionar|frisar|"
     r"salientar|dizer|conferir|registrar|comentar|observar|pontuar)\b",
     re.IGNORECASE,
 )

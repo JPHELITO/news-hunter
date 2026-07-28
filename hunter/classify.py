@@ -76,7 +76,7 @@ SECTOR_KEYWORDS = {
         "kraft pulp", "celulose kraft", "viscose staple fiber",
         # produtos papel
         "paper", "papel", "papel e celulose", "pulp and paper",
-        "paperboard", "cartão", "tissue", "tissue paper",
+        "paperboard", "papelcartão", "cartão para embalagem", "tissue", "tissue paper",
         "containerboard", "papelão ondulado", "corrugated",
         "coated paper", "papel revestido", "newsprint",
         "packaging paper", "papel embalagem", "papel kraft",

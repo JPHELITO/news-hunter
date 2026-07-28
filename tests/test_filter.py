@@ -146,6 +146,45 @@ class TestBlocklist:
         assert not _passes("Tokenização de ativos avança no mercado", "token", "InfoMoney")
 
 
+class TestFalseFriendsBlocked:
+    """Regressão 2026-07-28: keywords ambíguas que deixavam entrar futebol/fofoca/novela."""
+
+    # 'cartão' (paperboard) casava cartão de futebol e cartão de crédito
+    def test_cartao_futebol_blocked(self):
+        assert not _passes("CBF recebe alerta de manipulação de apostas em cartão de Acosta",
+                           "Fluminense", "CNN Brasil")
+
+    def test_cartao_credito_blocked(self):
+        assert not _passes("Férias em família nos EUA exigem mais do que um roteiro",
+                           "leve mais de um cartão de crédito", "CNN Brasil")
+
+    def test_cartao_embalagem_ainda_passa(self):
+        """A forma inequívoca do setor ('cartão para embalagem') continua entrando."""
+        assert _passes("Klabin eleva preço do cartão para embalagem", "papelcartão", "Valor Econômico")
+
+    # 'Mariana' (desastre) casava o nome próprio (pessoa)
+    def test_mariana_nome_proprio_blocked(self):
+        assert not _passes("Filha de Ana Maria Braga anuncia fim de casamento",
+                           "Mariana comenta a relação", "CNN Brasil")
+
+    def test_barragem_de_mariana_ainda_passa(self):
+        assert _passes("Vale é cobrada por reparação da barragem de Mariana", "rejeitos", "G1")
+
+    # 'Vale Tudo' (novela) / 'Vale tudo para…' (expressão) casava a empresa Vale
+    def test_vale_tudo_novela_blocked(self):
+        assert not _passes("Manuela Dias explica por que decidiu manter Odete viva em “Vale Tudo”",
+                           "novela", "CNN Brasil")
+
+    def test_vale_tudo_expressao_blocked(self):
+        assert not _passes("‘Vale tudo para salvar a democracia’, diz político em evento",
+                           "política", "InfoMoney")
+
+    def test_vale_empresa_apos_dois_pontos_passa(self):
+        """'Vale: tudo sobre a mineradora' — o ':' quebra o \\s+ do idioma → segue passando."""
+        assert _passes("Vale: tudo sobre a mineradora nesta temporada de resultados",
+                       "minério de ferro", "Money Times")
+
+
 class TestPlattsPassThrough:
     """Platts é fonte curada: todas as notícias passam, exceto 'rationale' no título."""
 
