@@ -17,7 +17,9 @@ import requests
 
 # Tolerância de "última vez OK" por fonte (minutos). hunt-playwright roda a cada 30 min,
 # então last_ok normal é < ~35 min. 90 min permite alguns runs perdidos sem alarme falso.
-THRESHOLDS_MIN = {"platts": 90, "fastmarkets": 90}
+# valor: o keep-alive roda a cada 6h (360 min) → 720 tolera 1 ciclo perdido + atraso do cron.
+# O sinal RÁPIDO do Valor é login_failed=True (o keepalive grava na hora que detecta o corte).
+THRESHOLDS_MIN = {"platts": 90, "fastmarkets": 90, "valor": 720}
 
 # ── Monitor de cobertura (anti-quebra-silenciosa) ────────────────────────────
 # Lê news_articles e, para CADA fonte, aprende o ritmo (gap médio entre artigos

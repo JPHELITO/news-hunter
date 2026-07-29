@@ -35,6 +35,41 @@ def _session_alive(state: dict, names: tuple[str, ...]) -> bool:
     return any(n.upper() in allnames for n in names)
 
 
+def _valor_cropped(page) -> bool:
+    """Abre a 1ª matéria do Valor (a partir da home) e checa se está RECORTADA (paywall).
+    ⚠️ A presença do cookie GLBID NÃO garante sessão viva — o Globo pode ter invalidado no
+    servidor (o corpo vem 'cropped' + barreira 'Faça o seu login'). É por isso que o keep-alive
+    antigo ficava rolando pra frente uma sessão morta: só olhava o cookie, não o conteúdo."""
+    try:
+        href = page.evaluate(
+            "() => { const a = document.querySelector('a[href*=\"/noticia/\"]'); return a ? a.href : ''; }"
+        )
+        if not href or "/noticia/" not in href:
+            return False   # não achou matéria p/ testar → não derruba a sessão à toa
+        page.goto(href, wait_until="domcontentloaded", timeout=30_000)
+        try:
+            page.wait_for_timeout(2_500)
+        except Exception:
+            pass
+        return bool(page.evaluate(
+            "() => !!document.querySelector('.mc-article-body.cropped')"
+            " || !!document.querySelector('.wall.protected-content')"
+            " || /Fa[çc]a o seu login|seja assinante/i.test((document.querySelector('.wall')||{}).innerText||'')"
+        ))
+    except Exception:
+        return False
+
+
+def _report_health(provider: str, dead: bool) -> None:
+    """Grava o status da sessão em source_health (login_failed=dead). O watchdog lê isso e
+    manda e-mail do GitHub quando cai (mesmo canal do Platts/FM). Best-effort."""
+    try:
+        from hunter.sync import record_source_health
+        record_source_health(provider, login_failed=dead)
+    except Exception as e:
+        log.debug("keepalive: record_source_health(%s) indisponível: %s", provider, e)
+
+
 def _touch(provider: str, url: str, auth_cookies: tuple[str, ...]) -> bool:
     """Puxa a sessão do store, carrega `url` e regrava a versão renovada (roll-forward).
     Retorna True se rolou pra frente. NÃO regrava se caiu no login ou perdeu o cookie de auth."""
@@ -59,14 +94,22 @@ def _touch(provider: str, url: str, auth_cookies: tuple[str, ...]) -> bool:
             except Exception:
                 page.wait_for_timeout(2_500)
             state = ctx.storage_state()
+            dead_reason = None
             if ps.is_login_page(page, _LOGIN_HOSTS):
-                log.warning("keepalive: %s caiu em login — sessão expirada (não regravo)", provider)
+                dead_reason = "caiu em login"
             elif not _session_alive(state, auth_cookies):
-                log.warning("keepalive: %s perdeu o cookie de auth — não regravo (evita poison)", provider)
+                dead_reason = "perdeu o cookie de auth"
+            elif provider == "valor" and _valor_cropped(page):
+                # GLBID presente MAS o conteúdo vem recortado → sessão morta no servidor.
+                dead_reason = "artigo RECORTADO (paywall) — GLBID não destrava mais o conteúdo"
+            if dead_reason:
+                log.warning("keepalive: %s SESSÃO MORTA — %s (não regravo)", provider, dead_reason)
+                _report_health(provider, dead=True)     # source_health → watchdog manda e-mail
             else:
-                ps.save_state(ctx, provider)        # roll-forward: store recebe a versão renovada
+                ps.save_state(ctx, provider)             # roll-forward: store recebe a versão renovada
                 rolled = True
-                log.info("keepalive: %s OK — sessão rolada pra frente", provider)
+                _report_health(provider, dead=False)     # sessão viva → limpa o alerta
+                log.info("keepalive: %s OK — sessão viva, rolada pra frente", provider)
         except Exception as e:
             log.warning("keepalive: %s erro: %s", provider, e)
         finally:
