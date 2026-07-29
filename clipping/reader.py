@@ -296,23 +296,32 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                         }
                         const noPaywall  = !!document.querySelector('[class*="no-paywall"]');
                         const hasPaywall = !!document.querySelector('[class*="paywall__wall"]');
+                        // Paywall NOVO do Valor (Falkor): corpo .mc-article-body.cropped +
+                        // .wall.protected-content com "Faça o seu login" = sessão expirada → RECORTADO.
+                        const wallEl  = document.querySelector('.wall');
+                        const wallTxt = wallEl ? (wallEl.innerText || '') : '';
+                        const cropped = !!document.querySelector('.mc-article-body.cropped')
+                                     || !!document.querySelector('.wall.protected-content')
+                                     || /Fa[çc]a o seu login|seja assinante|assine o valor/i.test(wallTxt);
                         return JSON.stringify({
                             no_paywall:   noPaywall,
                             has_paywall:  hasPaywall,
+                            cropped:      cropped,
                             content_text: getHtml('.content-text'),
                             wall:         getHtml('.wall'),
                         });
                     }""")
                     _dv = _json.loads(dom_json)
-                    _no_pw  = _dv.get("no_paywall", False)
-                    _has_pw = _dv.get("has_paywall", False)
+                    _no_pw   = _dv.get("no_paywall", False)
+                    _has_pw  = _dv.get("has_paywall", False)
+                    _cropped = _dv.get("cropped", False)
                     _parts: list[str] = []
-                    # Inclui lide (.content-text) E corpo (.wall) sempre que NÃO houver
-                    # paywall ATIVO bloqueando (ou seja: logado). Não exige mais a classe
-                    # explícita no-paywall — era ela que fazia o Valor sair só com o lide.
-                    # A guarda _looks_like_sub_screen descarta um bloco curto que seja só a
-                    # tela de assinatura (sessão morta). Logado, o artigo sai INTEIRO.
-                    _open = _no_pw or not _has_pw
+                    # Inclui lide (.content-text) E corpo (.wall) sempre que NÃO houver paywall
+                    # ATIVO nem corte (ou seja: logado, artigo INTEIRO). _cropped = sessão
+                    # expirada → artigo RECORTADO: NÃO inclui o pedaço (melhor vazio + aviso do
+                    # que um corpo cortado calado). A guarda _looks_like_sub_screen descarta a
+                    # tela de assinatura curta.
+                    _open = (_no_pw or not _has_pw) and not _cropped
                     _ct = _dv.get("content_text") or ""
                     _wl = _dv.get("wall") or ""
                     if _ct and _open and not _looks_like_sub_screen(_ct):
@@ -327,17 +336,17 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                             clear_session_alert("valor")
                         except Exception:
                             pass
-                    elif _has_pw and not _no_pw:
+                    elif _cropped or (_has_pw and not _no_pw):
                         log.warning(
-                            "playwright_reader: Valor artigo paywalled (sessão expirada?) — %s",
+                            "playwright_reader: Valor RECORTADO/paywall (sessão expirada) — %s",
                             url[-80:],
                         )
                         try:
                             from .store import set_session_alert
                             set_session_alert(
                                 "valor",
-                                "Sessão do Valor Econômico expirada — artigos aparecem com paywall. "
-                                "Execute <code>python login.py</code> para renovar.",
+                                "Sessão do Valor Econômico expirada — os artigos vêm CORTADOS (paywall). "
+                                "Rode 'Atualizar Valor.bat' para renovar.",
                             )
                         except Exception:
                             pass
