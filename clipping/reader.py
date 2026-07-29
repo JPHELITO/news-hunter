@@ -91,15 +91,18 @@ _SITE_CONFIG: dict[str, dict] = {
     "dashboard.fastmarkets.com": {
         "state_file": "fastmarkets_state.json",
         "title": ["h1", "[class*='headline']", "[class*='article-title']", "[class*='ArticleTitle']"],
-        # Preferir o corpo mais JUSTO primeiro (article-body) e só depois os containers
-        # mais amplos (.content-container costuma englobar related/most-read/newsletter).
+        # A página do artigo (/a/…) é: .article-container > [.first-row news-head (LIXO: back-link +
+        # título + "Published by" + data)] + [.second-row.content-container (O CORPO + imagem)].
+        # → pegar o .content-container DENTRO do artigo pula o cabeçalho. NUNCA usar .article-container
+        # como primeira opção (inclui o first-row). (DOM inspecionado ao vivo 2026-07-28.)
         "body": [
+            ".article-container .content-container",   # o corpo (second-row), SEM o cabeçalho
+            ".second-row.content-container",
             "[class*='article-body']",
             "[class*='ArticleBody']",
             "[class*='articleBody']",
-            ".article-container",
-            ".content-container",
             "article",
+            ".article-container",                      # último recurso: layout raro sem content-container
         ],
     },
     "valor.globo.com": {
