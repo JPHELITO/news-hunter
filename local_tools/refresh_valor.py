@@ -78,22 +78,24 @@ def _master_key() -> bytes:
 
 
 def _profile_with_globo() -> str:
-    """Perfil com a sessao Globo LOGADA (host_key e name ficam em texto puro no DB).
-    Prioriza quem tem o cookie GLBID; desempata pela qtd de cookies do globo.com."""
-    best, best_score = "Default", -1
+    """Perfil com a sessao Globo mais FRESCA. Prioriza o GLBID com maior last_update_utc
+    (o LOGIN mais recente) → pega o perfil que voce acabou de logar, nao um velho/expirado.
+    (Antes desempatava por QUANTIDADE de cookies e pegava o perfil errado quando ha varios.)"""
+    best, best_ts = "Default", -1
     for prof in ["Default"] + [f"Profile {i}" for i in range(1, 12)]:
         ck = REAL_USERDATA / prof / "Network" / "Cookies"
         if not ck.exists():
             continue
         try:
             con = sqlite3.connect(f"file:{ck}?mode=ro&immutable=1", uri=True)
-            glbid = con.execute("select count(*) from cookies where name='GLBID' "
-                                "and host_key like '%globo.com%'").fetchone()[0]
-            ngl = con.execute("select count(*) from cookies where host_key like '%globo.com%'").fetchone()[0]
+            row = con.execute(
+                "select max(coalesce(last_update_utc, creation_utc, 0)) from cookies "
+                "where name='GLBID' and host_key like '%globo.com%'"
+            ).fetchone()
             con.close()
-            score = (100000 if glbid else 0) + ngl
-            if score > best_score:
-                best, best_score = prof, score
+            ts = (row[0] or 0) if row else 0
+            if ts > best_ts:
+                best, best_ts = prof, ts
         except Exception:
             pass
     return best
