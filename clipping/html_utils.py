@@ -478,7 +478,33 @@ def extract_article_container(soup, url: str = ""):
                 el.decompose()
         return container
 
-    # Fallback genérico
+    if domain in ("www.australianmining.com.au", "australianmining.com.au"):
+        # Tema JNews (WordPress): o corpo real vive em .content-inner (dentro de .entry-content).
+        # ⚠️ O <article> genérico do tema é um CARD do MARKETPLACE de equipamento usado
+        # ("Listing Type: Used…") → NUNCA usar o fallback <article> aqui.
+        container = soup.select_one(".content-inner") or soup.select_one(".entry-content")
+        if container:
+            for el in container.select(
+                ".jeg_share_button, [class*='share'], [class*='related'], .jeg_post_tags,"
+                " [class*='newsletter'], [class*='subscribe'], .wp-block-buttons,"
+                " script, style, form, iframe"
+            ):
+                el.decompose()
+            # CTA de newsletter no fim, SEM classe ("Subscribe to Australian Mining and receive…")
+            _SUB_RE = re.compile(r"subscribe to australian mining", re.I)
+            for el in container.find_all(["p", "div"]):
+                if _SUB_RE.search(el.get_text(" ", strip=True) or ""):
+                    el.decompose()
+        return container
+
+    # Fallback genérico — prefere containers de CONTEÚDO (por classe), evitando um <article>
+    # minúsculo que em alguns temas é card de marketplace/related. Só cai no <article>/main
+    # cru se nenhum container de conteúdo tiver texto suficiente.
+    for sel in (".entry-content", ".post-content", ".td-post-content", ".article-content",
+                "[class*='article-body']", "article", "main"):
+        el = soup.select_one(sel)
+        if el and len(el.get_text(strip=True)) > 200:
+            return el
     return (
         soup.find("article")
         or soup.find(attrs={"role": "main"})
