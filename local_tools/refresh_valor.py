@@ -143,8 +143,78 @@ def _chrome_time(us: int) -> float:
 #   (2) abrir o Chrome no perfil REAL via automacao/CDP -> bloqueado no Chrome 136+
 #       ("DevTools remote debugging requires a non-default data directory").
 # O caminho e' fazer o Chrome voltar a gravar o formato ANTIGO (v10, que este script le), desligando
-# a App-Bound Encryption por 1 comando de registro em HKCU (NAO precisa de admin). O passo a passo
-# e' impresso automaticamente quando este script encontra a sessao so' em v20 (ver o fim do arquivo).
+# a App-Bound Encryption por 1 comando de registro (precisa de admin). O passo a passo e' impresso
+# automaticamente quando este script encontra a sessao so' em v20 (ver o fim do arquivo).
+# ── ALTERNATIVA SEM ADMIN: FIREFOX ────────────────────────────────────────────────────────────
+# O Firefox guarda os cookies em TEXTO PURO (cookies.sqlite) — sem App-Bound, sem DPAPI. Se voce
+# logar no Valor pelo Firefox, este script le direto (funcoes abaixo), sem admin nem registro.
+
+
+def _firefox_profile():
+    """Perfil do Firefox com a sessao do Globo mais fresca (GLBID mais recente); senao o default."""
+    base = Path(os.environ.get("APPDATA", "")) / "Mozilla" / "Firefox" / "Profiles"
+    if not base.exists():
+        return None
+    best, best_ts, fallback = None, -1, None
+    for prof in base.iterdir():
+        ck = prof / "cookies.sqlite"
+        if not ck.is_dir() and ck.exists():
+            fallback = fallback or prof
+            tmp = Path(tempfile.mkdtemp())
+            try:
+                shutil.copy2(ck, tmp / "c")
+                for ext in ("-wal", "-shm"):
+                    f = ck.with_name("cookies.sqlite" + ext)
+                    if f.exists():
+                        shutil.copy2(f, tmp / ("c" + ext))
+                con = sqlite3.connect(str(tmp / "c"))
+                row = con.execute(
+                    "select max(lastAccessed) from moz_cookies where name='GLBID' and host like '%globo%'"
+                ).fetchone()
+                con.close()
+                ts = (row[0] or 0) if row else 0
+                if ts > best_ts:
+                    best, best_ts = prof, ts
+            except Exception:
+                pass
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+    return best or fallback
+
+
+def _read_from_firefox():
+    """Le os cookies do globo do FIREFOX (texto puro; sem decriptar). Requer voce logado no Valor
+    no Firefox. Retorna a lista no formato do store, ou None."""
+    prof = _firefox_profile()
+    if not prof:
+        return None
+    ck = prof / "cookies.sqlite"
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        shutil.copy2(ck, tmp / "c")
+        for ext in ("-wal", "-shm"):
+            f = ck.with_name("cookies.sqlite" + ext)
+            if f.exists():
+                shutil.copy2(f, tmp / ("c" + ext))
+        con = sqlite3.connect(str(tmp / "c"))
+        rows = con.execute(
+            "select host,name,value,path,expiry,isSecure,isHttpOnly from moz_cookies "
+            "where host like '%globo%'"
+        ).fetchall()
+        con.close()
+    except Exception as e:
+        print("   (Firefox: nao consegui ler cookies.sqlite:", e, ")")
+        return None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    out = []
+    for host, name, val, path, exp, sec, http in rows:
+        out.append({
+            "name": name, "value": val, "domain": host, "path": path or "/",
+            "expires": float(exp) if exp else -1,
+            "httpOnly": bool(http), "secure": bool(sec), "sameSite": "Lax",
+        })
+    return out or None
 
 
 print("\n=== Renovar a sessao do Valor (lendo sua sessao ja' logada no Chrome) ===\n")
@@ -198,20 +268,30 @@ for host, name, ev, path, exp, sec, http in rows:
 print(f"Perfil '{prof}': {len(cookies)} cookies do globo lidos "
       f"({skipped} no formato novo). Cookie de sessao GLBID: {'SIM' if 'GLBID' in names else 'NAO'}")
 
+# Se o Chrome nao entregou a sessao (login em v20, ilegivel), tenta o FIREFOX — que guarda
+# cookie em TEXTO PURO (basta voce estar logado no Valor pelo Firefox). Sem admin, sem registro.
+if "GLBID" not in names:
+    ff = _read_from_firefox()
+    if ff and any(c["name"] == "GLBID" for c in ff):
+        cookies = ff
+        names = {c["name"] for c in ff}
+        print(f"Firefox: sessao ENCONTRADA — {len(ff)} cookies do globo lidos (login do Firefox). GLBID: SIM")
+
 if "GLBID" not in names:
     print("\n>>> Nao encontrei a sessao logada (GLBID) num formato que eu consiga ler.")
+    print(">>> Voce tem DUAS saidas (escolha uma):")
+    print(">>>")
+    print(">>> [A] SEM admin, sem mexer em nada do Chrome — use o FIREFOX:")
+    print(">>>     1) Abra o Firefox, va em valor.globo.com e faca LOGIN (como assinante);")
+    print(">>>     2) Confirme que le uma materia paga inteira;")
+    print(">>>     3) Rode este 'Atualizar Valor' de novo. (Eu leio o login direto do Firefox.)")
     if saw_v20:
-        print(">>> Seu login existe, mas esta' no formato NOVO do Chrome (v20/App-Bound), que nao")
-        print(">>> tem leitura automatica. CONSERTO (1x, SEM admin) — faz o Chrome voltar ao formato")
-        print(">>> antigo que eu leio:")
         print(">>>")
-        print(">>>   1) Abra o Prompt de Comando (NORMAL, nao precisa ser admin) e cole a linha:")
-        print(r'>>>      reg add "HKCU\SOFTWARE\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f')
-        print(">>>   2) FECHE todas as janelas do Chrome e abra de novo;")
-        print(">>>   3) Entre no valor.globo.com e confirme que le uma materia paga inteira;")
-        print(">>>   4) Rode este 'Atualizar Valor' mais uma vez. (Depois nao precisa repetir.)")
-    else:
-        print(">>> Entre no valor.globo.com pelo seu Chrome normal (logado) e rode de novo.")
+        print(">>> [B] Manter no Chrome — precisa de ADMIN (1x). Faz o Chrome voltar ao formato que eu leio:")
+        print(">>>     1) Abra o Prompt de Comando COMO ADMINISTRADOR e cole:")
+        print(r'>>>        reg add "HKLM\SOFTWARE\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f')
+        print(">>>     2) FECHE o Chrome, reabra, entre no valor.globo.com e confirme que le uma materia paga;")
+        print(">>>     3) Rode este 'Atualizar Valor' de novo.")
     sys.exit(1)
 
 state_json = json.dumps({"cookies": cookies, "origins": []})
@@ -219,7 +299,7 @@ ps.state_path("valor").write_text(state_json, encoding="utf-8")   # copia local
 ps._push_session_to_store("valor", state_json)                    # store (Supabase)
 
 print("\n" + "=" * 60)
-print(">>> Sessao lida do Chrome e salva no store. Verificando se ela DESTRAVA o conteudo pago...")
+print(">>> Sessao lida do navegador e salva no store. Verificando se ela DESTRAVA o conteudo pago...")
 print("=" * 60)
 # ⚠️ IMPORTANTE: o cookie GLBID pode estar PRESENTE mas ja invalidado no servidor (Chrome
 # tambem deslogado). Verifica de verdade abrindo uma materia e checando o paywall.
