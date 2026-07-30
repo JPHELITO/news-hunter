@@ -1062,6 +1062,7 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
 
             # ── Free Translation (artigos bilíngues) ──────────────────────────
             if item.translated_title:
+                _blanks(2)   # original → tradução: 2 linhas (mesmo espaçamento de entre notícias)
                 # Título da tradução
                 p_tr_title = doc.add_paragraph()
                 _zero_spacing(p_tr_title)
