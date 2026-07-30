@@ -427,6 +427,17 @@ def extract_article_container(soup, url: str = ""):
                     sentinel_found = True
                     child.extract()
 
+            # Passa 3 — remove legendas "web-only" de gráfico ("Click on chart for live
+            # prices" etc.): não faz sentido num Word estático. Só remove o elemento de
+            # LEGENDA (curto, sem <img>) — nunca o que contém a própria imagem.
+            _CLICK_RE = re.compile(r"\bclick\b.{0,25}\b(chart|image|map|here|live\s+price)", re.I)
+            for cap in container.find_all(["figcaption", "small", "em", "span", "p", "a"]):
+                if cap.find("img"):
+                    continue
+                t = cap.get_text(" ", strip=True)
+                if t and len(t) < 70 and _CLICK_RE.search(t):
+                    cap.decompose()
+
         return container
 
     if domain in ("www.worldcement.com", "worldcement.com"):
