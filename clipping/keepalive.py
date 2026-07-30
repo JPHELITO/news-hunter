@@ -51,10 +51,16 @@ def _valor_cropped(page) -> bool:
             page.wait_for_timeout(2_500)
         except Exception:
             pass
+        # ⚠️ NÃO usar '.mc-article-body.cropped': essa classe fica em TODA matéria (logado ou não)
+        # — testado ao vivo, dava falso-positivo e matava a sessão boa. O sinal REAL de "não destrava"
+        # é a BARREIRA de assinatura VISÍVEL: '.paywall.hide-all-content' (a classe hide-all-content só
+        # aparece quando o conteúdo está escondido) ou '.wall.protected-content' com altura > 0.
         return bool(page.evaluate(
-            "() => !!document.querySelector('.mc-article-body.cropped')"
-            " || !!document.querySelector('.wall.protected-content')"
-            " || /Fa[çc]a o seu login|seja assinante/i.test((document.querySelector('.wall')||{}).innerText||'')"
+            "() => {"
+            "  if (document.querySelector('.paywall.hide-all-content')) return true;"
+            "  const w = document.querySelector('.wall.protected-content');"
+            "  return !!(w && w.offsetHeight > 0 && getComputedStyle(w).display !== 'none');"
+            "}"
         ))
     except Exception:
         return False

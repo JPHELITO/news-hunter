@@ -294,40 +294,66 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                             const el = document.querySelector(sel);
                             return el ? el.innerHTML.trim() : '';
                         }
-                        const noPaywall  = !!document.querySelector('[class*="no-paywall"]');
-                        const hasPaywall = !!document.querySelector('[class*="paywall__wall"]');
-                        // Paywall NOVO do Valor (Falkor): corpo .mc-article-body.cropped +
-                        // .wall.protected-content com "Faça o seu login" = sessão expirada → RECORTADO.
-                        const wallEl  = document.querySelector('.wall');
-                        const wallTxt = wallEl ? (wallEl.innerText || '') : '';
-                        const cropped = !!document.querySelector('.mc-article-body.cropped')
-                                     || !!document.querySelector('.wall.protected-content')
-                                     || /Fa[çc]a o seu login|seja assinante|assine o valor/i.test(wallTxt);
+                        // Corpo NOVO do Valor: o texto real são os <p>/<h2>/<li> DENTRO de
+                        // '.mc-article-body' (envoltos por '.paywall' quando logado — NÃO pular paywall!).
+                        // Pula só os widgets de verdade (scripts, "Valor One", relacionados, ads,
+                        // "matérias migradas") → corpo limpo, sem ruído. Preserva negrito/links (innerHTML).
+                        function mcBody() {
+                            const root = document.querySelector('.mc-article-body');
+                            if (!root) return '';
+                            const SKIP = 'script,style,figure,aside,.mc-column.entities,.gtm-div-conteudo,'
+                                + '[class*="valor-one"],[class*="related"],[class*="mais-recente"],'
+                                + '[class*="recomend"],[class*="newsletter"],[class*="banner"],'
+                                + '[class*="advertising"],[class*="materias-migradas"],[class*="chartbeat"],'
+                                + '[class*="social"]';
+                            const parts = [];
+                            for (const el of root.querySelectorAll('p, h2, h3, li, blockquote')) {
+                                if (el.closest(SKIP)) continue;
+                                if (!(el.innerText || '').trim()) continue;
+                                const tag = el.tagName === 'LI' ? 'li'
+                                          : (el.tagName[0] === 'H' ? el.tagName.toLowerCase() : 'p');
+                                parts.push('<' + tag + '>' + el.innerHTML.trim() + '</' + tag + '>');
+                            }
+                            return parts.join('\\n');
+                        }
+                        // ⚠️ Sinal REAL de "não destrava" = BARREIRA de assinatura VISÍVEL. NÃO usar
+                        // '.mc-article-body.cropped' (essa classe fica em TODA matéria, logado ou não →
+                        // falso-positivo, testado ao vivo). O que distingue é '.paywall.hide-all-content'
+                        // (classe só presente quando o conteúdo está escondido) OU '.wall.protected-content'
+                        // com altura > 0 (a barreira "Já é assinante? Faça o seu login" aparecendo).
+                        let cropped = false;
+                        if (document.querySelector('.paywall.hide-all-content')) cropped = true;
+                        const pw = document.querySelector('.wall.protected-content');
+                        if (pw && pw.offsetHeight > 0 && getComputedStyle(pw).display !== 'none') cropped = true;
                         return JSON.stringify({
-                            no_paywall:   noPaywall,
-                            has_paywall:  hasPaywall,
                             cropped:      cropped,
+                            subtitle:     getHtml('.content-head__subtitle'),
+                            mc_body:      mcBody(),
                             content_text: getHtml('.content-text'),
                             wall:         getHtml('.wall'),
                         });
                     }""")
                     _dv = _json.loads(dom_json)
-                    _no_pw   = _dv.get("no_paywall", False)
-                    _has_pw  = _dv.get("has_paywall", False)
                     _cropped = _dv.get("cropped", False)
                     _parts: list[str] = []
-                    # Inclui lide (.content-text) E corpo (.wall) sempre que NÃO houver paywall
-                    # ATIVO nem corte (ou seja: logado, artigo INTEIRO). _cropped = sessão
-                    # expirada → artigo RECORTADO: NÃO inclui o pedaço (melhor vazio + aviso do
-                    # que um corpo cortado calado). A guarda _looks_like_sub_screen descarta a
-                    # tela de assinatura curta.
-                    _open = (_no_pw or not _has_pw) and not _cropped
-                    _ct = _dv.get("content_text") or ""
-                    _wl = _dv.get("wall") or ""
-                    if _ct and _open and not _looks_like_sub_screen(_ct):
-                        _parts.append(_ct)
-                    if _wl and _open and not _looks_like_sub_screen(_wl):
-                        _parts.append(_wl)
+                    # Sessão logada + artigo INTEIRO (não recortado) → monta o corpo. A estrutura NOVA
+                    # do Valor (Falkor) põe o corpo em '.mc-article-body' (é lá que está o texto de
+                    # verdade — provado ao vivo: 38 parágrafos). Cai p/ '.content-text'+'.wall' só se
+                    # o '.mc-article-body' não existir (matérias no layout antigo). Começa pelo subtítulo.
+                    if not _cropped:
+                        _sub = _dv.get("subtitle") or ""
+                        if _sub and not _looks_like_sub_screen(_sub):
+                            _parts.append(_sub)
+                        _mc = _dv.get("mc_body") or ""
+                        if _mc and not _looks_like_sub_screen(_mc):
+                            _parts.append(_mc)
+                        elif not _mc:
+                            _ct = _dv.get("content_text") or ""
+                            _wl = _dv.get("wall") or ""
+                            if _ct and not _looks_like_sub_screen(_ct):
+                                _parts.append(_ct)
+                            if _wl and not _looks_like_sub_screen(_wl):
+                                _parts.append(_wl)
                     if _parts:
                         body_html = article_to_safe_html("\n".join(_parts))
                         # Sessão OK — limpa alerta anterior se existir
@@ -336,7 +362,7 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                             clear_session_alert("valor")
                         except Exception:
                             pass
-                    elif _cropped or (_has_pw and not _no_pw):
+                    elif _cropped:
                         log.warning(
                             "playwright_reader: Valor RECORTADO/paywall (sessão expirada) — %s",
                             url[-80:],
