@@ -301,18 +301,37 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                         function mcBody() {
                             const root = document.querySelector('.mc-article-body');
                             if (!root) return '';
-                            const SKIP = 'script,style,figure,aside,.mc-column.entities,.gtm-div-conteudo,'
-                                + '[class*="valor-one"],[class*="related"],[class*="mais-recente"],'
-                                + '[class*="recomend"],[class*="newsletter"],[class*="banner"],'
-                                + '[class*="advertising"],[class*="materias-migradas"],[class*="chartbeat"],'
-                                + '[class*="social"]';
+                            // Parágrafos REAIS do Valor têm a classe 'content-text__container'. Promos
+                            // ("Valor Empresas 360") são h3/blockquote de OUTRA classe → ficam de fora.
+                            // Fallback genérico (pulando widgets) p/ eventual layout antigo.
+                            let nodes = Array.from(root.querySelectorAll(
+                                'p.content-text__container, .mc-column.content-text > h2,'
+                                + ' .mc-column.content-text > h3, .mc-column.content-text ul li,'
+                                + ' .mc-column.content-text ol li, .mc-column.content-text blockquote'));
+                            if (!nodes.length) {
+                                const SKIP = 'script,style,figure,aside,.mc-column.entities,.gtm-div-conteudo,'
+                                    + '[class*="valor-one"],[class*="empresas-360"],[class*="related"],'
+                                    + '[class*="mais-recente"],[class*="recomend"],[class*="newsletter"],'
+                                    + '[class*="banner"],[class*="advertising"],[class*="materias-migradas"],'
+                                    + '[class*="chartbeat"],[class*="social"]';
+                                nodes = Array.from(root.querySelectorAll('p, h2, h3, li, blockquote'))
+                                             .filter(el => !el.closest(SKIP));
+                            }
+                            // promos que o Valor injeta como parágrafo/box no meio do texto (denylist de frase)
+                            const PROMO = /Valor Empresas 360|Confira os resultados e indicadores|Valor PRO|assine o valor|receba as newsletters/i;
                             const parts = [];
-                            for (const el of root.querySelectorAll('p, h2, h3, li, blockquote')) {
-                                if (el.closest(SKIP)) continue;
-                                if (!(el.innerText || '').trim()) continue;
+                            for (const el of nodes) {
+                                const clone = el.cloneNode(true);
+                                // remove hovercards de cotação (<ins>Cotação de X</ins>) e tooltips inline
+                                clone.querySelectorAll('ins,[class*="tooltip"],[class*="hover-card"]')
+                                     .forEach(n => n.remove());
+                                const t = (clone.textContent || '').replace(/\\s+/g, ' ').trim();
+                                if (!t) continue;
+                                if (PROMO.test(t)) continue;
                                 const tag = el.tagName === 'LI' ? 'li'
-                                          : (el.tagName[0] === 'H' ? el.tagName.toLowerCase() : 'p');
-                                parts.push('<' + tag + '>' + el.innerHTML.trim() + '</' + tag + '>');
+                                          : (el.tagName[0] === 'H' ? el.tagName.toLowerCase()
+                                          : (el.tagName === 'BLOCKQUOTE' ? 'blockquote' : 'p'));
+                                parts.push('<' + tag + '>' + clone.innerHTML.trim() + '</' + tag + '>');
                             }
                             return parts.join('\\n');
                         }
