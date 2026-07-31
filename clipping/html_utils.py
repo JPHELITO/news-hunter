@@ -472,6 +472,11 @@ def extract_article_container(soup, url: str = ""):
             for el in container.select(
                 ".td-post-related, .td-related-title, .jeg_post_tags,"
                 " .td-post-source-tags, .td-post-sharing, .post-tags, .tags,"
+                # rodapé "Fonte: <veículo>" (post-bottom-meta/source + tagcloud) → vazava o
+                # nome do veículo como parágrafo solto no fim; widget de anúncio (_ning_/angwp_)
+                # injeta banner GIF no meio do corpo → ambos removidos aqui.
+                " .post-bottom-meta, .post-bottom-source, .tagcloud,"
+                " [class*='_ning_'], [class*='angwp_'],"
                 " [class*='related'], [class*='share'], .code-block,"
                 " .wp-block-buttons, script, style, form, iframe"
             ):
@@ -525,13 +530,27 @@ def article_to_safe_html(raw_html: str) -> str:
         return _fallback_extract(raw_html)
 
 
+# Imagem de ANÚNCIO/banner não é conteúdo — sinal no filename/pasta (palavra de ad).
+# ⚠️ NÃO filtra dimensão NxM genérica (o WordPress põe "-1024x683" em FOTO REAL) nem
+# "anuncio"/"propaganda" (ambíguos em PT: anúncio=aviso). Só palavras inequívocas de
+# publicidade (pega "Banner-Central-700x110-px.gif" e afins); o fix principal do banner
+# do Portal Celulose é o decompose do widget _ning_/angwp_ no container.
+_AD_IMG_RE = re.compile(
+    r"(?:^|[/_-])(?:banner|publicidade|advert|adsense)(?=[/_.\-]|$)"
+    r"|/ads/",
+    re.I,
+)
+
+
 def _img_tag(node) -> str | None:
-    """Retorna <img class='reader-img'> seguro, ou None se src inválido."""
+    """Retorna <img class='reader-img'> seguro, ou None se src inválido/anúncio."""
     src = (node.get("src") or "").strip()
     alt = _he.escape((node.get("alt") or "").strip())
     if src.startswith("//"):
         src = "https:" + src
     if not src.startswith("https://"):
+        return None
+    if _AD_IMG_RE.search(src):          # banner/anúncio → não é conteúdo do artigo
         return None
     return f'<img src="{src}" alt="{alt}" class="reader-img">'
 
