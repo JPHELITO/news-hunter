@@ -62,11 +62,26 @@ def get_platts_health() -> dict:
     estabelecida (expirada + autologin falhou, ou sem credenciais)."""
     return {"login_failed": _login_failed}
 
-# "Rationale" foi REMOVIDO deliberadamente: por regra de negócio (ver imagem de
-# regras Platts — "NÃO usar notícias Rationale"), esse tipo de conteúdo não entra
-# no relatório. Barrado aqui na origem (ContentType) + por título no filter.py.
-_WANTED_TYPES = {"News", "Top News", "Flash", "Market Commentary",
-                 "Blog", "Headline Analysis"}
+# Regra de negócio (usuário): TODA notícia da Platts entra no news hunter/clipinator,
+# EXCETO "Rationale" (metodologia de preço — "NÃO usar notícias Rationale"). Barrado
+# em 3 camadas coerentes: aqui na origem (ContentType), por título no filter.py e no
+# classificador (_EXCLUDE_CONTENT_TYPES) — todas BLOCKLIST de "rationale".
+#
+# ⚠️ ISTO ERA UM WHITELIST (_WANTED_TYPES = {News, Top News, Flash, Market Commentary,
+# Blog, Headline Analysis}) → descartava EM SILÊNCIO qualquer ContentType fora da
+# lista, inclusive "Analysis" (matérias analíticas COM TABELAS E IMAGENS, ex.:
+# "Chinese HRC market faces supply pressure amid falling exports, sluggish demand").
+# Invertido para BLOCKLIST: só "Rationale" é barrado; o resto passa — e tipo NOVO
+# que a Platts criar entra sozinho, sem precisar mexer no código. Casa por SUBSTRING
+# em minúsculas, então "Pricing Rationale"/"Rationale" também são pegos.
+_BLOCKED_TYPES = ("rationale",)
+
+
+def _type_allowed(content_type: str) -> bool:
+    """True se o ContentType da Platts deve entrar. Bloqueia só 'Rationale'
+    (substring, case-insensitive); todo o resto passa (regra de negócio)."""
+    ct = (content_type or "").lower()
+    return not any(b in ct for b in _BLOCKED_TYPES)
 
 _TIMEOUT = 180  # segundos máximos no thread (login a frio adiciona gotos + waits)
 
@@ -430,8 +445,8 @@ def _scrape() -> list[RawArticle]:
                     article_id = item.get("Id", "")
                     if not article_id or article_id in seen_ids:
                         continue
-                    content_type = item.get("ContentType", "News")
-                    if content_type not in _WANTED_TYPES:
+                    content_type = item.get("ContentType") or "News"
+                    if not _type_allowed(content_type):   # bloqueia só "Rationale"; resto passa
                         continue
                     seen_ids.add(article_id)
 

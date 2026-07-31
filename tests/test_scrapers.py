@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from hunter.reuters_scraper import _title_from_slug
 import hunter.html_scrapers as HS
 from hunter.html_scrapers import _canonical_key
+from hunter.platts_scraper import _type_allowed
 
 
 class TestReutersSlugTitle:
@@ -37,6 +38,38 @@ class TestCanonicalKey:
         a = _canonical_key("https://x.com/economia/vale-define-plano/")
         b = _canonical_key("https://x.com/economia/vale-define-plano")
         assert a == b
+
+
+class TestPlattsContentType:
+    """Regra de negócio: TODA notícia da Platts entra, EXCETO 'Rationale'.
+    O scraper filtra por ContentType via BLOCKLIST (não whitelist)."""
+
+    def test_analysis_passa(self):
+        # o bug: 'Analysis' (com tabelas/imagens) era descartado pelo whitelist antigo
+        assert _type_allowed("Analysis")
+
+    def test_tipos_conhecidos_passam(self):
+        for ct in ("News", "Top News", "Flash", "Market Commentary",
+                   "Blog", "Headline Analysis", "Feature", "Podcast"):
+            assert _type_allowed(ct), ct
+
+    def test_tipo_novo_desconhecido_passa(self):
+        # tipo que a Platts venha a criar entra sozinho (sem mexer no código)
+        assert _type_allowed("Something Brand New")
+
+    def test_rationale_barrado(self):
+        assert not _type_allowed("Rationale")
+
+    def test_pricing_rationale_barrado_substring(self):
+        assert not _type_allowed("Pricing Rationale")
+
+    def test_case_insensitive(self):
+        assert not _type_allowed("RATIONALE")
+
+    def test_vazio_ou_none_passa(self):
+        # ContentType ausente cai no default 'News' no chamador; a função é tolerante
+        assert _type_allowed("")
+        assert _type_allowed(None)
 
 
 class _FakeResp:
