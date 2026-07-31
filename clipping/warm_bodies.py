@@ -31,8 +31,8 @@ from .generate import _fetch_and_translate
 
 log = logging.getLogger(__name__)
 
-# As 6 fontes do clipping (idênticas ao admin_get_clipping_candidates).
-_SOURCES = ["S&P Platts", "Fastmarkets", "Valor Econômico", "Mining.com", "Portal Celulose", "Estadão"]
+# As 5 fontes do clipping (idênticas ao admin_get_clipping_candidates; Estadão removido 2026-07-31).
+_SOURCES = ["S&P Platts", "Fastmarkets", "Valor Econômico", "Mining.com", "Portal Celulose"]
 
 
 def _env() -> tuple[str, str]:
