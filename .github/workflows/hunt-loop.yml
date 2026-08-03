@@ -65,6 +65,9 @@ jobs:
           CEREBRAS_API_KEY:     ${{ secrets.CEREBRAS_API_KEY }}
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY:         ${{ secrets.GROQ_API_KEY }}
+          # 2026-08-03: reforço grátis/sem-cartão que sucede a Cerebras (paga a partir de 17/ago).
+          # Dormente até o secret ZAI_API_KEY existir (chave vazia = provedor pulado no CHAIN — nada quebra).
+          ZAI_API_KEY:          ${{ secrets.ZAI_API_KEY }}
         run: |
           set +e   # não aborta o loop se uma iteração falhar
           deadline=$(( $(date +%s) + 19800 ))   # 5h30min em segundos

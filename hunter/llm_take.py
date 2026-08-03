@@ -26,6 +26,8 @@ PROVIDERS = {
     "mistral": {"style": "openai", "url": "https://api.mistral.ai/v1/chat/completions",
                 "model": os.environ.get("MISTRAL_MODEL", "mistral-medium-latest"),
                 "key": os.environ.get("MISTRAL_API_KEY", ""), "throttle": 1.2},
+    # RETIRADA da cadeia em 2026-08-03: o free tier da Cerebras passou a exigir cartão (17/ago).
+    # Definição mantida só p/ referência/reversão — está FORA do CHAIN default, então nunca é chamada.
     "cerebras": {"style": "openai", "url": "https://api.cerebras.ai/v1/chat/completions",
                  "model": os.environ.get("CEREBRAS_MODEL", "gpt-oss-120b"),
                  "key": os.environ.get("CEREBRAS_API_KEY", ""), "throttle": 13.0},
@@ -36,8 +38,38 @@ PROVIDERS = {
                # 2026-06-26: troca de 2.5-flash-lite (só 20 req/dia na nossa conta — gargalo) p/ 3.1-flash-lite
                # (500 req/dia, confirmado no painel AI Studio + doc oficial; modelo Flash-Lite => suporta systemInstruction + JSON).
                "key": os.environ.get("GEMINI_API_KEY", ""), "throttle": 4.5},
+    # 2026-08-03: REFORÇO grátis / SEM cartão. A Cerebras passa a exigir cartão em 17/ago
+    # (fim do free tier atual) → adicionamos o OpenRouter como rede extra p/ não depender só
+    # do Gemini. OpenAI-compatível → usa _call_openai_style. json_mode=False: nem todo modelo
+    # grátis do OpenRouter aceita response_format forçado (o system prompt + few-shot já pedem
+    # JSON e temperature=0 garante saída limpa). Modelo trocável pela env OPENROUTER_MODEL sem
+    # tocar no código (o catálogo grátis rotaciona — se o id sair do ar, basta trocar a env).
+    # DESCARTADO pelo usuário (2026-08-03): NÃO está no CHAIN default. Definição mantida só p/
+    # reativar via LLM_CHAIN se um dia quiser (menu ":free" rotaciona; conferir OPENROUTER_MODEL
+    # na lista viva GET /models antes). Z.AI já cobre o papel de reforço com folga.
+    "openrouter": {"style": "openai", "url": "https://openrouter.ai/api/v1/chat/completions",
+                   "model": os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),
+                   "key": os.environ.get("OPENROUTER_API_KEY", ""), "throttle": 3.0, "json_mode": False},
+    # 2026-08-03: Z.AI (GLM da Zhipu) — grátis / SEM cartão / PERMANENTE (não é crédito que expira),
+    # OpenAI-compatível, contexto 128k+ (aguenta nosso prompt grande) e cota diária generosa (~1.000/dia).
+    # ⚠️ Hospedagem na CHINA: o corpo enviado inclui nosso system prompt (lógica de take = IP). Aceitável
+    # p/ dado público, mas é decisão do usuário ATIVAR (fica dormente sem o secret ZAI_API_KEY).
+    # json_mode=True: teste ao vivo (2026-08-03) mostrou que em modo livre o GLM às vezes NÃO
+    # devolve JSON limpo (falha de parse) → forçamos response_format (o GLM suporta). Modelo via ZAI_MODEL.
+    "zai": {"style": "openai", "url": "https://api.z.ai/api/paas/v4/chat/completions",
+            "model": os.environ.get("ZAI_MODEL", "glm-4.5-flash"),
+            "key": os.environ.get("ZAI_API_KEY", ""), "throttle": 3.0, "json_mode": True},
 }
-CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "mistral,cerebras,groq,gemini").split(",")
+# Ordem da cascata (2026-08-03, Cerebras REMOVIDA; OpenRouter descartado pelo usuário). Princípio:
+# cushions rápidos e o premium ESCASSO primeiro; o pega-tudo de MAIOR capacidade/confiança por ÚLTIMO.
+#   1) mistral — rápido (throttle 1,2s), cushion barato enquanto tem a cota mensal
+#   2) groq    — MELHOR qualidade (gpt-oss-120b, o mesmo que a Cerebras rodava), mas escasso
+#                (~25/dia por travar em tokens) → colhemos os takes premium cedo
+#   3) zai     — GLM-flash, forte + cota grande (~1.000/dia) → carrega o grosso quando o mistral seca
+#   4) gemini  — 500/dia, o MAIS confiável (Google) → por ÚLTIMO de propósito: pega-tudo que
+#                raramente satura (nunca ficamos no escuro E dependemos menos de um provedor só)
+# zai fica dormente até o secret ZAI_API_KEY existir (chave vazia = provedor pulado abaixo).
+CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "mistral,groq,zai,gemini").split(",")
          if p.strip() in PROVIDERS and PROVIDERS[p.strip()]["key"]]
 
 ATTEMPTS = {p: 0 for p in PROVIDERS}
@@ -174,19 +206,58 @@ def _fs_assistant(ex):
                        "confidence": ex.get("confidence", 0.85)}, ensure_ascii=False)
 
 
+def _brace_blocks(s):
+    """Todos os blocos {...} balanceados de nível superior, na ordem em que aparecem."""
+    blocks, depth, start = [], 0, -1
+    for i, ch in enumerate(s):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start != -1:
+                blocks.append(s[start:i + 1])
+                start = -1
+    return blocks
+
+
+def _json_candidates(raw):
+    """Formas do texto p/ tentar json.loads, em ordem de preferência. Tolera: JSON puro (1ª forma,
+    idêntico ao comportamento anterior); modelos 'thinking' que emitem <think>…</think> ANTES do
+    JSON (ex.: GLM-flash do Z.AI, gpt-oss); cercas ```json```; e respostas com MAIS de um objeto
+    {…} (pega o ÚLTIMO válido — a resposta final vem depois do rascunho/raciocínio)."""
+    if not raw:
+        return
+    raw = raw.strip()
+    yield raw
+    if "</think>" in raw:                       # thinking-models: o JSON bom vem DEPOIS do último </think>
+        yield raw.rsplit("</think>", 1)[-1].strip()
+    if "```" in raw:                            # cercas markdown
+        parts = raw.split("```")
+        if len(parts) >= 2:
+            body = parts[1]
+            if body[:4].lower() == "json":
+                body = body[4:]
+            yield body.strip()
+    for blk in reversed(_brace_blocks(raw)):    # objetos {...} completos, do ÚLTIMO ao 1º
+        yield blk
+
+
 def _parse_json_take(raw):
-    try:
-        d = json.loads(raw)
-        take = str(d.get("take", "")).strip()
-        if take.lower().replace("_", " ") in ("no take", "no-take", "none", "notake"):
-            take = "no take"
-        if take in ("+", "-", "=", "no take"):
-            conf = d.get("confidence", 0.5)
-            conf = float(conf) if isinstance(conf, (int, float, str)) else 0.5
-            return {"take": take, "reason": str(d.get("reason", ""))[:200],
-                    "confidence": max(0.0, min(1.0, conf))}
-    except Exception:
-        pass
+    for cand in _json_candidates(raw):
+        try:
+            d = json.loads(cand)
+            take = str(d.get("take", "")).strip()
+            if take.lower().replace("_", " ") in ("no take", "no-take", "none", "notake"):
+                take = "no take"
+            if take in ("+", "-", "=", "no take"):
+                conf = d.get("confidence", 0.5)
+                conf = float(conf) if isinstance(conf, (int, float, str)) else 0.5
+                return {"take": take, "reason": str(d.get("reason", ""))[:200],
+                        "confidence": max(0.0, min(1.0, conf))}
+        except Exception:
+            continue
     return None
 
 
@@ -204,8 +275,9 @@ def _call_openai_style(p, user_text):
         msgs.append({"role": "user", "content": f"Headline: {ex['headline']}"})
         msgs.append({"role": "assistant", "content": _fs_assistant(ex)})
     msgs.append({"role": "user", "content": user_text})
-    payload = {"model": cfg["model"], "messages": msgs, "temperature": 0,
-               "max_tokens": 2048, "response_format": {"type": "json_object"}}
+    payload = {"model": cfg["model"], "messages": msgs, "temperature": 0, "max_tokens": 2048}
+    if cfg.get("json_mode", True):        # alguns hosts (ex.: OpenRouter free) rejeitam response_format
+        payload["response_format"] = {"type": "json_object"}
     h = {"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"}
     r = requests.post(cfg["url"], json=payload, headers=h, timeout=60)
     return r, (lambda: r.json()["choices"][0]["message"]["content"])
@@ -249,7 +321,7 @@ def _try_provider(p, user_text, max_retries=2):
             if ra <= 65 and attempt < max_retries:
                 time.sleep(ra + 1); continue
             return None, "rate_limited"
-        if r.status_code in (401, 403):
+        if r.status_code in (401, 402, 403):   # 402 = cerebras pós-17/ago (exige cartão) → pula na hora
             return None, f"auth {r.status_code}"
         if not r.ok:
             if attempt < max_retries:
