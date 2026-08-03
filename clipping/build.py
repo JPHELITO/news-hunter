@@ -253,12 +253,14 @@ _SKIP_AUTO_FETCH: frozenset[str] = frozenset([
 _BILINGUAL_DOMAINS: frozenset[str] = frozenset([
     "valor.globo.com",          # Português → Inglês
     "www.estadao.com.br",       # Português → Inglês
+    "portalcelulose.com.br",    # Português → Inglês (2026-08-03, pedido do usuário)
     "www.elfinanciero.com.mx",  # Espanhol → Inglês
 ])
 
 _DOMAIN_LANG: dict[str, str] = {
     "valor.globo.com":          "Portuguese",
     "www.estadao.com.br":       "Portuguese",
+    "portalcelulose.com.br":    "Portuguese",
     "www.elfinanciero.com.mx":  "Spanish",
 }
 
@@ -777,12 +779,11 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         sz = OxmlElement("w:sz")
         sz.set(qn("w:val"), "22")
         rPr.append(sz)
-        # Cor: preto — sobrescreve o azul automático do estilo Hyperlink
+        # Cor: AZUL de link (2026-08-03, pedido do usuário — "corzinha azul p/ visualizar").
+        # Sobrescreve o azul automático do estilo Hyperlink (neutralizado) com o mesmo 0000FF.
         color_el = OxmlElement("w:color")
-        color_el.set(qn("w:val"), "000000")
+        color_el.set(qn("w:val"), "0000FF")
         rPr.append(color_el)
-        # Sublinhado simples — sinaliza que o título é clicável
-        # (sem sublinhado — igual à referência: link em preto liso)
         r.append(rPr)
         t = OxmlElement("w:t")
         t.text = text
@@ -815,7 +816,8 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
     # ordem do payload → S&M SEMPRE antes de P&P (exigência do usuário). Só entra setor presente.
     seen_sectors: list[str] = [s for s in SECTOR_ORDER if any(it.sector == s for it in items)]
 
-    bm_names = {item.url: f"art{i}" for i, item in enumerate(items)}
+    bm_names    = {item.url: f"art{i}"   for i, item in enumerate(items)}
+    bm_tr_names = {item.url: f"art{i}tr" for i, item in enumerate(items)}   # âncora da Free Translation
 
     # ══════════════════════════════════════════════════════════════════════════
     # INTRO / MENSAGEM (configurável — vai no topo; o mesmo texto entra no e-mail)
@@ -863,9 +865,10 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
 
             _run(p, f"{SECTOR_LABEL[sector_key]} -\xa0", bold=True, size_pt=11)   # hífen (headlines), como na referência
             _hyperlink_run(p, item.title, bm_names[item.url])
-            # Artigos bilíngues: adiciona " \ Título traduzido" após o original
+            # Artigos bilíngues: " \ Título traduzido" vira LINK INTERNO p/ a Free Translation
             if item.translated_title:
-                _run(p, f" \\ {item.translated_title}", size_pt=11)
+                _run(p, " \\ ", size_pt=11)
+                _hyperlink_run(p, item.translated_title, bm_tr_names[item.url])
             _run(p, f" [{item.source_name}]", bold=True, size_pt=11)
             _run(p, f" {take_sym}", bold=True, size_pt=11, color_hex=take_color)
 
@@ -885,7 +888,7 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
             p = doc.add_paragraph(); _zero_spacing(p); _justify(p); _add_numPr(p)
             _run(p, f"{SECTOR_LABEL.get(sec, 'STEEL & MINING')} –\xa0", bold=True, size_pt=11)
             if link:
-                _external_hyperlink_run(p, name, link, size_pt=11)
+                _external_hyperlink_run(p, name, link, size_pt=11, color="0000FF")  # azul de link
             else:
                 _run(p, name, size_pt=11)
 
@@ -1072,6 +1075,7 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
                 _run(p_tr_title,
                      f"{item.translated_title} (Free Translation)",
                      bold=True, size_pt=12, hl="yellow")
+                _add_bookmark(p_tr_title, bm_tr_names[item.url])   # alvo do link interno da headline
 
                 # Source da tradução
                 p_tr_src = doc.add_paragraph()

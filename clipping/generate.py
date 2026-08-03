@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 _VALID_SECTORS = {"SM", "PP", "NR"}
 _LANG = {"valor.globo.com": "Portuguese", "www.estadao.com.br": "Portuguese",
-         "www.elfinanciero.com.mx": "Spanish"}
+         "portalcelulose.com.br": "Portuguese", "www.elfinanciero.com.mx": "Spanish"}
 
 
 def _fetch_and_translate(url: str, dom: str, title: str) -> tuple[str, str, str]:
