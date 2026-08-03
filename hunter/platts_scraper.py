@@ -1,6 +1,7 @@
 """Scraper Platts (S&P Global) — Fase 1 apenas (headlines) + preços.
 
-Intercepta POST content-bff/v1/search para headlines.
+Intercepta o feed de headlines (content-bff/.../search/blendedsearch na view
+"Enhanced"; content-bff/v1/search na "Classic" legada — ver _is_headline_search_url).
 Intercepta JSON responses durante navegação ao workspace para preços IODEX.
 Retorna apenas título + snippet + link. Sem Fase 2 (sem corpo completo).
 Requer platts_state.json (sessão válida do browser).
@@ -82,6 +83,24 @@ def _type_allowed(content_type: str) -> bool:
     (substring, case-insensitive); todo o resto passa (regra de negócio)."""
     ct = (content_type or "").lower()
     return not any(b in ct for b in _BLOCKED_TYPES)
+
+
+# ── Endpoint do feed de headlines ─────────────────────────────────────────────
+# ⚠️ 2026-08: a view "Enhanced" (nova) do Core migrou o feed de headlines de
+#   content-bff/v1/search  →  content-bff/v4/search/blendedsearch  (POST).
+# A resposta tem A MESMA forma (Items[] com Id/Headline/ContentType/Summary/Body/
+# UpdatedDate/RtpTimestamp) — só a URL a interceptar mudou. Quando a "Enhanced"
+# virou padrão, o robô parou de captar headlines EM SILÊNCIO (preços seguiam, pois
+# vêm do workspace) → o feed da Platts congelou. Casamos a NOVA por 'search/blendedsearch'
+# (agnóstico à versão: pega v4/v5/…) e mantemos a v1 legada como reserva (Classic).
+# NÃO casar 'blendedcascadingfacets'/'blendedtypes' — são facetas/config, não a lista.
+def _is_headline_search_url(url: str) -> bool:
+    """True se a resposta é o feed de headlines (Enhanced blendedsearch OU Classic v1)."""
+    u = (url or "").lower()
+    if "image" in u:                       # variante de busca por imagem — ignora
+        return False
+    return "search/blendedsearch" in u or "content-bff/v1/search" in u
+
 
 _TIMEOUT = 180  # segundos máximos no thread (login a frio adiciona gotos + waits)
 
@@ -437,8 +456,8 @@ def _scrape() -> list[RawArticle]:
 
     def on_response(response):
         url = response.url
-        # Headlines
-        if "content-bff/v1/search" in url and "image" not in url:
+        # Headlines — v4 blendedsearch (Enhanced) OU v1/search (Classic legado)
+        if _is_headline_search_url(url):
             try:
                 data = json.loads(response.body().decode("utf-8", errors="replace"))
                 for item in data.get("Items", []):

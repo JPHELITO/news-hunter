@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from hunter.reuters_scraper import _title_from_slug
 import hunter.html_scrapers as HS
 from hunter.html_scrapers import _canonical_key
-from hunter.platts_scraper import _type_allowed
+from hunter.platts_scraper import _type_allowed, _is_headline_search_url
 
 
 class TestReutersSlugTitle:
@@ -70,6 +70,40 @@ class TestPlattsContentType:
         # ContentType ausente cai no default 'News' no chamador; a função é tolerante
         assert _type_allowed("")
         assert _type_allowed(None)
+
+
+class TestPlattsHeadlineUrl:
+    """A view 'Enhanced' (2026-08) migrou o feed de content-bff/v1/search →
+    content-bff/v4/search/blendedsearch. O interceptor precisa casar as duas
+    (nova + legada) e IGNORAR os endpoints de facetas/config e de imagem."""
+
+    _BASE = "https://api.platts.com/platts-platform"
+
+    def test_v4_blendedsearch_enhanced(self):
+        assert _is_headline_search_url(f"{self._BASE}/content-bff/v4/search/blendedsearch")
+
+    def test_versao_futura_agnostica(self):
+        # v5+ que a Platts venha a lançar deve entrar sozinha (casa por 'search/blendedsearch')
+        assert _is_headline_search_url(f"{self._BASE}/content-bff/v9/search/blendedsearch")
+
+    def test_v1_search_classic_legado(self):
+        assert _is_headline_search_url(f"{self._BASE}/content-bff/v1/search?q=steel")
+
+    def test_facetas_nao_casam(self):
+        # blendedcascadingfacets e blendedtypes NÃO são a lista de artigos
+        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v4/search/blendedcascadingfacets")
+        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v3/search/blendedtypes")
+
+    def test_article_endpoint_nao_casa(self):
+        # o corpo do artigo (v2/search/article/<id>) não é o feed de headlines
+        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v2/search/article/abc-123")
+
+    def test_variante_imagem_ignorada(self):
+        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v4/search/blendedsearch/image")
+
+    def test_url_vazia_ou_none(self):
+        assert not _is_headline_search_url("")
+        assert not _is_headline_search_url(None)
 
 
 class _FakeResp:
