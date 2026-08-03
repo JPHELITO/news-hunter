@@ -6,13 +6,22 @@ news_generator/login.py — mesmos cookies, mesmos seletores CSS.
 Diferente do leitor antigo (inner_text → texto plano), este usa innerHTML +
 article_to_safe_html para preservar a estrutura de parágrafos e imagens,
 produzindo o mesmo formato HTML seguro que o scraper em lote (Phase 2).
+
+⚡ Platts tem CAMINHO RÁPIDO por API (sem navegador): fetch_article lê o corpo
+direto de content-bff/v2/search/article/<id> (o mesmo JSON que o SPA usa p/ montar
+a página). É robusto a mudança de layout e muito mais rápido; cai para o fluxo
+Playwright (DOM + screenshot) se falhar / token expirado / conteúdo rico
+(tabela/imagem/Analysis, que precisa de screenshot fiel). Ver _platts_body_via_api.
 """
 from __future__ import annotations
 
+import base64
 import html as _html_mod
+import json
 import logging
 import re
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -662,13 +671,162 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
     return title, body_html
 
 
-def fetch_article(url: str) -> tuple[str, str]:
-    """Busca artigo com Playwright. Retorna (titulo, corpo_html).
+# ── Platts: caminho rápido por API content-bff/v2 (sem navegador) ─────────────
+# A página do Core monta o artigo a partir deste JSON; ler a fonte é robusto a
+# mudança de layout (foi o que quebrou as headlines) e dispensa render/screenshot.
+_PLATTS_API_BASE = "https://api.platts.com/platts-platform"
+# appkey PÚBLICA do SPA do Core (vai no bundle JS do cliente — não é segredo, como a
+# anon key do Supabase). Se a Platts trocar, o caminho cai no fluxo DOM (fallback).
+_PLATTS_APPKEY = "NrjDvgdFBxQQPJxoiLhR"
 
-    corpo_html é HTML seguro (tags <p>, <img>, <h3>, etc.) pronto para
-    renderização no leitor. String vazia se falhar.
+# Cache do access token em processo (TTL do JWT ~60min): evita re-puxar a sessão a
+# cada artigo no aquecedor em lote. Renova sozinho perto do vencimento.
+_platts_tok_cache: dict = {"tok": None, "exp": 0.0}
+
+
+def _extract_okta_token(state: dict) -> str | None:
+    """Access token Okta guardado no storage_state (localStorage 'okta-token-storage')."""
+    def _find(o):
+        if isinstance(o, dict):
+            at = o.get("accessToken")
+            if isinstance(at, str) and at.startswith("eyJ"):
+                return at
+            for v in o.values():
+                r = _find(v)
+                if r:
+                    return r
+        elif isinstance(o, list):
+            for v in o:
+                r = _find(v)
+                if r:
+                    return r
+        return None
+    for origin in (state or {}).get("origins", []):
+        for kv in origin.get("localStorage", []):
+            if kv.get("name") == "okta-token-storage":
+                try:
+                    return _find(json.loads(kv.get("value") or "{}"))
+                except Exception:
+                    pass
+    return None
+
+
+def _jwt_exp(tok: str) -> float | None:
+    """Epoch de expiração do JWT (claim exp), sem verificar assinatura. None se não decodificar."""
+    try:
+        payload = tok.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload)).get("exp")
+        return float(exp) if exp else None
+    except Exception:
+        return None
+
+
+def _platts_access_token() -> str | None:
+    """Token válido p/ a API do Platts (do state file rolado-pra-frente) ou None.
+    Retorna None quando ausente/expirado → o chamador cai no fluxo DOM (renova via browser)."""
+    now = time.time()
+    if _platts_tok_cache["tok"] and now < _platts_tok_cache["exp"] - 60:
+        return _platts_tok_cache["tok"]
+    try:
+        from hunter import playwright_session as ps
+        ps.pull_session("platts")               # traz a sessão viva do store p/ o state file
+    except Exception as e:
+        log.debug("reader: pull_session(platts) p/ token: %s", e)
+    sp = _cookies_dir() / "platts_state.json"
+    if not sp.exists():
+        return None
+    try:
+        state = json.loads(sp.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    tok = _extract_okta_token(state)
+    if not tok:
+        return None
+    exp = _jwt_exp(tok)
+    if exp and now >= exp - 60:                  # expirado/quase → força fallback DOM
+        return None
+    _platts_tok_cache["tok"] = tok
+    _platts_tok_cache["exp"] = exp or (now + 300.0)   # sem exp legível → cacheia 5min
+    return tok
+
+
+def _parse_platts_article(url: str) -> tuple[str | None, str]:
+    """(articleID, insightsType) do fragmento #platts/insightsArticle?articleID=…&insightsType=…"""
+    from urllib.parse import unquote
+    frag = urlparse(url).fragment
+    qs = frag.split("?", 1)[-1] if "?" in frag else ""
+    d = {}
+    for part in qs.split("&"):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            d[k.lower()] = v
+    aid = d.get("articleid")
+    typ = unquote(d.get("insightstype", "News")) if d.get("insightstype") else "News"
+    return (aid or None), typ
+
+
+def _platts_body_via_api(url: str) -> tuple[str, str]:
+    """Corpo do artigo Platts pela API content-bff/v2 (sem navegador). ('','') se não der
+    → o chamador cai no fluxo Playwright (DOM + screenshot). Conteúdo rico
+    (tabela/imagem/Analysis) também devolve ('','') de propósito, p/ o DOM captar fiel."""
+    aid, typ = _parse_platts_article(url)
+    if not aid:
+        return "", ""
+    tok = _platts_access_token()
+    if not tok:
+        return "", ""
+    import requests
+    from urllib.parse import quote
+    api = (f"{_PLATTS_API_BASE}/content-bff/v2/search/article/{quote(aid)}"
+           f"?relatedArticlesPerPage=5&newsType={quote(typ)}")
+    try:
+        r = requests.get(api, headers={"Authorization": f"Bearer {tok}",
+                                       "appkey": _PLATTS_APPKEY,
+                                       "Accept": "application/json"}, timeout=15)
+    except Exception as e:
+        log.debug("reader: Platts API erro de rede: %s", e)
+        return "", ""
+    if r.status_code != 200:
+        log.debug("reader: Platts API HTTP %s (%s)", r.status_code, aid)
+        _platts_tok_cache["tok"] = None          # pode ser token vencido → força re-pull na próxima
+        return "", ""
+    try:
+        j = r.json()
+    except Exception:
+        return "", ""
+    body  = j.get("Body") or ""
+    title = j.get("Headline") or j.get("Name") or ""
+    ctype = (j.get("ContentType") or "").lower()
+    low   = body.lower()
+    # Rico (tabela/imagem) ou Analysis → deixa o fluxo DOM cuidar (screenshot fiel).
+    if not body or "<table" in low or "<img" in low or "analysis" in ctype:
+        return "", ""
+    from .html_utils import article_to_safe_html
+    safe = article_to_safe_html(body)            # mesmo sanitizador das outras fontes
+    if len(safe) < 80:
+        return "", ""
+    return title, safe
+
+
+def fetch_article(url: str) -> tuple[str, str]:
+    """Busca artigo. Retorna (titulo, corpo_html).
+
+    Platts: tenta a API content-bff/v2 primeiro (rápido, robusto); cai p/ Playwright
+    (DOM + screenshot) se falhar. Demais fontes: Playwright direto.
+    corpo_html é HTML seguro (tags <p>, <img>, <h3>, etc.). String vazia se falhar.
     """
     domain = _norm_domain(urlparse(url).netloc)
+
+    # ── Caminho rápido: Platts via API (sem navegador) ────────────────────────
+    if domain == "core.spglobal.com":
+        try:
+            t, b = _platts_body_via_api(url)
+            if b:
+                log.debug("reader: Platts corpo via API (%d chars) %s", len(b), url[-60:])
+                return t, b
+        except Exception as e:
+            log.debug("reader: Platts API path falhou (%s) — caindo p/ DOM", e)
 
     result: list[tuple[str, str]] = [("", "")]
     err: list[Exception | None] = [None]
