@@ -22,6 +22,11 @@ SOURCES = [
     {"label": "Mining.com",            "url": "https://www.mining.com/commodity/copper/feed/",   "filter": False},
     {"label": "Mining.com",            "url": "https://www.mining.com/commodity/nickel/feed/",   "filter": False},
     {"label": "Mining.com",            "url": "https://www.mining.com/commodity/gold/feed/",     "filter": True},
+    # 2026-08-03 (pedido do usuário): categoria CRITICAL MINERALS — aceita-tudo. Os feeds de
+    # commodity NÃO cobriam essa categoria (cobre/níquel/terras raras/lítio + policy), então o
+    # feed geral perdia coisas como "Trump expected to attend event with mining execs amid
+    # critical minerals push". On-topic p/ a cobertura (base metals/minerais críticos).
+    {"label": "Mining.com",            "url": "https://www.mining.com/category/critical-minerals/feed/", "filter": False},
 
     # ══ BRASIL — Imprensa econômica (RSS oficiais) ════════════════════════════
     {"label": "Valor Econômico",       "url": "https://pox.globo.com/rss/valor/empresas",         "filter": True},
