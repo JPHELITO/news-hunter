@@ -679,9 +679,10 @@ _PLATTS_API_BASE = "https://api.platts.com/platts-platform"
 # anon key do Supabase). Se a Platts trocar, o caminho cai no fluxo DOM (fallback).
 _PLATTS_APPKEY = "NrjDvgdFBxQQPJxoiLhR"
 
-# Cache do access token em processo (TTL do JWT ~60min): evita re-puxar a sessão a
-# cada artigo no aquecedor em lote. Renova sozinho perto do vencimento.
-_platts_tok_cache: dict = {"tok": None, "exp": 0.0}
+# Cache do access token em processo POR FONTE (TTL do JWT ~60min): evita re-puxar a
+# sessão a cada artigo no aquecedor em lote. Renova sozinho perto do vencimento.
+_tok_cache: dict = {"platts":      {"tok": None, "exp": 0.0},
+                    "fastmarkets": {"tok": None, "exp": 0.0}}
 
 
 def _extract_okta_token(state: dict) -> str | None:
@@ -711,6 +712,20 @@ def _extract_okta_token(state: dict) -> str | None:
     return None
 
 
+def _extract_fm_token(state: dict) -> str | None:
+    """Access token OAuth do Fastmarkets (localStorage 'oidc.user:…' → access_token)."""
+    for origin in (state or {}).get("origins", []):
+        for kv in origin.get("localStorage", []):
+            if (kv.get("name") or "").startswith("oidc.user:"):
+                try:
+                    at = json.loads(kv.get("value") or "{}").get("access_token")
+                    if isinstance(at, str) and at.startswith("eyJ"):
+                        return at
+                except Exception:
+                    pass
+    return None
+
+
 def _jwt_exp(tok: str) -> float | None:
     """Epoch de expiração do JWT (claim exp), sem verificar assinatura. None se não decodificar."""
     try:
@@ -722,33 +737,42 @@ def _jwt_exp(tok: str) -> float | None:
         return None
 
 
-def _platts_access_token() -> str | None:
-    """Token válido p/ a API do Platts (do state file rolado-pra-frente) ou None.
-    Retorna None quando ausente/expirado → o chamador cai no fluxo DOM (renova via browser)."""
+def _cached_access_token(provider: str, state_filename: str, extract_fn) -> str | None:
+    """Token válido p/ a API da fonte (do state file rolado-pra-frente) ou None.
+    None = ausente/expirado → o chamador cai no fluxo DOM (que renova via browser)."""
+    cache = _tok_cache[provider]
     now = time.time()
-    if _platts_tok_cache["tok"] and now < _platts_tok_cache["exp"] - 60:
-        return _platts_tok_cache["tok"]
+    if cache["tok"] and now < cache["exp"] - 60:
+        return cache["tok"]
     try:
         from hunter import playwright_session as ps
-        ps.pull_session("platts")               # traz a sessão viva do store p/ o state file
+        ps.pull_session(provider)               # traz a sessão viva do store p/ o state file
     except Exception as e:
-        log.debug("reader: pull_session(platts) p/ token: %s", e)
-    sp = _cookies_dir() / "platts_state.json"
+        log.debug("reader: pull_session(%s) p/ token: %s", provider, e)
+    sp = _cookies_dir() / state_filename
     if not sp.exists():
         return None
     try:
         state = json.loads(sp.read_text(encoding="utf-8"))
     except Exception:
         return None
-    tok = _extract_okta_token(state)
+    tok = extract_fn(state)
     if not tok:
         return None
     exp = _jwt_exp(tok)
     if exp and now >= exp - 60:                  # expirado/quase → força fallback DOM
         return None
-    _platts_tok_cache["tok"] = tok
-    _platts_tok_cache["exp"] = exp or (now + 300.0)   # sem exp legível → cacheia 5min
+    cache["tok"] = tok
+    cache["exp"] = exp or (now + 300.0)          # sem exp legível → cacheia 5min
     return tok
+
+
+def _platts_access_token() -> str | None:
+    return _cached_access_token("platts", "platts_state.json", _extract_okta_token)
+
+
+def _fm_access_token() -> str | None:
+    return _cached_access_token("fastmarkets", "fastmarkets_state.json", _extract_fm_token)
 
 
 def _parse_platts_article(url: str) -> tuple[str | None, str]:
@@ -789,7 +813,7 @@ def _platts_body_via_api(url: str) -> tuple[str, str]:
         return "", ""
     if r.status_code != 200:
         log.debug("reader: Platts API HTTP %s (%s)", r.status_code, aid)
-        _platts_tok_cache["tok"] = None          # pode ser token vencido → força re-pull na próxima
+        _tok_cache["platts"]["tok"] = None       # pode ser token vencido → força re-pull na próxima
         return "", ""
     try:
         j = r.json()
@@ -809,24 +833,75 @@ def _platts_body_via_api(url: str) -> tuple[str, str]:
     return title, safe
 
 
+# ── Fastmarkets: caminho rápido por API news/v3/articles (sem navegador) ───────
+# A página /a/<id> monta o artigo a partir deste JSON. Corpo = summary (LEAD) + content
+# (o DOM junta os dois no .content-container → validado: texto IDÊNTICO, jaccard 1.000).
+# Imagens já vêm como <img src="https://…"> (mesma URL do DOM, baixadas depois) — sem
+# screenshot. Sem appkey (só Bearer). Cai no DOM se falhar/token vencido.
+def _fm_body_via_api(url: str) -> tuple[str, str]:
+    """Corpo do artigo Fastmarkets pela API news/v3/articles (sem navegador). ('','') se não der
+    → o chamador cai no fluxo Playwright (DOM)."""
+    if "/a/" not in url:
+        return "", ""
+    aid = url.rstrip("/").split("/a/")[-1].split("/")[0].split("?")[0]
+    if not aid:
+        return "", ""
+    tok = _fm_access_token()
+    if not tok:
+        return "", ""
+    import requests
+    api = f"https://api.fastmarkets.com/news/v3/articles?ids={aid}"
+    try:
+        r = requests.get(api, headers={"Authorization": f"Bearer {tok}",
+                                       "Accept": "application/json",
+                                       "Origin": "https://dashboard.fastmarkets.com",
+                                       "Referer": "https://dashboard.fastmarkets.com/"}, timeout=15)
+    except Exception as e:
+        log.debug("reader: FM API erro de rede: %s", e)
+        return "", ""
+    if r.status_code != 200:
+        log.debug("reader: FM API HTTP %s (%s)", r.status_code, aid)
+        _tok_cache["fastmarkets"]["tok"] = None  # pode ser token vencido → re-pull na próxima
+        return "", ""
+    try:
+        arts = (r.json() or {}).get("articles") or []
+    except Exception:
+        return "", ""
+    if not arts:
+        return "", ""
+    art     = arts[0]
+    summary = art.get("summary") or ""           # LEAD — o DOM o inclui no topo do corpo
+    content = art.get("content") or ""
+    title   = art.get("title") or ""
+    if not (summary or content):
+        return "", ""
+    from .html_utils import article_to_safe_html
+    safe = article_to_safe_html((summary + "\n" + content).strip())
+    if len(safe) < 80:
+        return "", ""
+    return title, safe
+
+
 def fetch_article(url: str) -> tuple[str, str]:
     """Busca artigo. Retorna (titulo, corpo_html).
 
-    Platts: tenta a API content-bff/v2 primeiro (rápido, robusto); cai p/ Playwright
+    Platts/Fastmarkets: tentam a API primeiro (rápido, robusto); caem p/ Playwright
     (DOM + screenshot) se falhar. Demais fontes: Playwright direto.
     corpo_html é HTML seguro (tags <p>, <img>, <h3>, etc.). String vazia se falhar.
     """
     domain = _norm_domain(urlparse(url).netloc)
 
-    # ── Caminho rápido: Platts via API (sem navegador) ────────────────────────
-    if domain == "core.spglobal.com":
+    # ── Caminho rápido por API (sem navegador): Platts e Fastmarkets ──────────
+    _api_fast = {"core.spglobal.com": _platts_body_via_api,
+                 "dashboard.fastmarkets.com": _fm_body_via_api}.get(domain)
+    if _api_fast:
         try:
-            t, b = _platts_body_via_api(url)
+            t, b = _api_fast(url)
             if b:
-                log.debug("reader: Platts corpo via API (%d chars) %s", len(b), url[-60:])
+                log.debug("reader: %s corpo via API (%d chars) %s", domain, len(b), url[-50:])
                 return t, b
         except Exception as e:
-            log.debug("reader: Platts API path falhou (%s) — caindo p/ DOM", e)
+            log.debug("reader: %s API path falhou (%s) — caindo p/ DOM", domain, e)
 
     result: list[tuple[str, str]] = [("", "")]
     err: list[Exception | None] = [None]

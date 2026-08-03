@@ -11,7 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from clipping.reader import _extract_okta_token, _jwt_exp, _parse_platts_article
+from clipping.reader import (
+    _extract_fm_token, _extract_okta_token, _jwt_exp, _parse_platts_article,
+)
 
 
 def _fake_jwt(exp: int) -> str:
@@ -60,6 +62,28 @@ class TestExtractOktaToken:
 
     def test_state_vazio(self):
         assert _extract_okta_token({}) is None
+
+
+class TestExtractFmToken:
+    def _state(self, name, value):
+        return {"origins": [{"origin": "https://dashboard.fastmarkets.com",
+                             "localStorage": [{"name": name, "value": value}]}]}
+
+    def test_acha_access_token_do_oidc_user(self):
+        st = self._state("oidc.user:https://auth.fastmarkets.com/:fastmarkets.das",
+                         json.dumps({"access_token": "eyJfm.abc.def", "profile": {"name": "x"}}))
+        assert _extract_fm_token(st) == "eyJfm.abc.def"
+
+    def test_ignora_chave_oidc_que_nao_e_user(self):
+        st = self._state("oidc.2657324a62664503", json.dumps({"foo": "bar"}))
+        assert _extract_fm_token(st) is None
+
+    def test_access_token_nao_jwt_ignorado(self):
+        st = self._state("oidc.user:x", json.dumps({"access_token": "opaco-nao-jwt"}))
+        assert _extract_fm_token(st) is None
+
+    def test_state_vazio(self):
+        assert _extract_fm_token({}) is None
 
 
 class TestJwtExp:
