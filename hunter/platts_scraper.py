@@ -85,21 +85,26 @@ def _type_allowed(content_type: str) -> bool:
     return not any(b in ct for b in _BLOCKED_TYPES)
 
 
-# ── Endpoint do feed de headlines ─────────────────────────────────────────────
-# ⚠️ 2026-08: a view "Enhanced" (nova) do Core migrou o feed de headlines de
-#   content-bff/v1/search  →  content-bff/v4/search/blendedsearch  (POST).
-# A resposta tem A MESMA forma (Items[] com Id/Headline/ContentType/Summary/Body/
-# UpdatedDate/RtpTimestamp) — só a URL a interceptar mudou. Quando a "Enhanced"
-# virou padrão, o robô parou de captar headlines EM SILÊNCIO (preços seguiam, pois
-# vêm do workspace) → o feed da Platts congelou. Casamos a NOVA por 'search/blendedsearch'
-# (agnóstico à versão: pega v4/v5/…) e mantemos a v1 legada como reserva (Classic).
-# NÃO casar 'blendedcascadingfacets'/'blendedtypes' — são facetas/config, não a lista.
+# ── Endpoint(s) do feed de headlines ──────────────────────────────────────────
+# ⚠️ 2026-08: a view "Enhanced" (nova) do Core usa DOIS endpoints de LISTA, e a
+# distinção importa (foi o que fez News/Feature/Analysis pararem de entrar mesmo depois
+# do 1º conserto que só pegava 'blendedsearch'):
+#   • allInsights (feed geral)         → content-bff/v4/search             (path termina em /search)
+#   • insightsResult (busca filtrada)  → content-bff/v4/search/blendedsearch (termina em /blendedsearch)
+#   • (legado Classic)                 → content-bff/v1/search             (termina em /search)
+# Todos têm a MESMA forma de resposta (Items[] com Id/Headline/ContentType/…). Casamos por
+# FIM DE PATH (/search OU /blendedsearch) → pega os dois + versão futura (v5…), e EXCLUI os
+# vizinhos que NÃO são lista de artigos: /search/facets, /search/blendedcascadingfacets,
+# /search/blendedtypes, /search/events, /search/image/<id>, /search/article/<id>.
 def _is_headline_search_url(url: str) -> bool:
-    """True se a resposta é o feed de headlines (Enhanced blendedsearch OU Classic v1)."""
-    u = (url or "").lower()
-    if "image" in u:                       # variante de busca por imagem — ignora
+    """True se a resposta é uma LISTA de headlines da Platts (allInsights base /search,
+    insightsResult /blendedsearch, ou o legado Classic v1/search) — nunca facetas/eventos/imagem."""
+    from urllib.parse import urlparse
+    try:
+        path = urlparse(url or "").path.lower()
+    except Exception:
         return False
-    return "search/blendedsearch" in u or "content-bff/v1/search" in u
+    return "content-bff" in path and (path.endswith("/search") or path.endswith("/blendedsearch"))
 
 
 _TIMEOUT = 180  # segundos máximos no thread (login a frio adiciona gotos + waits)
@@ -534,11 +539,21 @@ def _scrape() -> list[RawArticle]:
             # Autenticado: rola a sessão pra frente (salva versão renovada local + store).
             save_state(ctx, "platts")
 
-            # allInsights — News, Flash, Rationale, etc.
+            # allInsights — feed geral (Enhanced dispara content-bff/v4/search, base) → News/Feature/…
             page.evaluate("window.location.hash = '#platts/allInsights'")
-            page.wait_for_timeout(18_000)
+            page.wait_for_timeout(14_000)
 
-            # Market Commentary
+            # insightsResult SEM filtro — TODOS os tipos via blendedsearch (50 itens; robusto p/
+            # News/Feature/Analysis, já que o base-search do allInsights vem parcial/flaky). ⚠️ Sem
+            # esta navegação, News/Feature/Analysis param de entrar (só Market Commentary sobrevivia).
+            try:
+                page.evaluate("window.location.hash = '#platts/insightsResult'")
+                page.wait_for_timeout(12_000)
+            except Exception:
+                pass
+
+            # Market Commentary — o tipo mais frequente, garantido em navegação PRÓPRIA (o feed
+            # 'todos' pode ficar dominado por Rationale/News e empurrar MC p/ fora do top-50).
             try:
                 page.evaluate(
                     "window.location.hash = "

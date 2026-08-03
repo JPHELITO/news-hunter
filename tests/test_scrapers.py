@@ -73,33 +73,45 @@ class TestPlattsContentType:
 
 
 class TestPlattsHeadlineUrl:
-    """A view 'Enhanced' (2026-08) migrou o feed de content-bff/v1/search →
-    content-bff/v4/search/blendedsearch. O interceptor precisa casar as duas
-    (nova + legada) e IGNORAR os endpoints de facetas/config e de imagem."""
+    """A view 'Enhanced' (2026-08) usa DOIS endpoints de LISTA de headlines:
+      allInsights (feed geral)  → content-bff/v4/search             (base, path termina /search)
+      insightsResult (filtrada) → content-bff/v4/search/blendedsearch (termina /blendedsearch)
+    (+ o legado Classic content-bff/v1/search). O interceptor casa os DOIS por fim-de-path e
+    IGNORA os vizinhos que NÃO são lista de artigos (facetas/tipos/eventos/imagem/artigo)."""
 
     _BASE = "https://api.platts.com/platts-platform"
 
-    def test_v4_blendedsearch_enhanced(self):
+    def test_allinsights_base_search(self):
+        # ⚠️ regressão que fez News/Feature/Analysis pararem: o base /search precisa casar
+        assert _is_headline_search_url(f"{self._BASE}/content-bff/v4/search")
+
+    def test_insightsresult_blendedsearch(self):
         assert _is_headline_search_url(f"{self._BASE}/content-bff/v4/search/blendedsearch")
 
     def test_versao_futura_agnostica(self):
-        # v5+ que a Platts venha a lançar deve entrar sozinha (casa por 'search/blendedsearch')
+        # v5+ que a Platts venha a lançar entra sozinha (casa por fim-de-path /search|/blendedsearch)
+        assert _is_headline_search_url(f"{self._BASE}/content-bff/v9/search")
         assert _is_headline_search_url(f"{self._BASE}/content-bff/v9/search/blendedsearch")
 
     def test_v1_search_classic_legado(self):
         assert _is_headline_search_url(f"{self._BASE}/content-bff/v1/search?q=steel")
 
-    def test_facetas_nao_casam(self):
-        # blendedcascadingfacets e blendedtypes NÃO são a lista de artigos
+    def test_facetas_e_tipos_nao_casam(self):
+        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v4/search/facets")
         assert not _is_headline_search_url(f"{self._BASE}/content-bff/v4/search/blendedcascadingfacets")
         assert not _is_headline_search_url(f"{self._BASE}/content-bff/v3/search/blendedtypes")
 
-    def test_article_endpoint_nao_casa(self):
-        # o corpo do artigo (v2/search/article/<id>) não é o feed de headlines
-        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v2/search/article/abc-123")
+    def test_events_nao_casa(self):
+        # content-bff/v1/search/events é feed de eventos, não de artigos (o matcher antigo pegava por engano)
+        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v1/search/events")
 
-    def test_variante_imagem_ignorada(self):
-        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v4/search/blendedsearch/image")
+    def test_article_e_imagem_nao_casam(self):
+        # corpo do artigo (v2/search/article/<id>) e imagem (v2/search/image/<id>) não são a lista
+        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v2/search/article/abc-123")
+        assert not _is_headline_search_url(f"{self._BASE}/content-bff/v2/search/image/abc-123")
+
+    def test_nao_content_bff_nao_casa(self):
+        assert not _is_headline_search_url("https://api.platts.com/platts-platform/menu-svc/v2/search")
 
     def test_url_vazia_ou_none(self):
         assert not _is_headline_search_url("")
