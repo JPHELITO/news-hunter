@@ -846,3 +846,43 @@ class TestGabarito8639Batch:
     def test_pt_press_prices_down(self):
         r = classify_take("Minério de ferro: preços recuam com demanda fraca na China", {})
         assert r["take"] == "-"
+
+
+class TestCuratedSourcesAlwaysInclude:
+    """Fontes CURADAS (Platts/Fastmarkets): TODA notícia entra, EXCETO Rationale
+    (regra do usuário 2026-08-03: 'fastmarkets também não precisa ter filtro').
+    O classificador não exclui por conteúdo/região/relevância nessas fontes."""
+
+    def test_fm_europe_pp_incluido(self):
+        # 'too_specific_europe' NÃO exclui fonte curada (era o grosso das perdas do FM)
+        r = classify_take("European tissue jumbo roll prices remain mostly flat in July",
+                          {"source_name": "Fastmarkets"})
+        assert r["include_in_report"] is True
+
+    def test_fm_offtopic_incluido(self):
+        # 'irrelevant_region' (World Cup) NÃO exclui fonte curada — é notícia de embalagem
+        r = classify_take("Smurfit Westrock partners with Coca-Cola on World Cup packaging",
+                          {"source_name": "Fastmarkets"})
+        assert r["include_in_report"] is True
+
+    def test_fm_rationale_ainda_excluido(self):
+        r = classify_take("Pricing Rationale: NBSK CIF China", {"source_name": "Fastmarkets"})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "rationale_news"
+
+    def test_platts_rationale_ainda_excluido(self):
+        r = classify_take("Pricing Rationale: HRC CFR China", {"source_name": "S&P Platts"})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "rationale_news"
+
+    def test_fonte_nao_curada_europa_ainda_excluida(self):
+        # regressão: fonte NÃO curada (Papnews) mantém a exclusão europeia
+        r = classify_take("European tissue jumbo roll prices remain mostly flat in July",
+                          {"source_name": "Papnews"})
+        assert r["include_in_report"] is False
+        assert r["exclusion_reason"] == "too_specific_europe"
+
+    def test_case_insensitive(self):
+        r = classify_take("European newsprint prices increase in Q3 amid tightening market",
+                          {"source_name": "FASTMARKETS"})
+        assert r["include_in_report"] is True

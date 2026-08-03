@@ -689,6 +689,20 @@ def _gate_is_tight(source: str) -> bool:
     return normalize_text(source or "") in _LOW_YIELD_SOURCES
 
 
+# Fontes CURADAS/DEDICADAS (terminais pagos que o analista escolheu a dedo): por decisão
+# de negócio, TODA notícia entra no relatório — o classificador NÃO exclui por conteúdo,
+# região ou baixa relevância (ex.: P&P europeu 'too_specific_europe', off-topic). SÓ
+# "Rationale" (metodologia de preço) fica de fora — regra do usuário, idêntica ao Platts.
+# (2026-08-03: Fastmarkets entrou a pedido do usuário — "não precisa ter filtro"; Platts
+# já seguia essa regra, mas o classificador ainda vazava algumas exclusões de conteúdo.)
+_ALWAYS_INCLUDE_SOURCES = frozenset({"s&p platts", "fastmarkets"})
+
+
+def _is_curated_source(source: str) -> bool:
+    """True se a fonte é curada → toda notícia entra, exceto Rationale."""
+    return (source or "").strip().lower() in _ALWAYS_INCLUDE_SOURCES
+
+
 def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     """
     Decide se a notícia deve ser excluída do relatório.
@@ -1093,9 +1107,14 @@ def classify_take(text: str, metadata: dict | None = None) -> dict:
         metadata — dict opcional com chaves como: source_name, content_type, sector, region
     """
     meta = metadata or {}
+    _curated = _is_curated_source(meta.get("source_name", "") or meta.get("source", ""))
 
     # ── Exclusão ──────────────────────────────────────────────────────────────
     exclude, excl_reason = should_exclude_news(text, meta)
+    # Fonte curada (Platts/FM): SÓ Rationale barra; qualquer outra exclusão de conteúdo
+    # (região europeia/off-topic/baixa-relevância) é ignorada → toda notícia da fonte entra.
+    if _curated and exclude and excl_reason != "rationale_news":
+        exclude = False
     if exclude:
         return {
             "include_in_report":          False,
@@ -1161,7 +1180,7 @@ def classify_take(text: str, metadata: dict | None = None) -> dict:
 
     # ── Exclusão de Europa (P&P) sem empresa coberta ──────────────────────────
     # Exclui se for só demanda local europeia sem benchmark global ou custo relevante.
-    if sector == "pulp_paper" and region == "europe" and not covered:
+    if sector == "pulp_paper" and region == "europe" and not covered and not _curated:
         topic_set_local = set(topics)
         _eu_pp_pass = re.search(
             r"\b(pix|foex|bhkp|nbsk|bekp|pulp.?prices?|pulp.?market|"
