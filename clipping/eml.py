@@ -9,17 +9,27 @@ build_eml_bytes(items, d, docx_bytes=…) devolve os bytes do .eml (HTML + .docx
 """
 from __future__ import annotations
 
+import base64
 import logging
 import re
 from datetime import date
 from email.message import EmailMessage
 from html import escape
+from pathlib import Path
 
 from .build import (
     ClippingItem, SECTOR_ORDER, SECTOR_LABEL, TAKE_SYMBOL, _DEFAULT_ANALYSTS,
 )
 
 log = logging.getLogger(__name__)
+
+# Logo "itaú BBA" do banner (a MESMA imagem do template.docx) — embutida em base64
+# para o e-mail ser self-contained. Se faltar o arquivo, o banner cai só no texto.
+_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "itau_bba_logo.png"
+try:
+    _LOGO_B64 = base64.b64encode(_LOGO_PATH.read_bytes()).decode("ascii")
+except Exception:                                    # pragma: no cover
+    _LOGO_B64 = ""
 
 MONTH_EN = {1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
             7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December"}
@@ -83,7 +93,11 @@ def _section_h(text: str) -> str:
 
 
 def _banner_html(d: date) -> str:
-    """Letterhead PRETO (branco no preto), 2 linhas + data — como o cabeçalho do Word."""
+    """Letterhead PRETO (branco no preto), 2 linhas + data + logo — como o cabeçalho do Word."""
+    logo = (
+        f'<p style="margin:8px 0 0 0"><img src="data:image/png;base64,{_LOGO_B64}" '
+        f'width="104" height="55" alt="Itaú BBA" style="display:block;border:0;outline:none"></p>'
+    ) if _LOGO_B64 else ""
     return (
         '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" '
         'style="border-collapse:collapse;margin:0"><tr>'
@@ -92,6 +106,7 @@ def _banner_html(d: date) -> str:
         f'<p style="{_PB};color:#ffffff;font-weight:bold">'
         f'LatAm S&amp;M and P&amp;P Daily News &ndash; {_banner_date(d)}</p>'
         '</td></tr></table>'
+        f'{logo}'
     )
 
 
