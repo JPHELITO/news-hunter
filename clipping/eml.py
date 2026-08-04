@@ -202,15 +202,58 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
                 sections.append(_style_body(it.translated_body))
             sections.append(BLANK)
 
+    # Largura: o Outlook IGNORA max-width em <div> (o texto correria de ponta a ponta da
+    # janela); table com width fixo ele respeita — fica com a "cara de página" do Word.
     return ('<html><head><meta charset="utf-8">'
             '<meta name="color-scheme" content="light only">'
             '<meta name="supported-color-schemes" content="light"></head>'
             f'<body lang="EN-US" style="margin:0;padding:0;background:#ffffff;color:#000000;'
             f'word-wrap:break-word;font-family:{_FONT}">'
-            f'<div style="max-width:760px;margin:0 auto;padding:0 4px">'
+            '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+            'width="640" style="width:640px;border-collapse:collapse"><tr>'
+            '<td style="padding:0">'
             f'{_banner_html(d)}{BLANK}{intro_html}{index_block}{recent_html}{earnings_html}'
             f'{analysts_block}{"".join(sections)}'
-            '</div></body></html>')
+            '</td></tr></table></body></html>')
+
+
+# ── Imagens: data-URI/URL → anexo inline "cid:" (o Outlook BLOQUEIA data:image) ──────
+
+_IMG_SRC_RE = re.compile(r'<img\b[^>]*?\bsrc="([^"]+)"', re.I)
+
+
+def _inline_images(html: str) -> tuple[str, list[tuple[str, bytes, str]]]:
+    """Troca cada <img src=...> por src="cid:N" e devolve as imagens p/ anexar inline.
+
+    O Outlook não mostra `data:image;base64` (logo/tabelas do Platts viravam quadrado
+    quebrado) e pede permissão p/ imagem remota — `cid:` funciona nos dois casos.
+    Se o download falhar, o src original fica como estava (nunca perde a imagem).
+    """
+    from .build import _fetch_image
+
+    parts: list[tuple[str, bytes, str]] = []
+    seen: dict[str, str] = {}
+
+    def repl(m: re.Match) -> str:
+        src = m.group(1)
+        if src.startswith("cid:"):
+            return m.group(0)
+        cid = seen.get(src)
+        if cid is None:
+            try:
+                got = _fetch_image(src)
+            except Exception:
+                got = None
+            if not got:
+                log.info("eml: imagem não embutida (segue como link): %.80s", src)
+                return m.group(0)
+            data, ext = got
+            cid = f"img{len(parts) + 1}"
+            parts.append((cid, data, "jpeg" if ext == "jpg" else ext))
+            seen[src] = cid
+        return m.group(0).replace(f'src="{src}"', f'src="cid:{cid}"')
+
+    return _IMG_SRC_RE.sub(repl, html), parts
 
 
 def build_plain_text(items: list[ClippingItem], d: date) -> str:
@@ -234,10 +277,20 @@ def build_eml_bytes(items: list[ClippingItem], d: date | None = None,
     msg = EmailMessage()
     msg["Subject"] = (f"*** ITAÚ BBA Daily News: LatAm Steel & Mining, Pulp & Paper "
                       f"- {_banner_date(d)} ***")
-    msg["From"] = ""
-    msg["To"] = ""
+    # X-Unsent: 1 -> o Outlook abre o .eml como RASCUNHO NOVO (pronto p/ preencher e
+    # enviar). Sem isso ele abre como mensagem RECEBIDA e só dá p/ "Encaminhar" —
+    # é de onde vinham o "FW:" e o cabeçalho de encaminhamento em cima do clipping.
+    msg["X-Unsent"] = "1"
     msg.set_content(build_plain_text(items, d), charset="utf-8")
-    msg.add_alternative(build_html(items, d, config), subtype="html")
+
+    html_email, images = _inline_images(build_html(items, d, config))
+    msg.add_alternative(html_email, subtype="html")
+    if images:
+        # anexa as imagens ao corpo HTML (vira multipart/related) — assim o Outlook mostra
+        html_part = msg.get_payload()[-1]
+        for cid, data, subtype in images:
+            html_part.add_related(data, maintype="image", subtype=subtype, cid=f"<{cid}>")
+
     if docx_bytes:
         name = docx_name or f"clipping_{d.strftime('%Y%m%d')}.docx"
         msg.add_attachment(
