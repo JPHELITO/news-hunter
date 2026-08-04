@@ -68,12 +68,15 @@ def _to_item(row: dict, fetch: bool, errors: list) -> ClippingItem:
     it = ClippingItem(url=url, title=title, source_name=src, body=body,
                       matched_keywords=[], domain=dom, take=take,
                       sector=(sector or detect_sector(dom, [], title)))
-    # tradução: usa a guardada; senão, corpo veio do payload (colado) e é bilíngue → traduz agora
+    # tradução: usa a guardada; senão, traduz agora (corpo colado OU cacheado sem tradução ainda)
     if not tt and body and dom in _BILINGUAL_DOMAINS:
         try:
             _tt, _tb = _translate_to_english(title, body, _LANG.get(dom, "Portuguese"))
             if _tt:
                 tt, tb = _tt, _tb
+                # PERSISTE a tradução em clipping_bodies → rodar a MESMA notícia 2× não re-traduz
+                # (upsert por url; guarda o corpo usado + a tradução).
+                store_body(url, title, src, body, tt, tb)
         except Exception as e:
             log.warning("clipping: tradução falhou (%s): %s", url, e)
     if tt:
