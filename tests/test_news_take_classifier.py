@@ -165,12 +165,21 @@ class TestShouldExcludeNews:
         )
         assert exclude is False
 
-    def test_no_topics_excluded(self):
+    def test_no_topics_low_yield_excluded(self):
+        # 2026-06-25 (portão afrouxado): sem tópico de mercado só EXCLUI nas fontes de baixo
+        # aproveitamento (tabloides BR). Fonte de baixo aproveitamento → exclui.
         exclude, reason = should_exclude_news(
             "Some completely irrelevant news article",
-            {},
+            {"source_name": "metropoles"},
         )
         assert exclude is True
+        assert reason == "no_market_take_detected"
+
+    def test_no_topics_curated_not_excluded(self):
+        # Fonte curada/desconhecida: NÃO exclui aqui — segue p/ classify_take deixar a IA
+        # decidir (ela tem 'no take'). Mata as exclusões falsas das fontes curadas.
+        exclude, reason = should_exclude_news("Some completely irrelevant news article", {})
+        assert exclude is False
 
     def test_pig_iron_now_product_included(self):
         """Pig iron saiu da exclusão de baixo valor: é produto vendido (export BR)
@@ -625,8 +634,13 @@ class TestAmbiguousAliasFalsePositives:
         assert r["include_in_report"] is False
         assert r["exclusion_reason"] == "irrelevant_region"
 
-    def test_soccer_excluded(self):
-        r = classify_take("Un Mundial caotico se acerca al silbatazo inicial", {})
+    def test_soccer_low_yield_excluded(self):
+        # 'Mundial' (copa) NÃO casa empresa coberta (sem falso-positivo de alias); num tabloide
+        # BR, sem tópico de mercado → EXCLUI (portão apertado). Numa fonte curada, iria p/ a IA
+        # (que dá 'no take') — por isso o teste fixa a fonte de baixo aproveitamento.
+        txt = "Un Mundial caotico se acerca al silbatazo inicial"
+        assert detect_covered_companies(txt) == []
+        r = classify_take(txt, {"source_name": "g1 economia"})
         assert r["include_in_report"] is False
 
     def test_politics_excluded(self):
