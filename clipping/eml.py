@@ -1,20 +1,22 @@
-"""Rascunho de e-mail (.eml) do clipping — HTML estilo Outlook, mesma seleção do .docx.
+"""Rascunho de e-mail (.eml) do clipping — HTML que REPLICA o Word gerado.
 
-build_eml_bytes(items, d, docx_bytes=None) devolve os bytes do .eml:
-  • cabeçalho + Sector Headlines (agrupado por setor, take colorido, link)
-  • corpos das matérias inline (por setor, bilíngue quando houver tradução)
-  • bloco de contatos
-  • o .docx anexado (se docx_bytes for passado), pronto para revisar e enviar.
+O usuário antes fazia CTRL-A no Word + colar-como-RTF no e-mail; agora o .eml já sai
+nesse formato: banner preto do Itaú BBA, Sector Headlines / Recent Publications /
+Earnings (cabeçalhos PRETOS em negrito), bloco de analistas, e os corpos por setor
+(título em negrito → "Source: <fonte>" em itálico → texto → Free Translation).
+
+build_eml_bytes(items, d, docx_bytes=…) devolve os bytes do .eml (HTML + .docx anexado).
 """
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from email.message import EmailMessage
 from html import escape
 
 from .build import (
-    ClippingItem, SECTOR_ORDER, SECTOR_LABEL, TAKE_SYMBOL, TAKE_COLOR_HEX,
+    ClippingItem, SECTOR_ORDER, SECTOR_LABEL, TAKE_SYMBOL, _DEFAULT_ANALYSTS,
 )
 
 log = logging.getLogger(__name__)
@@ -22,27 +24,28 @@ log = logging.getLogger(__name__)
 MONTH_EN = {1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
             7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December"}
 
-# Estilo Calibri com margin:0 inline (sobrevive ao encaminhar/responder no Outlook)
-_PB = "margin:0;font-size:11.0pt;font-family:Calibri,sans-serif"
+# Arial (fonte do Word) com margin:0 inline — sobrevive ao encaminhar/responder no Outlook.
+_FONT = "Arial,Helvetica,sans-serif"
+_PB = f"margin:0;font-size:11.0pt;font-family:{_FONT}"
 _P = f'<p style="{_PB}">'
 _PJ = f'<p style="{_PB};text-align:justify">'
-_PC = f'<p style="{_PB};text-align:center">'
 BLANK = f'{_P}&nbsp;</p>'
 
-CONTACTS = [
-    ("Daniel Sasson, CFA", "daniel.sasson@itaubba.com"),
-    ("Marcelo Furlan",     "marcelo.palhares@itaubba.com"),
-    ("João Paulo Helito",  "joao.helito@itaubba.com"),
-]
+# take: + verde, - vermelho, = preto (igual ao Word)
+_TAKE_COLOR = {"+": "00B050", "-": "FF0000", "=": "000000"}
+_ORANGE = "FF5000"
 
 
 def _esc(s) -> str:
     return escape(str(s or ""), quote=False)
 
 
+def _attr(s) -> str:
+    return escape(str(s or ""), quote=True)
+
+
 def _intro_line_html(ln: str) -> str:
     """Converte **negrito** e [texto](url) na mensagem de abertura; escapa o resto."""
-    import re
     out, pos = [], 0
     for m in re.finditer(r'\*\*(.+?)\*\*|\[([^\]]+)\]\((https?://[^)\s]+)\)', ln):
         if m.start() > pos:
@@ -50,7 +53,7 @@ def _intro_line_html(ln: str) -> str:
         if m.group(1) is not None:                       # **negrito**
             out.append(f'<b>{_esc(m.group(1))}</b>')
         else:                                            # [texto](url)
-            out.append(f'<a href="{escape(m.group(3), quote=True)}">{_esc(m.group(2))}</a>')
+            out.append(f'<a href="{_attr(m.group(3))}">{_esc(m.group(2))}</a>')
         pos = m.end()
     if pos < len(ln):
         out.append(_esc(ln[pos:]))
@@ -61,24 +64,53 @@ def _fmt_date(d: date) -> str:
     return f"{d.day:02d} {MONTH_EN[d.month]} {d.year}"
 
 
+def _banner_date(d: date) -> str:
+    return f"{d.month:02d}/{d.day:02d}/{d.year}"          # MM/DD/YYYY (como o banner do Word)
+
+
 def _by_sector(items: list[ClippingItem]):
     groups: dict[str, list[ClippingItem]] = {}
     for it in items:
         groups.setdefault(it.sector or "SM", []).append(it)
-    # ordem canônica SM→PP→NR→CEMENT; setores fora da lista vão ao fim
     ordered = [(s, groups[s]) for s in SECTOR_ORDER if groups.get(s)]
     ordered += [(s, v) for s, v in groups.items() if s not in SECTOR_ORDER]
     return ordered
 
 
+def _section_h(text: str) -> str:
+    """Cabeçalho de seção — PRETO em negrito (Sector Headlines, STEEL & MINING, Recent…)."""
+    return f'{_P}<b><span style="font-size:14.0pt;color:#000000">{_esc(text)}</span></b></p>'
+
+
+def _banner_html(d: date) -> str:
+    """Letterhead PRETO (branco no preto), 2 linhas + data — como o cabeçalho do Word."""
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" '
+        'style="border-collapse:collapse;margin:0"><tr>'
+        '<td bgcolor="#000000" style="background:#000000;padding:7px 12px">'
+        f'<p style="{_PB};color:#ffffff;font-weight:bold">Itaú BBA | Equity Research</p>'
+        f'<p style="{_PB};color:#ffffff;font-weight:bold">'
+        f'LatAm S&amp;M and P&amp;P Daily News &ndash; {_banner_date(d)}</p>'
+        '</td></tr></table>'
+    )
+
+
 def _take_html(take: str) -> str:
     sym = TAKE_SYMBOL.get(take, "")
-    col = TAKE_COLOR_HEX.get(take, "595959")
-    return f'&nbsp;<b><span style="color:#{col}">{sym}</span></b>' if sym else ""
+    col = _TAKE_COLOR.get(take, "000000")
+    return f'&nbsp;<b><span style="color:#{col}">{_esc(sym)}</span></b>' if sym else ""
+
+
+def _style_body(body_html: str) -> str:
+    """Envolve o corpo (HTML já seguro) numa fonte Arial + limita imagens à largura."""
+    if not body_html:
+        return ""
+    body_html = re.sub(r'<img ', '<img style="max-width:100%;height:auto" ', body_html)
+    return f'<div style="font-size:11.0pt;font-family:{_FONT};text-align:justify">{body_html}</div>'
 
 
 def _pub_html(title_label: str, pub_list) -> str:
-    """Bloco de publicações no e-mail (Recent Publications / Earnings Review)."""
+    """Bloco de publicações (Recent Publications / Earnings Review): cabeçalho preto + bullets."""
     lis = []
     for pub in (pub_list or []):
         name = _esc((pub.get("name") or "").strip())
@@ -86,12 +118,11 @@ def _pub_html(title_label: str, pub_list) -> str:
             continue
         sec   = SECTOR_LABEL.get(pub.get("sector"), pub.get("sector") or "")
         link  = (pub.get("link") or "").strip()
-        title = f'<a href="{_esc(link)}">{name}</a>' if link else name
+        title = f'<a href="{_attr(link)}">{name}</a>' if link else name
         lis.append(f'<li style="{_PB}"><b>{_esc(sec)} &ndash;</b> {title}</li>')
     if not lis:
         return ""
-    hdr = f'{_P}<b><span style="font-size:14.0pt;color:#FF5000">{_esc(title_label)}</span></b></p>'
-    return hdr + f'<ul type="disc">{"".join(lis)}</ul>' + BLANK
+    return _section_h(title_label) + f'<ul type="disc">{"".join(lis)}</ul>' + BLANK
 
 
 def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -> str:
@@ -100,72 +131,83 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
     intro_html = ""
     if intro.get("on") and (intro.get("text") or "").strip():
         intro_html = "".join(
-            (f'{_P}{_intro_line_html(ln)}</p>' if ln.strip() else BLANK) for ln in intro["text"].splitlines()
+            (f'{_PJ}{_intro_line_html(ln)}</p>' if ln.strip() else BLANK) for ln in intro["text"].splitlines()
         ) + BLANK
     _er = config.get("earnings_review") or {}
     recent_html   = _pub_html("Recent Publications", config.get("recent_publications"))
     earnings_html = _pub_html(_er.get("label") or "Earnings Review", _er.get("items")) if _er.get("on") else ""
-    header = (f'{_PC}<b><span style="font-size:18.0pt;color:#FF5000">'
-              f'*** Equity Research Daily &ndash; {_esc(_fmt_date(d))} ***</span></b></p>')
 
-    # ── Sector Headlines (índice) ──
-    idx = [f'{_P}<b><span style="font-size:14.0pt;color:#FF5000">Sector Headlines</span></b></p>']
+    # ── Sector Headlines (índice) — lista ÚNICA contínua (igual ao Word): ──
+    #    SETOR - título[link] \ tradução [Fonte] (take)
+    idx_lis = []
     for sector, its in _by_sector(items):
         label = SECTOR_LABEL.get(sector, sector)
-        lis = []
         for it in its:
-            src = f' [{_esc(it.source_name)}]' if it.source_name else ""
-            lis.append(f'<li style="{_PB}"><b>{_esc(label)} &ndash;</b> '
-                       f'<a href="{_esc(it.url)}">{_esc(it.title)}</a>{src}{_take_html(it.take)}</li>')
-        idx.append(f'<ul type="disc">{"".join(lis)}</ul>')
-    index_block = "".join(idx)
+            tr  = f' \\ {_esc(it.translated_title)}' if it.translated_title else ""
+            src = f'<b> [{_esc(it.source_name)}]</b>' if it.source_name else ""
+            idx_lis.append(f'<li style="{_PB}"><b>{_esc(label)} -</b> '
+                           f'<a href="{_attr(it.url)}">{_esc(it.title)}</a>{tr}{src}{_take_html(it.take)}</li>')
+    index_block = _section_h("Sector Headlines") + f'<ul type="disc">{"".join(idx_lis)}</ul>' + BLANK
 
-    # ── Corpos por setor (bilíngue quando houver tradução) ──
+    # ── Analistas: nome (laranja) / cargo / telefones / e-mail (link) ──
+    _analysts = config.get("analysts") or _DEFAULT_ANALYSTS
+    ab = []
+    for a in _analysts:
+        nm = (a.get("name") or "").strip(); rl = (a.get("role") or "").strip()
+        ph = (a.get("phone") or "").strip(); em = (a.get("email") or "").strip()
+        if not (nm or em):
+            continue
+        if nm:
+            ab.append(f'{_P}<b><span style="font-size:10.0pt;color:#{_ORANGE}">{_esc(nm)}</span></b></p>')
+        if rl:
+            ab.append(f'{_P}<span style="font-size:10.0pt">{_esc(rl)}</span></p>')
+        if ph:
+            ab.append(f'{_P}<span style="font-size:10.0pt">{_esc(ph)}</span></p>')
+        if em:
+            ab.append(f'{_P}<a href="mailto:{_attr(em)}"><span style="font-size:10.0pt">{_esc(em)}</span></a></p>')
+        ab.append(BLANK)
+    analysts_block = "".join(ab)
+
+    # ── Corpos por setor — título (negrito) → Source: fonte (itálico) → texto → Free Translation ──
     sections = []
     for sector, its in _by_sector(items):
         label = SECTOR_LABEL.get(sector, sector)
-        sections.append(f'{_P}<b><span style="font-size:13.0pt;background:#111;color:#fff">'
-                        f'&nbsp;{_esc(label)}&nbsp;</span></b></p>{BLANK}')
+        sections.append(_section_h(label) + BLANK)
         for it in its:
-            src = f' ({_esc(it.source_name)})' if it.source_name else ""
-            # original
-            sections.append(f'{_P}<b><span style="font-size:14.0pt">{_esc(it.title)}{src}</span></b></p>')
-            sections.append((it.body or f'{_P}[Corpo do artigo não disponível]</p>'))
-            # tradução (bloco extra)
+            title_disp = f'{_esc(it.title)} (Original)' if it.translated_title else _esc(it.title)
+            sections.append(f'{_P}<b><span style="font-size:12.0pt">{title_disp}</span></b></p>')
+            if it.source_name:
+                sections.append(f'{_P}<i><span style="font-size:11.0pt">Source: {_esc(it.source_name)}</span></i></p>')
+            sections.append(_style_body(it.body) or f'{_P}[Corpo do artigo não disponível]</p>')
             if it.translated_title or it.translated_body:
-                sections.append(f'{BLANK}{_P}<b><span style="font-size:12.0pt;color:#555">'
-                                f'{_esc(it.translated_title)} (Free Translation)</span></b></p>')
-                sections.append(it.translated_body or "")
-            sections.append(f'{_P}<span style="color:#555">Source:</span> '
-                            f'<a href="{_esc(it.url)}">{_esc(it.url)}</a></p>{BLANK}')
+                sections.append(BLANK + f'{_P}<b><span style="font-size:12.0pt">'
+                                        f'{_esc(it.translated_title)} (Free Translation)</span></b></p>')
+                if it.source_name:
+                    sections.append(f'{_P}<i><span style="font-size:11.0pt">Source: {_esc(it.source_name)}</span></i></p>')
+                sections.append(_style_body(it.translated_body))
+            sections.append(BLANK)
 
-    # ── Contatos (analistas configuráveis no admin — fallback = CONTACTS) ──
-    _analysts = (config or {}).get("analysts") or None
-    _clist = ([(a.get("name", ""), a.get("email", "")) for a in _analysts
-               if (a.get("name") or a.get("email"))] if _analysts else CONTACTS)
-    contacts = [f'{_P}<b><span style="color:#FF5000">Equity Research</span></b></p>']
-    for name, mail in _clist:
-        _mailhtml = (f'&nbsp;<a href="mailto:{escape(mail, quote=True)}">'
-                     f'<span style="font-size:10.0pt">{_esc(mail)}</span></a>') if mail else ""
-        contacts.append(f'{_PJ}<b><span style="font-size:10.0pt">{_esc(name)} /</span></b>{_mailhtml}</p>')
-    contacts_block = "".join(contacts)
-
-    return ('<html><head><meta charset="utf-8"></head>'
-            '<body lang="EN-US" style="word-wrap:break-word">'
-            f'{intro_html}{header}{BLANK}{index_block}{BLANK}{recent_html}{earnings_html}'
-            f'{contacts_block}{BLANK}{"".join(sections)}'
-            '</body></html>')
+    return ('<html><head><meta charset="utf-8">'
+            '<meta name="color-scheme" content="light only">'
+            '<meta name="supported-color-schemes" content="light"></head>'
+            f'<body lang="EN-US" style="margin:0;padding:0;background:#ffffff;color:#000000;'
+            f'word-wrap:break-word;font-family:{_FONT}">'
+            f'<div style="max-width:760px;margin:0 auto;padding:0 4px">'
+            f'{_banner_html(d)}{BLANK}{intro_html}{index_block}{recent_html}{earnings_html}'
+            f'{analysts_block}{"".join(sections)}'
+            '</div></body></html>')
 
 
 def build_plain_text(items: list[ClippingItem], d: date) -> str:
-    lines = [f"*** Equity Research Daily - {_fmt_date(d)} ***", "", "Sector Headlines"]
+    lines = [f"ITAU BBA Daily News: LatAm Steel & Mining, Pulp & Paper - {_banner_date(d)}",
+             "", "Sector Headlines"]
     for sector, its in _by_sector(items):
         label = SECTOR_LABEL.get(sector, sector)
         for it in its:
             sym = TAKE_SYMBOL.get(it.take, "")
             lines.append(f"  - {label} - {it.title} [{it.source_name}] {sym}")
     lines.append("")
-    lines.append("(Corpos das matérias no documento anexo.)")
+    lines.append("(Corpos das matérias no corpo do e-mail em HTML / documento anexo.)")
     return "\n".join(lines)
 
 
@@ -175,7 +217,8 @@ def build_eml_bytes(items: list[ClippingItem], d: date | None = None,
                     config: dict | None = None) -> bytes:
     d = d or date.today()
     msg = EmailMessage()
-    msg["Subject"] = f"Equity Research Daily - {_fmt_date(d)}"
+    msg["Subject"] = (f"*** ITAÚ BBA Daily News: LatAm Steel & Mining, Pulp & Paper "
+                      f"- {_banner_date(d)} ***")
     msg["From"] = ""
     msg["To"] = ""
     msg.set_content(build_plain_text(items, d), charset="utf-8")
