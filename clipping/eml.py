@@ -13,6 +13,7 @@ import base64
 import logging
 import re
 from datetime import date
+from email import policy
 from email.message import EmailMessage
 from html import escape
 from pathlib import Path
@@ -221,6 +222,10 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
 
 _IMG_SRC_RE = re.compile(r'<img\b[^>]*?\bsrc="([^"]+)"', re.I)
 
+# Teto p/ fotos REMOTAS embutidas (base64 infla ~33%) — evita e-mail gigante quando a
+# edição tem muitas fotos. Passou do teto: a imagem segue como link, não some.
+_INLINE_BUDGET = 2_500_000
+
 
 def _inline_images(html: str) -> tuple[str, list[tuple[str, bytes, str]]]:
     """Troca cada <img src=...> por src="cid:N" e devolve as imagens p/ anexar inline.
@@ -233,10 +238,16 @@ def _inline_images(html: str) -> tuple[str, list[tuple[str, bytes, str]]]:
 
     parts: list[tuple[str, bytes, str]] = []
     seen: dict[str, str] = {}
+    budget = [_INLINE_BUDGET]
 
     def repl(m: re.Match) -> str:
         src = m.group(1)
         if src.startswith("cid:"):
+            return m.group(0)
+        # Foto remota só entra enquanto couber no orçamento; data-URI SEMPRE entra
+        # (fora do e-mail ela não existe — ficaria quebrada de qualquer jeito).
+        is_data = src.startswith("data:")
+        if not is_data and budget[0] <= 0:
             return m.group(0)
         cid = seen.get(src)
         if cid is None:
@@ -248,6 +259,8 @@ def _inline_images(html: str) -> tuple[str, list[tuple[str, bytes, str]]]:
                 log.info("eml: imagem não embutida (segue como link): %.80s", src)
                 return m.group(0)
             data, ext = got
+            if not is_data:
+                budget[0] -= len(data)
             cid = f"img{len(parts) + 1}"
             parts.append((cid, data, "jpeg" if ext == "jpg" else ext))
             seen[src] = cid
@@ -299,4 +312,7 @@ def build_eml_bytes(items: list[ClippingItem], d: date | None = None,
             subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
             filename=name,
         )
-    return bytes(msg)
+    # ⚠️ CRLF OBRIGATÓRIO. bytes(msg) grava as linhas com \n (LF) — e um .eml com LF é
+    # invalido: o Outlook nao decodifica o quoted-printable e JOGA O CODIGO-FONTE NA TELA
+    # ("<t=able role=3D..."). policy.SMTP grava \r\n. Era ESTE o bug do "e-mail cagado".
+    return msg.as_bytes(policy=policy.SMTP)
