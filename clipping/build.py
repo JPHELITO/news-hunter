@@ -1,9 +1,13 @@
 """Gerador de clipping diário no formato Itaú BBA (Word .docx)."""
 from __future__ import annotations
 
+import html
 import io
+import json
 import logging
+import os
 import re
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
@@ -406,73 +410,152 @@ _LANG_CODE: dict[str, str] = {
 }
 
 
-def _translate_to_english(title: str, body_html: str, source_lang: str) -> tuple[str, str]:
-    """Traduz título e corpo HTML para inglês usando Google Translate (deep-translator).
+# Pacing GLOBAL da tradução: garante >= _PACE_S entre quaisquer duas chamadas ao Google
+# Translate grátis (na geração inteira, todos os artigos) — PREVINE o rate-limit em vez de
+# só reagir a ele. Era a causa de "1 de 2 não traduziu": rajada de chamadas → bloqueio.
+_LAST_TRANSLATE = [0.0]
+_PACE_S = 1.2
 
-    Não requer API key — usa a interface pública do Google Translate.
-    Retorna (translated_title, translated_body_html).
-    Em caso de erro retorna ("", "") e o item fica monolíngue.
-    """
+
+def _translate_via_llm(title: str, para_texts: list[str], source_lang: str) -> tuple[str, list[str]] | None:
+    """Traduz título + parágrafos p/ inglês via IA (Gemini): 1 chamada, SEM o rate-limit do
+    Google Translate grátis → confiável. Chave DEDICADA em CLIPPING_TRANSLATE_KEY (isola da
+    cota dos takes dos clientes) ou, se ausente, GEMINI_API_KEY. Retorna None se sem chave /
+    erro (aí o chamador cai no Google Translate)."""
+    key = os.environ.get("CLIPPING_TRANSLATE_KEY") or os.environ.get("GEMINI_API_KEY") or ""
+    if not key:
+        return None
+    try:                                    # reusa o MESMO modelo Gemini do pipeline (garantido válido)
+        from hunter.llm_take import PROVIDERS as _P
+        default_model = (_P.get("gemini") or {}).get("model") or "gemini-2.5-flash-lite"
+    except Exception:
+        default_model = "gemini-2.5-flash-lite"
+    model = os.environ.get("CLIPPING_TRANSLATE_MODEL", default_model)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    system = (f"You are a professional news translator. Translate from {source_lang} to English, "
+              "preserving meaning, journalistic tone, proper names and numbers. Do not summarize "
+              "or add commentary.")
+    user = ("Translate the article to English. Keep the SAME number of paragraphs, in order.\n\n"
+            + json.dumps({"title": title, "paragraphs": para_texts}, ensure_ascii=False))
+    payload = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {
+            "temperature": 0, "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
+            "responseSchema": {"type": "OBJECT", "properties": {
+                "title": {"type": "STRING"},
+                "paragraphs": {"type": "ARRAY", "items": {"type": "STRING"}}},
+                "required": ["title", "paragraphs"]}},
+    }
     try:
-        from deep_translator import GoogleTranslator as _GT
+        import requests
+        r = requests.post(url, json=payload,
+                          headers={"x-goog-api-key": key, "Content-Type": "application/json"}, timeout=90)
+        if not r.ok:
+            log.warning("clipping: tradução IA HTTP %s (%s) — cai p/ Google", r.status_code, model)
+            return None
+        out = json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
+        t_title = (out.get("title") or "").strip()
+        t_paras = [str(p).strip() for p in (out.get("paragraphs") or []) if str(p).strip()]
+        return (t_title, t_paras) if t_title else None
+    except Exception as e:
+        log.warning("clipping: tradução IA falhou (%s) — cai p/ Google", e)
+        return None
+
+
+def _translate_to_english(title: str, body_html: str, source_lang: str) -> tuple[str, str]:
+    """Traduz título + corpo p/ inglês. PRIMÁRIO: IA (Gemini, 1 chamada, confiável, SEM
+    rate-limit). FALLBACK: Google Translate grátis (lote + pacing + retry). ('','') se ambos
+    falharem → o item fica monolíngue (sem lixo)."""
+    try:
         from bs4 import BeautifulSoup as _BS
     except ImportError as e:
-        log.warning("clipping: dependência de tradução ausente (%s) — instale: pip install deep-translator beautifulsoup4", e)
+        log.warning("clipping: bs4 ausente (%s) — sem tradução", e)
         return "", ""
 
+    # Textos-folha do corpo (parágrafos/headings/itens), NA ORDEM — usados pela IA e pelo Google.
+    para_texts: list[str] = []
+    if body_html:
+        _root = _BS(body_html, "lxml")
+        _root = _root.find("body") or _root
+        for tag in _root.find_all(["p", "h2", "h3", "h4", "li", "blockquote"]):
+            if tag.find(["p", "h2", "h3", "h4", "li", "blockquote"]):     # pula container aninhado
+                continue
+            t = tag.get_text(separator=" ", strip=True)
+            if t:
+                para_texts.append(t)
+
+    def _paras_to_html(paras: list[str]) -> str:
+        return "\n".join(f"<p>{html.escape(p.strip())}</p>" for p in paras if p.strip())
+
+    # ── 1) IA (confiável, sem rate-limit) ──────────────────────────────────────
+    _llm = _translate_via_llm(title, para_texts, source_lang)
+    if _llm:
+        t_title, t_paras = _llm
+        log.info("clipping: tradução via IA '%s' → '%s'", title[:45], t_title[:45])
+        return t_title, _paras_to_html(t_paras)
+
+    # ── 2) FALLBACK: Google Translate grátis (lote + pacing + retry) ───────────
+    try:
+        from deep_translator import GoogleTranslator as _GT
+    except ImportError as e:
+        log.warning("clipping: sem IA (sem chave) e sem deep_translator (%s) — item monolíngue", e)
+        return "", ""
     lang_code = _LANG_CODE.get(source_lang, "pt")
 
     def _translate_text(text: str) -> str:
-        """Traduz bloco de texto (máx 4500 chars por limitação do Google)."""
+        """Bloco (chunks de 4500) com PACING (>=_PACE_S entre chamadas) + retry com backoff
+        p/ o rate-limit do Google grátis. Só devolve o original se todas as tentativas falharem."""
         if not text or not text.strip():
             return text
-        try:
-            chunks = []
-            # Google Translate tem limite de ~5000 chars por chamada
-            for i in range(0, len(text), 4500):
-                chunk = text[i:i + 4500]
-                translated_chunk = _GT(source=lang_code, target="en").translate(chunk)
-                chunks.append(translated_chunk or chunk)
-            return " ".join(chunks)
-        except Exception as e:
-            log.debug("clipping: erro ao traduzir chunk: %s", e)
-            return text
+        out: list[str] = []
+        for i in range(0, len(text), 4500):
+            chunk = text[i:i + 4500]
+            translated = None
+            for attempt in range(5):
+                _wait = _PACE_S - (time.time() - _LAST_TRANSLATE[0])
+                if _wait > 0:
+                    time.sleep(_wait)
+                try:
+                    r = _GT(source=lang_code, target="en").translate(chunk)
+                    _LAST_TRANSLATE[0] = time.time()
+                    if r and r.strip():
+                        translated = r
+                        break
+                except Exception as e:
+                    _LAST_TRANSLATE[0] = time.time()
+                    log.debug("clipping: Google tradução falhou (%d/5): %s", attempt + 1, e)
+                if attempt < 4:
+                    time.sleep(2 * (2 ** attempt))   # backoff: 2s, 4s, 8s, 16s
+            out.append(translated or chunk)
+        return " ".join(out)
+
+    def _translate_batch(texts: list[str]) -> list[str]:
+        """Agrupa em lotes < 4000 chars e traduz cada um de uma vez (parágrafos por \\n),
+        separando de volta. Fallback item-a-item se a contagem de linhas não bater."""
+        result: list[str] = []
+        i, n = 0, len(texts)
+        while i < n:
+            batch, blen = [], 0
+            while i < n and (not batch or blen + len(texts[i]) < 4000):
+                batch.append(texts[i]); blen += len(texts[i]) + 1; i += 1
+            parts = _translate_text("\n".join(t.replace("\n", " ") for t in batch)).split("\n")
+            if len(parts) == len(batch):
+                result.extend(p.strip() for p in parts)
+            else:
+                result.extend(_translate_text(t) for t in batch)
+        return result
 
     try:
-        # ── Título ─────────────────────────────────────────────────────────────
         t_title = _translate_text(title)
         if not t_title or t_title == title:
-            log.warning("clipping: tradução do título sem efeito para '%s'", title[:60])
+            log.warning("clipping: Google tradução do título sem efeito — '%s'", title[:50])
             return "", ""
-
-        # ── Corpo HTML ─────────────────────────────────────────────────────────
-        # Traduz nó a nó preservando a estrutura HTML completa.
-        t_body = ""
-        if body_html:
-            soup = _BS(body_html, "lxml")
-            body_el = soup.find("body") or soup
-
-            # Traduz texto em cada elemento com conteúdo próprio
-            for tag in body_el.find_all(["p", "h3", "h4", "h2", "li", "blockquote", "strong", "b"]):
-                # Pula elementos que contêm filhos com texto (evita duplicação)
-                if tag.find(["p", "h3", "h4", "li"]):
-                    continue
-                original_text = tag.get_text(separator=" ", strip=True)
-                if original_text:
-                    translated_text = _translate_text(original_text)
-                    tag.string = translated_text
-
-            # Reconstrói o HTML a partir do body (sem as tags <html><body>)
-            t_body = body_el.decode_contents().strip()
-
-        log.info(
-            "clipping: tradução OK '%s' → '%s'",
-            title[:50], t_title[:50],
-        )
+        t_body = _paras_to_html(_translate_batch(para_texts)) if para_texts else ""
         return t_title, t_body
-
     except Exception as e:
-        log.warning("clipping: tradução falhou para '%s': %s", title[:60], e)
+        log.warning("clipping: Google tradução falhou p/ '%s': %s", title[:50], e)
         return "", ""
 
 

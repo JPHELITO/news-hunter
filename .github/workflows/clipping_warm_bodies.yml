@@ -66,4 +66,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           COOKIES_DIR:          /tmp/cookies
           PYTHONIOENCODING:     utf-8
+          # Tradução bilíngue por IA (Gemini) — o aquecedor já traduz e guarda em clipping_bodies.
+          CLIPPING_TRANSLATE_KEY: ${{ secrets.CLIPPING_TRANSLATE_KEY }}
+          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
         run: python -m clipping.warm_bodies --budget 900 --limit 80

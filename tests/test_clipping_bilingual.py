@@ -57,3 +57,14 @@ def test_free_translation_link_interno_e_links_azuis():
     assert 'w:anchor="art0"' in xml       # headline linka p/ o original
     assert 'w:val="0000FF"' in xml        # links em azul
     assert 'w:val="000000"' not in xml    # nenhum link preto sobrando
+
+
+def test_traducao_prefere_ia_e_monta_corpo(monkeypatch):
+    """A tradução usa a IA quando disponível e monta o corpo a partir dos parágrafos dela."""
+    import clipping.build as B
+    monkeypatch.setattr(B, "_translate_via_llm",
+                        lambda title, paras, lang: ("Title in English", ["Paragraph one.", "Paragraph two."]))
+    tt, tb = B._translate_to_english("Título PT", "<p>Parágrafo um.</p><p>Parágrafo dois.</p>", "Portuguese")
+    assert tt == "Title in English"
+    assert "<p>Paragraph one.</p>" in tb
+    assert "<p>Paragraph two.</p>" in tb
