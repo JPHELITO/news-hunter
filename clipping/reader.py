@@ -775,6 +775,30 @@ def _fm_access_token() -> str | None:
     return _cached_access_token("fastmarkets", "fastmarkets_state.json", _extract_fm_token)
 
 
+# Fração MÍNIMA do texto bruto que o sanitizador tem que preservar num corpo de API.
+# O Body/content da API é corpo PURO (sem menu, anúncio ou "leia também") → o
+# sanitizador não pode comer pedaço grande; se comeu, é BUG dele. Medido em 397
+# artigos reais Platts/FM: o pior caso legítimo preserva 0,857 (p1 = 0,897) — os
+# dois artigos decapitados pelo bug do "Also read"/"See also" ficavam em ~0,35.
+# Abaixo do piso: NÃO entrega matéria pela metade — grita no log e cai no DOM.
+_MIN_SANITIZE_KEEP = 0.80
+
+
+def _sanitize_ok(raw_body: str, safe: str, url: str, source: str) -> bool:
+    """False se o sanitizador comeu parte grande demais do corpo (→ cair no DOM)."""
+    from .html_utils import plain_text
+    raw_len = len(plain_text(raw_body))
+    if raw_len < 200:                       # corpo curto: proporção não é sinal confiável
+        return True
+    keep = len(plain_text(safe)) / raw_len
+    if keep < _MIN_SANITIZE_KEEP:
+        log.warning("clipping: %s — sanitizador preservou só %.0f%% do corpo da API "
+                    "(%d de %d chars) em %s → caindo p/ o DOM",
+                    source, keep * 100, len(plain_text(safe)), raw_len, url[-60:])
+        return False
+    return True
+
+
 def _parse_platts_article(url: str) -> tuple[str | None, str]:
     """(articleID, insightsType) do fragmento #platts/insightsArticle?articleID=…&insightsType=…"""
     from urllib.parse import unquote
@@ -828,7 +852,7 @@ def _platts_body_via_api(url: str) -> tuple[str, str]:
         return "", ""
     from .html_utils import article_to_safe_html
     safe = article_to_safe_html(body)            # mesmo sanitizador das outras fontes
-    if len(safe) < 80:
+    if len(safe) < 80 or not _sanitize_ok(body, safe, url, "Platts"):
         return "", ""
     return title, safe
 
@@ -876,8 +900,9 @@ def _fm_body_via_api(url: str) -> tuple[str, str]:
     if not (summary or content):
         return "", ""
     from .html_utils import article_to_safe_html
-    safe = article_to_safe_html((summary + "\n" + content).strip())
-    if len(safe) < 80:
+    raw  = (summary + "\n" + content).strip()
+    safe = article_to_safe_html(raw)
+    if len(safe) < 80 or not _sanitize_ok(raw, safe, url, "Fastmarkets"):
         return "", ""
     return title, safe
 

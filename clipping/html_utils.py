@@ -14,24 +14,82 @@ são removidos. Imagens com src não-https são descartadas.
 from __future__ import annotations
 
 import html as _he
+import logging
 import re
 
+log = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
-# Regex para strip de "Related articles" em HTML
+# Strip de "Related articles" / "Leia também" em HTML
 # ---------------------------------------------------------------------------
-_RELATED_HTML_RE = re.compile(
-    r'(?:<(?:p|h[2-6])[^>]*>[^<]*'
-    r'(?:Related\s+(?:articles?|news|stories?|content|coverage)|'
-    r'More\s+on\s+this\s+topic|More\s+stories?|Also\s+read|See\s+also|'
-    r'RELATED\s+(?:NEWS|ARTICLES?))'
-    r'[^<]*</(?:p|h[2-6])>)[\s\S]*',
+# Rótulo que marca o INÍCIO do bloco de links relacionados — dali pra frente não
+# é mais corpo do artigo.
+#
+# ⚠️ REGRA INVIOLÁVEL: o rótulo tem que ser o parágrafo/heading INTEIRO (âncoras
+# ^…$). A versão antiga casava a frase em QUALQUER ponto de um parágrafo e
+# apagava TODO o resto da matéria, em silêncio. Prosa comum decapitava o artigo:
+#   • "the market is also readjusting…"  → casava "Also read"  (sem \b no fim)
+#   • "…See also the discussion of 'Forward-Looking Statements' below."
+# Medido em 398 artigos reais de Platts/Fastmarkets: 2 (0,5%) perdiam ~65% do
+# corpo — sem erro, sem log, sem padrão. NUNCA voltar a casar a frase solta no
+# meio do texto.
+_RELATED_LABEL_RE = re.compile(
+    r'^(?:'
+    r'related\s+(?:articles?|news|stories?|content|coverage|reading|topics?|links?)'
+    r'|more\s+(?:on\s+this\s+topic|(?:related\s+)?stories)'
+    r'|also\s+read|read\s+(?:also|more|next)|see\s+also'
+    r'|you\s+may\s+also\s+like|recommended\s+(?:for\s+you|articles?|reading)'
+    r'|leia\s+(?:tamb[ée]m|mais)|veja\s+(?:tamb[ée]m|mais)|saiba\s+mais'
+    r'|mais\s+(?:lidas|not[íi]cias)'
+    r')\b[\s:：\-–—»>|]*$',
     re.IGNORECASE,
 )
 
+# Elemento de bloco (parágrafo/heading) candidato a rótulo. Todos os produtores
+# desta camada juntam os blocos de topo com "\n" → só considera bloco que começa
+# em início de linha (evita casar um <p> dentro de <blockquote> e cortar no meio).
+_BLOCK_RE = re.compile(r'<(p|h[1-6])\b[^>]*>(.*?)</\1\s*>', re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r'<[^>]+>')
+
+# Perda máxima tolerada num corte. O bloco de relacionados é RODAPÉ: pequeno.
+# Se o corte levaria a maior parte do texto, é falso-positivo → não corta.
+# Sobrar um "leia também" é feio; perder metade da matéria é inaceitável.
+_MAX_STRIP_RATIO = 0.5
+
+
+def plain_text(html_fragment: str) -> str:
+    """Texto puro de um trecho de HTML (tags fora, entidades resolvidas)."""
+    if not html_fragment:
+        return ""
+    return re.sub(r"\s+", " ", _he.unescape(_TAG_RE.sub(" ", html_fragment))).strip()
+
 
 def _strip_related_html(s: str) -> str:
-    return _RELATED_HTML_RE.sub("", s).rstrip()
+    """Corta o bloco de links relacionados (e o que vier depois dele).
+
+    Dispara só quando o rótulo é o parágrafo/heading inteiro — ver o comentário
+    de ``_RELATED_LABEL_RE``. Se o corte apagaria a maior parte do texto, NÃO
+    corta e registra um WARNING (falha barulhenta em vez de silenciosa).
+    """
+    if not s:
+        return s
+    for m in _BLOCK_RE.finditer(s):
+        if m.start() and s[m.start() - 1] != "\n":
+            continue                                  # bloco aninhado — não é de topo
+        label = plain_text(m.group(2))
+        if not label or len(label) > 60 or not _RELATED_LABEL_RE.match(label):
+            continue
+        kept, dropped = s[:m.start()], s[m.start():]
+        kept_len, drop_len = len(plain_text(kept)), len(plain_text(dropped))
+        if drop_len > (kept_len + drop_len) * _MAX_STRIP_RATIO:
+            log.warning(
+                "clipping: bloco '%s' cortaria %d de %d chars do corpo — NÃO cortado "
+                "(suspeita de falso-positivo)", label[:40], drop_len, kept_len + drop_len)
+            return s.rstrip()
+        log.debug("clipping: bloco relacionado '%s' removido (%d chars)", label[:40], drop_len)
+        return kept.rstrip()
+    return s.rstrip()
 
 
 # ---------------------------------------------------------------------------
