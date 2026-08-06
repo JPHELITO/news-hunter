@@ -65,14 +65,23 @@ PROVIDERS = {
 # ORDEM DA CADEIA É A ORDEM DE QUALIDADE. Quem está na frente faz o grosso; quem está atrás
 # quase nunca é alcançado. Colocar um modelo fraco na frente "porque é barato/rápido" entrega
 # o produto inteiro ao pior classificador.
-#   1) groq   — gpt-oss-120b (o mesmo que a Cerebras rodava). PREMIUM e ESCASSO (~25/dia, trava
-#               em tokens) → vem 1º p/ colher a cota boa cedo; ao estourar, o disjuntor por
-#               rodada o pula e a fila desce sozinha.
-#   2) gemini — flash-lite, 500-1000/dia. O MELHOR medido (erro efetivo 0,8%) e sozinho já cobre
-#               o pico de 334 takes/dia → é o TITULAR de fato do sistema.
-#   3) mistral — cushion/folga. Rápido, mas erra ~2x mais que os de cima.
-#   4) zai     — GLM-flash. SÓ socorro (última linha): mede ~25% de erro efetivo nas fontes
-#                curadas. Só entra se os três de cima falharem juntos.
+#   1) gemini — flash-lite. O MELHOR medido (erro efetivo 0,8%) e sozinho cobre o pico de
+#               334 takes/dia (média 177) → é o TITULAR de fato do sistema.
+#   2) mistral — cushion/folga. Rápido, mas erra ~2x mais que o Gemini.
+#   3) zai     — GLM-flash. SÓ socorro (última linha): mede ~25% de erro efetivo nas fontes
+#                curadas. Só entra se os dois de cima falharem juntos.
+#
+# ⛔ GROQ FORA DA CADEIA (medido 2026-08-06 — NÃO recolocar sem encolher o prompt).
+# O free tier do Groq limita **8.000 tokens por minuto** (header `x-ratelimit-limit-tokens`), e o
+# TPM conta **prompt + max_tokens**. Nosso prompt sozinho = **8.070 tokens** no tokenizador dele
+# → estoura ANTES de reservar 1 token de saída. Provado baixando max_tokens 2048→128: requested
+# 10.118 → 8.198, e **413 em todos**. Ou seja, o Groq nunca classificou nada; a leitura antiga de
+# "~25/dia por travar em tokens" estava errada — é ZERO/dia. Pior: como ele ficou 1º na cadeia por
+# algumas horas hoje, cada rodada gastava ~56s (3 tentativas com throttle de 25s) só p/ levar 413,
+# = 31% do orçamento de 180s do llm_shadow.
+# COMO DESTRAVAR: cortar ~200 tokens (~2,5%) do prompt — aí `gpt-oss-120b` (o melhor tier grátis
+# que temos acesso) entra com até 1.000 req/dia. É o maior prêmio pendente do projeto prompt v2,
+# que já tem candidato 14% menor testado em paridade de qualidade.
 #
 # LIÇÃO (incidente 2026-08-06): a ordem anterior era "mistral,groq,zai,gemini", desenhada p/
 # poupar a cota do Gemini deixando-o por último. O efeito real foi o oposto do pretendido:
@@ -83,7 +92,7 @@ PROVIDERS = {
 # troca (Platts+Fastmarkets, 45d, % de "no take" claramente errado contra as regras do prompt):
 # gemini 0,8% · gpt-oss 2,4% · mistral 4,7% · glm ~25%.
 # Reverter é só setar a env LLM_CHAIN (ex.: LLM_CHAIN=mistral,groq,zai,gemini).
-CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "groq,gemini,mistral,zai").split(",")
+CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "gemini,mistral,zai").split(",")
          if p.strip() in PROVIDERS and PROVIDERS[p.strip()]["key"]]
 
 ATTEMPTS = {p: 0 for p in PROVIDERS}
