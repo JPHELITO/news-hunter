@@ -60,16 +60,30 @@ PROVIDERS = {
             "model": os.environ.get("ZAI_MODEL", "glm-4.5-flash"),
             "key": os.environ.get("ZAI_API_KEY", ""), "throttle": 3.0, "json_mode": True},
 }
-# Ordem da cascata (2026-08-03, Cerebras REMOVIDA; OpenRouter descartado pelo usuário). Princípio:
-# cushions rápidos e o premium ESCASSO primeiro; o pega-tudo de MAIOR capacidade/confiança por ÚLTIMO.
-#   1) mistral — rápido (throttle 1,2s), cushion barato enquanto tem a cota mensal
-#   2) groq    — MELHOR qualidade (gpt-oss-120b, o mesmo que a Cerebras rodava), mas escasso
-#                (~25/dia por travar em tokens) → colhemos os takes premium cedo
-#   3) zai     — GLM-flash, forte + cota grande (~1.000/dia) → carrega o grosso quando o mistral seca
-#   4) gemini  — 500/dia, o MAIS confiável (Google) → por ÚLTIMO de propósito: pega-tudo que
-#                raramente satura (nunca ficamos no escuro E dependemos menos de um provedor só)
-# zai fica dormente até o secret ZAI_API_KEY existir (chave vazia = provedor pulado abaixo).
-CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "mistral,groq,zai,gemini").split(",")
+# Ordem da cascata (2026-08-06 — REORDENADA por QUALIDADE MEDIDA; ver §"lição" abaixo).
+# PRINCÍPIO CORRETO: a cascata usa o primeiro provedor que RESPONDE, não o melhor — logo a
+# ORDEM DA CADEIA É A ORDEM DE QUALIDADE. Quem está na frente faz o grosso; quem está atrás
+# quase nunca é alcançado. Colocar um modelo fraco na frente "porque é barato/rápido" entrega
+# o produto inteiro ao pior classificador.
+#   1) groq   — gpt-oss-120b (o mesmo que a Cerebras rodava). PREMIUM e ESCASSO (~25/dia, trava
+#               em tokens) → vem 1º p/ colher a cota boa cedo; ao estourar, o disjuntor por
+#               rodada o pula e a fila desce sozinha.
+#   2) gemini — flash-lite, 500-1000/dia. O MELHOR medido (erro efetivo 0,8%) e sozinho já cobre
+#               o pico de 334 takes/dia → é o TITULAR de fato do sistema.
+#   3) mistral — cushion/folga. Rápido, mas erra ~2x mais que os de cima.
+#   4) zai     — GLM-flash. SÓ socorro (última linha): mede ~25% de erro efetivo nas fontes
+#                curadas. Só entra se os três de cima falharem juntos.
+#
+# LIÇÃO (incidente 2026-08-06): a ordem anterior era "mistral,groq,zai,gemini", desenhada p/
+# poupar a cota do Gemini deixando-o por último. O efeito real foi o oposto do pretendido:
+# como o Mistral quase nunca FALHA, a cadeia nunca descia — em 3 dias o Mistral fez 560 takes,
+# o GLM 122, o Gemini 8 e o Groq ZERO. 96% do volume saiu dos dois PIORES modelos, e o defeito
+# apareceu como manchete de mercado legítima marcada "no take" (ex.: "Turkish rebar exports
+# hold..." → "no take" quando a regra de NEUTRALIZADORES manda "="). Medição que motivou a
+# troca (Platts+Fastmarkets, 45d, % de "no take" claramente errado contra as regras do prompt):
+# gemini 0,8% · gpt-oss 2,4% · mistral 4,7% · glm ~25%.
+# Reverter é só setar a env LLM_CHAIN (ex.: LLM_CHAIN=mistral,groq,zai,gemini).
+CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "groq,gemini,mistral,zai").split(",")
          if p.strip() in PROVIDERS and PROVIDERS[p.strip()]["key"]]
 
 ATTEMPTS = {p: 0 for p in PROVIDERS}
