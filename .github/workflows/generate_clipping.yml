@@ -69,8 +69,12 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           COOKIES_DIR:          /tmp/cookies
           PYTHONIOENCODING:     utf-8
-          # Tradução bilíngue por IA (Gemini). Dedicada isola da cota dos takes; GEMINI_API_KEY
-          # é reserva. Se AMBAS vazias, cai no Google Translate grátis (menos confiável).
+          # Tradução bilíngue por IA. Cadeia (clipping/build.py::_translate_chain):
+          #   Z.AI/GLM  -> Gemini DEDICADA (se existir) -> Gemini compartilhada (último recurso).
+          # Z.AI vem 1º de propósito: traduzir é tarefa fácil e ele tem ~1.000/dia ociosos, então
+          # a tradução NÃO disputa a cota do Gemini, que é o titular dos takes. Todas vazias =
+          # cai no Google Translate grátis (menos confiável).
+          ZAI_API_KEY:            ${{ secrets.ZAI_API_KEY }}
           CLIPPING_TRANSLATE_KEY: ${{ secrets.CLIPPING_TRANSLATE_KEY }}
           GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
         run: python -m clipping.run_jobs

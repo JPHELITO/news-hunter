@@ -417,51 +417,129 @@ _LAST_TRANSLATE = [0.0]
 _PACE_S = 1.2
 
 
-def _translate_via_llm(title: str, para_texts: list[str], source_lang: str) -> tuple[str, list[str]] | None:
-    """Traduz título + parágrafos p/ inglês via IA (Gemini): 1 chamada, SEM o rate-limit do
-    Google Translate grátis → confiável. Chave DEDICADA em CLIPPING_TRANSLATE_KEY (isola da
-    cota dos takes dos clientes) ou, se ausente, GEMINI_API_KEY. Retorna None se sem chave /
-    erro (aí o chamador cai no Google Translate)."""
-    key = os.environ.get("CLIPPING_TRANSLATE_KEY") or os.environ.get("GEMINI_API_KEY") or ""
-    if not key:
-        return None
-    try:                                    # reusa o MESMO modelo Gemini do pipeline (garantido válido)
+def _translate_chain() -> list[dict]:
+    """Provedores de TRADUÇÃO do clipping, EM ORDEM.
+
+    2026-08-06 — DESACOPLADO do Gemini. Antes a tradução usava `CLIPPING_TRANSLATE_KEY` **ou,
+    se ausente, `GEMINI_API_KEY`** — a MESMA cota dos takes. Desde `1a0ae81` o Gemini é o
+    TITULAR dos takes, e o clipping roda no FIM do dia → era ele quem ficaria sem cota, na
+    hora da entrega. Agora:
+
+      1) zai (GLM)  — PRIMEIRO de propósito. Traduzir é a tarefa FÁCIL: o GLM só se mostrou
+                      fraco em JULGAMENTO de take (analista/margem), não em língua. Tem
+                      ~1.000/dia praticamente ociosos → tradução para de disputar com take.
+      2) gemini DEDICADO — se algum dia existir o secret CLIPPING_TRANSLATE_KEY (chave de um
+                      PROJETO Google SEPARADO; chave nova no MESMO projeto compartilha a cota).
+      3) gemini COMPARTILHADO — último recurso, só se o Z.AI estiver fora. São ~7 chamadas por
+                      clipping (medido), então o estrago na cota dos takes é desprezível e é
+                      melhor que cair no Google Translate.
+
+    Depois desta cadeia, o chamador ainda cai no Google Translate grátis.
+    Ordem trocável por CLIPPING_TRANSLATE_CHAIN (ex.: "gemini_dedicated,zai").
+    """
+    try:
         from hunter.llm_take import PROVIDERS as _P
-        default_model = (_P.get("gemini") or {}).get("model") or "gemini-2.5-flash-lite"
+        gem_model = (_P.get("gemini") or {}).get("model") or "gemini-2.5-flash-lite"
+        zai_model = (_P.get("zai") or {}).get("model") or "glm-4.5-flash"
     except Exception:
-        default_model = "gemini-2.5-flash-lite"
-    model = os.environ.get("CLIPPING_TRANSLATE_MODEL", default_model)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        gem_model, zai_model = "gemini-2.5-flash-lite", "glm-4.5-flash"
+    gem_model = os.environ.get("CLIPPING_TRANSLATE_MODEL", gem_model)
+
+    defs = {
+        "zai": {"name": "zai", "kind": "openai", "key": os.environ.get("ZAI_API_KEY", ""),
+                "model": os.environ.get("CLIPPING_TRANSLATE_ZAI_MODEL", zai_model),
+                "url": "https://api.z.ai/api/paas/v4/chat/completions"},
+        "gemini_dedicated": {"name": "gemini(dedicada)", "kind": "gemini",
+                             "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""), "model": gem_model},
+        "gemini_shared": {"name": "gemini(compartilhada)", "kind": "gemini",
+                          "key": os.environ.get("GEMINI_API_KEY", ""), "model": gem_model},
+    }
+    order = [p.strip() for p in os.environ.get(
+        "CLIPPING_TRANSLATE_CHAIN", "zai,gemini_dedicated,gemini_shared").split(",") if p.strip()]
+    return [defs[p] for p in order if p in defs and defs[p]["key"]]
+
+
+def _translate_call(cfg: dict, title: str, para_texts: list[str], source_lang: str):
+    """Uma chamada de tradução. Devolve (title, paragraphs) ou None."""
+    import requests
     system = (f"You are a professional news translator. Translate from {source_lang} to English, "
               "preserving meaning, journalistic tone, proper names and numbers. Do not summarize "
               "or add commentary.")
-    user = ("Translate the article to English. Keep the SAME number of paragraphs, in order.\n\n"
+    user = ("Translate the article to English. Keep the SAME number of paragraphs, in order. "
+            'Reply ONLY with JSON: {"title": "...", "paragraphs": ["...", "..."]}\n\n'
             + json.dumps({"title": title, "paragraphs": para_texts}, ensure_ascii=False))
-    payload = {
-        "systemInstruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": [{"text": user}]}],
-        "generationConfig": {
-            "temperature": 0, "maxOutputTokens": 8192,
-            "responseMimeType": "application/json",
-            "responseSchema": {"type": "OBJECT", "properties": {
-                "title": {"type": "STRING"},
-                "paragraphs": {"type": "ARRAY", "items": {"type": "STRING"}}},
-                "required": ["title", "paragraphs"]}},
-    }
-    try:
-        import requests
+
+    if cfg["kind"] == "gemini":
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['model']}:generateContent"
+        payload = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {
+                "temperature": 0, "maxOutputTokens": 8192,
+                "responseMimeType": "application/json",
+                "responseSchema": {"type": "OBJECT", "properties": {
+                    "title": {"type": "STRING"},
+                    "paragraphs": {"type": "ARRAY", "items": {"type": "STRING"}}},
+                    "required": ["title", "paragraphs"]}},
+        }
         r = requests.post(url, json=payload,
-                          headers={"x-goog-api-key": key, "Content-Type": "application/json"}, timeout=90)
+                          headers={"x-goog-api-key": cfg["key"], "Content-Type": "application/json"},
+                          timeout=90)
         if not r.ok:
-            log.warning("clipping: tradução IA HTTP %s (%s) — cai p/ Google", r.status_code, model)
+            log.warning("clipping: tradução %s HTTP %s", cfg["name"], r.status_code)
             return None
-        out = json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
-        t_title = (out.get("title") or "").strip()
-        t_paras = [str(p).strip() for p in (out.get("paragraphs") or []) if str(p).strip()]
-        return (t_title, t_paras) if t_title else None
-    except Exception as e:
-        log.warning("clipping: tradução IA falhou (%s) — cai p/ Google", e)
+        raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    else:                                            # OpenAI-compatível (Z.AI)
+        payload = {"model": cfg["model"], "temperature": 0,
+                   "response_format": {"type": "json_object"},   # GLM sem isto às vezes não devolve JSON limpo
+                   "messages": [{"role": "system", "content": system},
+                                {"role": "user", "content": user}]}
+        r = requests.post(cfg["url"], json=payload,
+                          headers={"Authorization": f"Bearer {cfg['key']}",
+                                   "Content-Type": "application/json"}, timeout=90)
+        if not r.ok:
+            log.warning("clipping: tradução %s HTTP %s", cfg["name"], r.status_code)
+            return None
+        raw = r.json()["choices"][0]["message"]["content"]
+
+    out = None
+    try:
+        out = json.loads(raw)
+    except Exception:                                # modelos "thinking" (GLM) podem embrulhar o JSON
+        try:
+            from hunter.llm_take import _json_candidates
+            for cand in _json_candidates(raw):
+                if isinstance(cand, dict) and cand.get("title"):
+                    out = cand
+                    break
+        except Exception:
+            out = None
+    if not isinstance(out, dict):
+        log.warning("clipping: tradução %s devolveu JSON inválido", cfg["name"])
         return None
+    t_title = (out.get("title") or "").strip()
+    t_paras = [str(p).strip() for p in (out.get("paragraphs") or []) if str(p).strip()]
+    return (t_title, t_paras) if t_title else None
+
+
+def _translate_via_llm(title: str, para_texts: list[str], source_lang: str) -> tuple[str, list[str]] | None:
+    """Traduz título + parágrafos p/ inglês via IA: 1 chamada, SEM o rate-limit do Google
+    Translate grátis. Percorre a cadeia de _translate_chain() (ver lá o porquê da ordem).
+    Retorna None se todos falharem (aí o chamador cai no Google Translate)."""
+    chain = _translate_chain()
+    if not chain:
+        return None
+    for cfg in chain:
+        try:
+            res = _translate_call(cfg, title, para_texts, source_lang)
+        except Exception as e:
+            log.warning("clipping: tradução %s falhou (%s)", cfg["name"], e)
+            continue
+        if res:
+            log.info("clipping: tradução via %s (%s)", cfg["name"], cfg["model"])
+            return res
+    log.warning("clipping: toda a cadeia de tradução falhou — cai p/ Google")
+    return None
 
 
 def _translate_to_english(title: str, body_html: str, source_lang: str) -> tuple[str, str]:
