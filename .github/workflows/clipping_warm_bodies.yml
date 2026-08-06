@@ -6,9 +6,20 @@ name: Clipinator — aquecer corpos (À PARTE do news hunter)
 # Repo público = minutos ilimitados; cada rodada é limitada por --budget.
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "20 * * * *"        # de hora em hora (min 20, p/ não colidir com o hunt-loop)
+  workflow_dispatch:            # SÓ sob demanda — o cron foi DESLIGADO (2026-08-06)
+  # DESLIGADO em 2026-08-06 a pedido do usuário. Dois motivos:
+  #   1) Ele nunca usou o ganho: gerar o clipping leva ~1 min raspando na hora, e isso está de
+  #      bom tamanho. O aquecedor só existia p/ tirar esse 1 min.
+  #   2) CUSTO ESCONDIDO: a tradução usa `CLIPPING_TRANSLATE_KEY` **ou, se ausente, GEMINI_API_KEY**
+  #      — a MESMA chave/cota dos takes. Rodando de hora em hora com --limit 80, isso disputava a
+  #      cota do Gemini, que desde 2026-08-06 é o TITULAR dos takes (ver hunter/llm_take.py::CHAIN).
+  #      Aquecer corpo de clipping não pode competir com classificar notícia do cliente.
+  # Nada quebra: `clipping/generate.py` já busca o corpo guardado e, se não houver, raspa+traduz na
+  # hora e GUARDA (`store_body`) — gerar 2x não re-traduz. O aquecedor era só adiantamento.
+  # RELIGAR: descomentar o cron abaixo. Se religar, criar antes o secret CLIPPING_TRANSLATE_KEY
+  # (chave Gemini DEDICADA) p/ não voltar a morder a cota dos takes.
+  # schedule:
+  #   - cron: "20 * * * *"      # de hora em hora (min 20, p/ não colidir com o hunt-loop)
 
 permissions:
   contents: read
