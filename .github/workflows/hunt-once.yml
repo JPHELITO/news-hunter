@@ -1,0 +1,125 @@
+name: Hunt Once — 1 ciclo sob demanda (botão "Buscar novas agora" do Clipping)
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUE ESTE WORKFLOW EXISTE (2026-08-06)
+#
+# O botão "Buscar novas agora" da aba Clipping disparava hunt-loop.yml (RSS) e
+# hunt-playwright.yml (Platts + FM) DIRETO. Esses dois são CORRENTES contínuas:
+# cada run ocupa o próprio concurrency group por até 5h55min (timeout-minutes:355)
+# e nunca se cancela (cancel-in-progress: false).
+#
+# Consequência MEDIDA na API do GitHub: o run nascido do clique nascia PENDING
+# atrás da corrente e, quando o cron seguinte entrava no MESMO grupo, o pendente
+# era CANCELADO sem executar NENHUM job (ex.: run 31053028225 = 0 jobs).
+# Ou seja: o dispatch funcionava, mas o trabalho NUNCA rodava. Da cadeira do
+# usuário, "o botão não faz nada" — e estava certo.
+#
+# Este workflow roda UM ciclo e sai, em concurrency group PRÓPRIO → o clique
+# nunca fica atrás da corrente. As correntes seguem INTOCADAS.
+#
+# LLM de takes: NÃO habilitado aqui de propósito. O shadow (llm_shadow.py) não
+# tem trava entre processos; rodando junto com o hunt-loop, os dois classificam
+# o mesmo artigo e queimam a cota das IAs grátis (que tem que durar o mês).
+# A notícia entra no clipping na hora, sem take de IA; a corrente (a cada 5 min)
+# classifica logo em seguida.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "rss = fontes abertas (Valor, Mining.com, Portal Celulose) · playwright = tudo isso + Platts e Fastmarkets"
+        required: false
+        default: "rss"
+        type: choice
+        options: [rss, playwright]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Grupo PRÓPRIO (não é o da corrente) e separado por modo → um clique em RSS
+  # nunca espera um clique em Platts. cancel-in-progress:false p/ dois cliques
+  # seguidos não se matarem (o front já tem debounce de 60s).
+  group: hunt-once-${{ github.event.inputs.mode }}
+  cancel-in-progress: false
+
+jobs:
+  # ── modo rss: fontes abertas (é o default; roda também se o input vier vazio) ──
+  rss:
+    if: ${{ github.event.inputs.mode != 'playwright' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Hunt (1 ciclo)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+        run: python hunt.py
+
+  # ── modo playwright: Platts + Fastmarkets (hunt.py --playwright TAMBÉM faz o RSS) ──
+  playwright:
+    if: ${{ github.event.inputs.mode == 'playwright' }}
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.52.0-jammy
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-pw-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write session files from secrets
+        env:
+          PLATTS_STATE_JSON:       ${{ secrets.PLATTS_STATE_JSON }}
+          PLATTS_CREDENTIALS:      ${{ secrets.PLATTS_CREDENTIALS }}
+          FASTMARKETS_STATE_JSON:  ${{ secrets.FASTMARKETS_STATE_JSON }}
+          FASTMARKETS_CREDENTIALS: ${{ secrets.FASTMARKETS_CREDENTIALS }}
+        run: |
+          mkdir -p /tmp/cookies
+          # PLATTS: armazenado como gzip+base64 (arquivo grande)
+          if [ -n "$PLATTS_STATE_JSON" ]; then
+            echo "$PLATTS_STATE_JSON" | base64 -d | gunzip > /tmp/cookies/platts_state.json \
+              || echo "$PLATTS_STATE_JSON" > /tmp/cookies/platts_state.json
+          fi
+          [ -n "$PLATTS_CREDENTIALS" ] && echo "$PLATTS_CREDENTIALS" > /tmp/cookies/platts_credentials.json
+          [ -n "$FASTMARKETS_STATE_JSON" ]  && echo "$FASTMARKETS_STATE_JSON"  > /tmp/cookies/fastmarkets_state.json
+          [ -n "$FASTMARKETS_CREDENTIALS" ] && echo "$FASTMARKETS_CREDENTIALS" > /tmp/cookies/fastmarkets_credentials.json
+          true
+
+      - name: Hunt --playwright (1 ciclo)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          COOKIES_DIR:          /tmp/cookies
+          PYTHONIOENCODING:     utf-8
+          # Este run PODE acontecer junto com a corrente do hunt-playwright (grupos
+          # diferentes, de propósito). Ele USA a sessão rolada-pra-frente, mas NÃO a
+          # regrava no store — assim um one-shot nunca sobrescreve a sessão que a
+          # corrente acabou de renovar. Ver playwright_session.save_state.
+          SESSION_STORE_READONLY: "1"
+        run: python hunt.py --playwright

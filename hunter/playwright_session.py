@@ -113,7 +113,16 @@ def pull_session(provider: str) -> bool:
 
 
 def _push_session_to_store(provider: str, state_json: str) -> None:
-    """Upsert da sessão atual no store remoto (Supabase source_sessions). Best-effort."""
+    """Upsert da sessão atual no store remoto (Supabase source_sessions). Best-effort.
+
+    SESSION_STORE_READONLY=1 → usa a sessão puxada do store mas NÃO a regrava. É o
+    modo dos runs one-shot (hunt-once.yml), que podem rodar em paralelo com a corrente
+    do hunt-playwright: sem isso, o one-shot sobrescreveria a sessão que a corrente
+    acabou de renovar (last-write-wins com um state mais velho).
+    """
+    if os.environ.get("SESSION_STORE_READONLY") == "1":
+        log.info("%s: SESSION_STORE_READONLY=1 — sessão usada, mas não regravada no store", provider)
+        return
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if not url or not key:
