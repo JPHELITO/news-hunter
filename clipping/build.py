@@ -425,17 +425,21 @@ def _translate_chain() -> list[dict]:
     TITULAR dos takes, e o clipping roda no FIM do dia → era ele quem ficaria sem cota, na
     hora da entrega. Agora:
 
-      1) zai (GLM)  — PRIMEIRO de propósito. Traduzir é a tarefa FÁCIL: o GLM só se mostrou
-                      fraco em JULGAMENTO de take (analista/margem), não em língua. Tem
-                      ~1.000/dia praticamente ociosos → tradução para de disputar com take.
-      2) gemini DEDICADO — se algum dia existir o secret CLIPPING_TRANSLATE_KEY (chave de um
-                      PROJETO Google SEPARADO; chave nova no MESMO projeto compartilha a cota).
-      3) gemini COMPARTILHADO — último recurso, só se o Z.AI estiver fora. São ~7 chamadas por
-                      clipping (medido), então o estrago na cota dos takes é desprezível e é
-                      melhor que cair no Google Translate.
+      1) gemini DEDICADO (`CLIPPING_TRANSLATE_KEY`) — chave de um PROJETO Google SEPARADO só
+                      p/ o clipping (2026-08-07: projeto "clipping" da separação por carga).
+                      Cota isolada de 500/dia p/ um consumo de ~7/dia → folga absurda, e é o
+                      melhor modelo. ⚠️ Chave nova no MESMO projeto NÃO adianta: a cota grátis
+                      do Gemini é POR PROJETO.
+      2) zai (GLM)  — fallback. Traduzir é a tarefa FÁCIL (o GLM só se mostrou fraco em
+                      JULGAMENTO de take, não em língua) e ele tem ~1.000/dia ociosos.
+      3) gemini COMPARTILHADO (`GEMINI_API_KEY`) — ÚLTIMO recurso, e de propósito: essa é a
+                      cota dos TAKES. São ~7 chamadas por clipping (medido), dano desprezível,
+                      mas só se os dois de cima falharem.
 
+    SEM o secret dedicado a cadeia vira `zai -> gemini compartilhado` = exatamente o
+    comportamento de hoje; nada quebra enquanto o projeto novo não existir.
     Depois desta cadeia, o chamador ainda cai no Google Translate grátis.
-    Ordem trocável por CLIPPING_TRANSLATE_CHAIN (ex.: "gemini_dedicated,zai").
+    Ordem trocável por CLIPPING_TRANSLATE_CHAIN (ex.: "zai,gemini_dedicated").
     """
     try:
         from hunter.llm_take import PROVIDERS as _P
@@ -455,7 +459,7 @@ def _translate_chain() -> list[dict]:
                           "key": os.environ.get("GEMINI_API_KEY", ""), "model": gem_model},
     }
     order = [p.strip() for p in os.environ.get(
-        "CLIPPING_TRANSLATE_CHAIN", "zai,gemini_dedicated,gemini_shared").split(",") if p.strip()]
+        "CLIPPING_TRANSLATE_CHAIN", "gemini_dedicated,zai,gemini_shared").split(",") if p.strip()]
     return [defs[p] for p in order if p in defs and defs[p]["key"]]
 
 
