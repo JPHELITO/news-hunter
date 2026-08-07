@@ -1,0 +1,58 @@
+name: Vigia dos takes — qualidade da IA
+# Nasceu do incidente de 2026-08-06: a cadeia de IAs degradou EM SILÊNCIO (Mistral morreu com
+# 402, Groq dava 413 em 100%, a fila caiu no GLM) e o problema só apareceu 5 dias depois, visto
+# a olho pelo analista numa manchete errada. Não havia número nenhum vigiando isso.
+#
+# Checa 1x/dia: quem está classificando · % de "no take" nas fontes curadas · fila parada ·
+# e faz 1 chamada REAL por provedor da cadeia (3 chamadas/dia — desprezível contra 500/dia).
+#
+# Alarme: o script sai com código 1 → o job FALHA de propósito → o GitHub manda e-mail ao dono
+# do repo. Mesmo padrão do watchdog.yml, e SEM e-mail quando está tudo bem (anti-spam).
+# Somente leitura no banco; não escreve nada.
+
+on:
+  schedule:
+    - cron: "40 11 * * *"    # 11h40 UTC = 08h40 BRT — depois da virada do dia e antes do clipping
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Janela de análise em horas"
+        required: false
+        default: "24"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: takes-watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Vigia dos takes (falha = e-mail do GitHub)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+          # As MESMAS chaves da cadeia — o --ping testa cada provedor de verdade (auth, cota,
+          # tamanho de prompt e parse do JSON de uma vez). Sem elas o passo 4 não roda.
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+          MISTRAL_API_KEY:      ${{ secrets.MISTRAL_API_KEY }}
+          ZAI_API_KEY:          ${{ secrets.ZAI_API_KEY }}
+          GROQ_API_KEY:         ${{ secrets.GROQ_API_KEY }}
+        run: python -m scripts.takes_watchdog --ping --hours ${{ github.event.inputs.hours || '24' }}
