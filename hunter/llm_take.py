@@ -147,13 +147,24 @@ def _load_corrections() -> list[dict]:
         log.warning("take_corrections indisponível: %s", e)
         return []
 
-    per_class = {"+": 0, "-": 0, "=": 0}
+    # 2026-08-07: "no take" É uma classe legítima aqui. Antes o filtro abaixo era
+    # `ta not in ("+","-","=")`, o que descartava em silêncio qualquer correção envolvendo
+    # "no take" — justamente a fronteira que falhou no incidente de 2026-08-06. Hoje o caso
+    # que chega é take_ai="no take" → take_analyst="=" (o analista resgatou), e esse passa
+    # pelo filtro; a classe extra existe p/ o caminho inverso não voltar a ser engolido.
+    per_class = {"+": 0, "-": 0, "=": 0, "no take": 0}
     errs: list[dict] = []
     reinf: list[dict] = []
+    def _norm_take(v: str) -> str:
+        """'no-take'/'NO_TAKE'/'notake' -> 'no take'; '+', '-', '=' passam intactos."""
+        s = (v or "").strip()
+        return "no take" if s.lower().replace("_", " ").replace("-", " ").strip() in (
+            "no take", "notake", "none") else s
+
     for row in rows:
-        ta = (row.get("take_analyst") or "").strip()
+        ta = _norm_take(row.get("take_analyst"))
         hl = (row.get("headline") or "").strip()
-        if ta not in ("+", "-", "=") or not hl:
+        if ta not in per_class or not hl:
             continue
         if per_class[ta] >= _CORR_PER_CLASS:
             continue
