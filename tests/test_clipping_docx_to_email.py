@@ -104,34 +104,24 @@ class TestIntegracaoComOEmail:
 
 
 class TestBarrinha:
-    """A 'barrinha de cima' é uma forma `round2SameRect` no Word: reta à esquerda, com os
-    DOIS cantos da DIREITA arredondados. E-mail não tem border-radius → a ponta vira uma
-    imagenzinha (pedido do usuário), e a barra segue FLUIDA (imagem larga já nos custou o
-    texto cortado antes)."""
+    """A 'barrinha de cima' é uma forma preta no Word. NAO tem canto arredondado visivel:
+    a forma tem ~1496px numa pagina de ~560px, entao o arco fica FORA da pagina. Tentei uma
+    imagenzinha com o arco na ponta e ficou pior ("pilula" que o documento nao tem) — este
+    teste existe p/ nao repetir."""
 
-    def test_barra_fluida_com_ponta_em_imagem(self):
+    def test_barra_fluida_sem_imagem_de_ponta(self):
         html = _html()
         assert 'width="100%"' in html
-        # a ponta: imagem estreita, com altura igual à da forma
-        assert re.search(r'<img src="data:image/png;base64,[^"]+" width="(\d{1,2})" height="(\d{2})"', html)
+        assert 'bgcolor="#000000"' in html
+        # a barra nao pode virar/ganhar imagem: fora as unicas imagens legitimas (logo e
+        # graficos das materias), nada de PNG desenhado por nos na barra
+        barra = html[html.index('bgcolor="#000000"'):html.index("</table>")]
+        assert "<img" not in barra, "a barra voltou a ter imagem de ponta (fica pilula)"
 
-    def test_ponta_desenhada_com_o_raio_do_word(self):
-        from clipping.docx_to_email import _cap_png
-        assert _cap_png(55, 9, 13), "deveria desenhar a ponta (Pillow presente)"
+    def test_altura_da_barra_vem_da_forma(self):
+        assert re.search(r'<td bgcolor="#000000" height="(\d{2})"', _html())
 
-    def test_celula_da_ponta_e_preta_por_baixo(self):
-        """Se sobrar 1px na junção, tem que sobrar PRETO — não branco (costura visível)."""
-        assert re.search(r'<td width="\d+" bgcolor="#000000"', _html())
-
-    def test_sem_pillow_a_barra_nao_quebra(self, monkeypatch):
-        import builtins
-        real = builtins.__import__
-
-        def sem_pil(name, *a, **k):
-            if name.startswith("PIL"):
-                raise ImportError("sem Pillow")
-            return real(name, *a, **k)
-
-        monkeypatch.setattr(builtins, "__import__", sem_pil)
+    def test_texto_e_data_seguem_sendo_texto(self):
+        """Se a barra fosse imagem, a data viraria pixel — tem que ser texto."""
         html = _html()
-        assert 'bgcolor="#000000"' in html and "Equity Research" in html
+        assert "Equity Research" in html and "Daily News" in html
