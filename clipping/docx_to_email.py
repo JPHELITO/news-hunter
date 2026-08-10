@@ -61,6 +61,71 @@ def _px(emu: str | int | None) -> int | None:
         return None
 
 
+# Fonte p/ desenhar a barra: Arial (Windows) → Liberation Sans (Linux, metricamente igual à
+# Arial; vem no container do Playwright) → DejaVu. Sem nenhuma, a barra cai p/ HTML.
+_FONTS_BOLD = ("arialbd.ttf", "Arial Bold.ttf",
+               "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+               "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+               "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+_FONTS_REG = ("arial.ttf", "Arial.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+              "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+
+
+def _ttf(bold: bool, px: float):
+    from PIL import ImageFont
+    for c in (_FONTS_BOLD if bold else _FONTS_REG):
+        try:
+            return ImageFont.truetype(c, round(px))
+        except Exception:
+            continue
+    return None
+
+
+def _bar_png(linhas: list[tuple[str, bool]], w_px: int, h_px: int, pt: float,
+             radius: int) -> str | None:
+    """Desenha a barra preta do topo COMO IMAGEM, no tamanho exato da forma do Word.
+
+    Por que imagem: no e-mail que o usuário mandava à mão (colar-como-RTF), o Word
+    RASTERIZAVA a forma — medido no PDF de um e-mail real dele: a barra é uma imagem de
+    **1497×56 px**. Ele repetiu 2× que "a barrinha é uma figura" e estava certo.
+    Texto desenhado com Arial/Liberation (metricamente iguais). Sem fonte → devolve None e
+    o chamador usa a célula preta em HTML.
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:                                        # pragma: no cover
+        return None
+    s = 2                                                      # 2× e reduz: texto liso
+    fb, fr = _ttf(True, pt * 96 / 72 * s), _ttf(False, pt * 96 / 72 * s)
+    if not fb or not fr:
+        log.info("eml: sem fonte p/ desenhar a barra — usando HTML")
+        return None
+    try:
+        im = Image.new("RGB", (w_px * s, h_px * s), "#FFFFFF")
+        dr = ImageDraw.Draw(im)
+        try:
+            dr.rounded_rectangle([0, 0, w_px * s - 1, h_px * s - 1], radius=radius * s,
+                                 fill="#000000", corners=(False, True, True, False))
+        except TypeError:                                      # Pillow < 9.4
+            dr.rectangle([0, 0, w_px * s - 1, h_px * s - 1], fill="#000000")
+        # lIns/tIns do bodyPr da forma: 0,1in e 0,05in
+        x, alt = round(9.6 * s), pt * 96 / 72 * 1.25
+        y = round((h_px - alt * len(linhas)) / 2) * s
+        for txt, bold in linhas:
+            dr.text((x, y), txt, font=(fb if bold else fr), fill="#FFFFFF")
+            y += round(alt * s)
+        im = im.resize((w_px, h_px), Image.LANCZOS)
+        from io import BytesIO as _B
+        buf = _B()
+        im.save(buf, "PNG", optimize=True)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as e:                                     # pragma: no cover
+        log.info("eml: nao desenhei a barra (%s)", e)
+        return None
+
+
 def _tw_pt(twips: str | int | None) -> float | None:
     """twip (1/20 pt) → pt."""
     try:
@@ -76,6 +141,9 @@ class _DocxEmail:
         self.rels = self._load_rels("word/_rels/document.xml.rels")
         self.default_pt, self.default_font = self._defaults()
         self.list_pt = self._list_indent_pt()
+        # a barra sai FORA da tabela do texto (senão a imagem de 1496px arrasta
+        # a coluna inteira p/ 15,58in e o texto é cortado ao imprimir)
+        self.banner_html = ""
 
     # ── partes do pacote ──────────────────────────────────────────────────────
     def _load_rels(self, path: str) -> dict[str, tuple[str, str]]:
@@ -206,31 +274,63 @@ class _DocxEmail:
         return ""
 
     def _banner_html(self, drawing, txbx) -> str:
-        """A 'barrinha de cima': no Word é uma FORMA preta (`round2SameRect`) com o texto
-        branco. Em e-mail vira uma célula preta FLUIDA com a MESMA altura (`wp:extent cy`)
-        e a mesma tipografia dos runs de dentro.
+        """A 'barrinha de cima' → IMAGEM, do tamanho exato da forma do Word.
 
-        ⚠️ NÃO desenhar canto arredondado aqui. Parece que falta, mas **no Word o arco nem
-        aparece**: a forma tem ~1496px de largura numa página de ~560px, então os 2 cantos
-        arredondados da direita ficam FORA da página, cortados. Tentei pôr uma imagenzinha
-        com o arco na ponta (2026-08-10) e ficou pior — uma "pílula" preta que o documento
-        não tem. Comparado lado a lado com o Word na mesma largura, a célula reta é
-        idêntica. (Bônus: sem imagem, a barra continua acompanhando a janela — imagem tem
-        largura fixa e já nos custou o texto cortado antes.)"""
+        É o que o colar-como-RTF sempre fez: medi o PDF de um e-mail real do usuário e a
+        barra lá é uma **imagem de 1497×56 px** — o Word rasteriza a forma ao colar. Ele
+        insistiu ("tenho CERTEZA que essa barrinha é uma figura") e estava certo.
+
+        A imagem sai no tamanho da forma (`wp:extent`), com o arco `round2SameRect` na
+        direita — que na prática fica fora da vista, como no Word (forma de ~1496px numa
+        página de ~560px). Vai em TABELA PRÓPRIA, sem `width=100%`: assim a barra larga não
+        arrasta a largura da tabela do TEXTO (foi o que cortou o texto de todas as páginas
+        quando uma imagem de 903px esticou a coluna). Sem Pillow/fonte → célula preta em HTML.
+        """
         ext = drawing.find(f".//{_WP}extent")
+        w = _px(ext.get("cx")) if ext is not None else 1496
         h = _px(ext.get("cy")) if ext is not None else 55
-        linhas = []
+        raio = self._corner_radius(drawing, h)
+
+        linhas_txt: list[tuple[str, bool]] = []
+        linhas_html: list[str] = []
         for p in txbx.findall(f".//{_W}p"):
-            runs = "".join(self._run_html(r) for r in p.findall(f"{_W}r"))
-            if runs.strip():
-                linhas.append(f'<p style="margin:0;font-family:{self.default_font};'
-                              f'font-size:{self.default_pt:.1f}pt;color:#ffffff;'
-                              f'line-height:normal">{runs}</p>')
+            runs = p.findall(f"{_W}r")
+            txt = "".join("".join(t.text or "" for t in r.findall(f"{_W}t")) for r in runs)
+            if not txt.strip():
+                continue
+            bold = any(r.find(f"{_W}rPr/{_W}b") is not None for r in runs)
+            linhas_txt.append((txt, bold))
+            linhas_html.append(f'<p style="margin:0;font-family:{self.default_font};'
+                               f'font-size:{self.default_pt:.1f}pt;color:#ffffff;'
+                               f'line-height:normal">'
+                               f'{"<b>" if bold else ""}{_esc(txt)}{"</b>" if bold else ""}</p>')
+
+        png = _bar_png(linhas_txt, w, h, self.default_pt, raio) if linhas_txt else None
+        if png:
+            self.banner_html = ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                    'style="border-collapse:collapse;margin:0"><tr><td style="padding:0">'
+                    f'<img src="data:image/png;base64,{png}" width="{w}" height="{h}" '
+                    f'style="display:block;border:0" alt="Itau BBA | Equity Research">'
+                    '</td></tr></table>')
+            return ""          # o banner é emitido fora, pelo docx_to_email_html
+        # reserva: célula preta fluida (mesma altura/tipografia da forma)
         return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
                 'style="width:100%;border-collapse:collapse;margin:0"><tr>'
                 f'<td bgcolor="#000000" height="{h}" valign="middle" '
                 f'style="background:#000000;height:{h}px;padding:0 12px;vertical-align:middle">'
-                f'{"".join(linhas)}</td></tr></table>')
+                f'{"".join(linhas_html)}</td></tr></table>')
+
+    @staticmethod
+    def _corner_radius(drawing, h: int) -> int:
+        """Raio do arco da forma (a:gd 'val 16667' = 16,667% da menor dimensão)."""
+        adj = 16667
+        gd = drawing.find(f".//{_A}avLst/{_A}gd")
+        if gd is not None and (gd.get("fmla") or "").startswith("val "):
+            try:
+                adj = int((gd.get("fmla") or "val 16667").split()[1])
+            except (ValueError, IndexError):
+                pass
+        return max(2, round(h * adj / 100000.0))
 
     # ── parágrafo ─────────────────────────────────────────────────────────────
     def _para(self, p) -> tuple[str, bool]:
@@ -362,6 +462,7 @@ def docx_to_email_html(docx_bytes: bytes, *, url_by_bookmark: dict[str, str] | N
             f'<body lang="EN-US" style="margin:0;padding:0;background:#ffffff;color:#000000;'
             f'word-wrap:break-word;font-family:{conv.default_font}">'
             '<div class="WordSection1">'
+            f'{conv.banner_html}'
             '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
             'style="width:100%;border-collapse:collapse"><tr><td style="padding:0">'
             f'<div style="max-width:{col_max_px}px">{corpo}</div>'

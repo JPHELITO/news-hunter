@@ -56,11 +56,6 @@ class TestDerivadoDoWord:
         tam = {float(x) for x in re.findall(r"font-size:([\d.]+)pt", _html())}
         assert {9.0, 11.0, 12.0, 16.0} <= tam, tam
 
-    def test_barrinha_preta_vem_da_forma_do_word(self):
-        html = _html()
-        assert 'bgcolor="#000000"' in html
-        assert "Equity Research" in html and "Daily News" in html
-
     def test_logo_nao_duplica(self):
         """A logo está no corpo E no cabeçalho do Word — injetar a do cabeçalho fazia o
         e-mail sair com DUAS. Regra geral: nenhuma imagem repetida no HTML."""
@@ -69,9 +64,12 @@ class TestDerivadoDoWord:
         assert len(srcs) == len(set(srcs)), "imagem repetida no e-mail (logo duplicada?)"
 
     def test_imagens_no_tamanho_do_word(self):
-        """Largura vem do extent do .docx (não inventada)."""
-        for w in re.findall(r'<img[^>]*width="(\d+)"', _html()):
-            assert 0 < int(w) <= 700, w
+        """Largura vem do extent do .docx (não inventada). A BARRA é a exceção: sai no
+        tamanho da forma (~1496px), fora da tabela do texto — ver TestBarrinha."""
+        larguras = [int(w) for w in re.findall(r'<img[^>]*width="(\d+)"', _html())]
+        assert larguras
+        for w in larguras:
+            assert 0 < w <= 700 or w > 1000, w
 
     def test_ancora_interna_virou_link_externo(self):
         """No Word o índice usa âncora (art0); em e-mail âncora não funciona."""
@@ -104,24 +102,31 @@ class TestIntegracaoComOEmail:
 
 
 class TestBarrinha:
-    """A 'barrinha de cima' é uma forma preta no Word. NAO tem canto arredondado visivel:
-    a forma tem ~1496px numa pagina de ~560px, entao o arco fica FORA da pagina. Tentei uma
-    imagenzinha com o arco na ponta e ficou pior ("pilula" que o documento nao tem) — este
-    teste existe p/ nao repetir."""
+    """A barra do topo é FIGURA — como sempre foi no e-mail do usuário.
 
-    def test_barra_fluida_sem_imagem_de_ponta(self):
+    Prova (2026-08-10): no PDF de um e-mail real enviado por ele, a barra é uma imagem de
+    **1497x56 px** — o colar-como-RTF faz o Word RASTERIZAR a forma. Ele disse 2x que "a
+    barrinha é uma figura" e estava certo; eu tinha reproduzido como célula de tabela.
+    """
+
+    def test_barra_e_imagem_no_tamanho_da_forma(self):
         html = _html()
-        assert 'width="100%"' in html
-        assert 'bgcolor="#000000"' in html
-        # a barra nao pode virar/ganhar imagem: fora as unicas imagens legitimas (logo e
-        # graficos das materias), nada de PNG desenhado por nos na barra
-        barra = html[html.index('bgcolor="#000000"'):html.index("</table>")]
-        assert "<img" not in barra, "a barra voltou a ter imagem de ponta (fica pilula)"
+        m = re.search(r'<img src="data:image/png;base64,[^"]+" width="(\d+)" height="(\d+)"', html)
+        assert m, "a barra deveria ser uma imagem"
+        assert int(m.group(1)) > 1000 and int(m.group(2)) == 55, m.groups()
 
-    def test_altura_da_barra_vem_da_forma(self):
-        assert re.search(r'<td bgcolor="#000000" height="(\d{2})"', _html())
-
-    def test_texto_e_data_seguem_sendo_texto(self):
-        """Se a barra fosse imagem, a data viraria pixel — tem que ser texto."""
+    def test_barra_fica_FORA_da_tabela_do_texto(self):
+        """⚠️ INVARIANTE: dentro da tabela do texto, a imagem de 1496px arrastava a coluna
+        p/ 15,58in e o texto saía CORTADO ao imprimir (medido). A barra vem antes."""
         html = _html()
-        assert "Equity Research" in html and "Daily News" in html
+        assert html.index("<img src=") < html.index('width="100%"'),             "a barra voltou p/ dentro da tabela do texto — vai cortar o texto ao imprimir"
+
+    def test_texto_da_barra_no_alt(self):
+        """Virou pixel: o alt preserva o texto p/ leitor de tela e busca."""
+        assert 'alt="Itau BBA | Equity Research"' in _html()
+
+    def test_sem_fonte_cai_na_celula_preta(self, monkeypatch):
+        import clipping.docx_to_email as m
+        monkeypatch.setattr(m, "_ttf", lambda bold, px: None)
+        html = _html()
+        assert 'bgcolor="#000000"' in html and "Equity Research" in html
