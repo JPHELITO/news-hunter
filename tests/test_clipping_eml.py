@@ -139,6 +139,24 @@ def test_pagina_no_formato_que_o_word_entende():
     assert '<div class="WordSection1">' in html
 
 
+def test_coluna_fluida_com_teto_no_div_nao_na_tabela():
+    """A coluna acompanha a janela (o usuário viu 640px fixo como "cortado": manchete
+    quebrava no meio e sobrava vazio à direita).
+
+    ⚠️ O teto TEM que ficar num <div> interno. Medido no motor do Word: `max-width` na
+    TABELA é convertido em largura FIXA (tabela virou 11,46in numa página de 7,07in úteis
+    → voltava a cortar ao imprimir/encaminhar). Em <div> o Outlook ignora (fluido lá) e
+    Gmail/webmail/mobile respeitam."""
+    import re
+    from clipping.eml import _COL_MAX
+    msg = email.message_from_bytes(_raw(), policy=policy.default)
+    html = next(p.get_content() for p in msg.walk() if p.get_content_type() == "text/html")
+    tabela = re.search(r"<table[^>]*?>", html).group(0)
+    assert 'width="100%"' in tabela, tabela
+    assert "max-width" not in tabela, "max-width na TABELA vira largura fixa no Word — vai cortar"
+    assert f'<div style="max-width:{_COL_MAX}px">' in html, "faltou o teto no div interno"
+
+
 def test_toda_imagem_do_email_tem_width():
     """Contrato de saída: nenhuma imagem do .eml pode ir sem largura declarada."""
     import re

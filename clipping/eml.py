@@ -214,14 +214,19 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
                 sections.append(_style_body(it.translated_body))
             sections.append(BLANK)
 
-    # Largura: o Outlook IGNORA max-width em <div> (o texto correria de ponta a ponta da
-    # janela); table com width fixo ele respeita — fica com a "cara de página" do Word.
-    # O @page é p/ o caminho IMPRIMIR/ENCAMINHAR: aí o motor do Word pagina o e-mail e,
-    # com as margens padrão (A4 com 1,18in de cada lado = 5,91in úteis) a coluna de 640px
-    # (6,67in) passava da margem. Margem de 0,6in dá 7,07in úteis → cabe com folga.
-    # ⚠️ TEM que ser no formato do Word (`@page WordSection1` + `div.WordSection1`
-    # envolvendo o corpo): `@page` sozinho o importador de HTML do Word IGNORA (medido:
-    # margem seguia 1,18in). No painel de leitura do Outlook isso é ignorado — lá não muda.
+    # LARGURA — a coluna ACOMPANHA a janela (`width="100%"`), com teto num <div> POR DENTRO
+    # p/ não virar linha quilométrica em monitor grande. Era fixa em 640px e o usuário viu
+    # como "cortado" (2026-08-10): na janela dele (~1900px) as manchetes quebravam no meio e
+    # sobrava um vazio enorme à direita.
+    # ⚠️ O teto NÃO pode ir na TABELA: medido no motor do Word, `max-width` na tabela é
+    # convertido em largura FIXA (tabela virou 11,46in numa página de 7,07in úteis → voltava
+    # a cortar ao imprimir/encaminhar). Em <div> ele é ignorado pelo Outlook (fluido lá) e
+    # respeitado por Gmail/webmail/mobile. Medido: tabela 100% (com ou sem style) = 7,07in
+    # = exatamente a largura útil → cabe sempre ao paginar.
+    # O @page ajusta a margem do caminho IMPRIMIR/ENCAMINHAR (padrão A4 = 1,18in de cada
+    # lado; 0,6in dá 7,07in úteis). ⚠️ TEM que ser no formato do Word (`@page WordSection1`
+    # + `div.WordSection1` envolvendo o corpo): `@page` sozinho o importador de HTML do Word
+    # IGNORA (medido). No painel de leitura do Outlook o @page é ignorado — lá não muda.
     return ('<html><head><meta charset="utf-8">'
             '<meta name="color-scheme" content="light only">'
             '<meta name="supported-color-schemes" content="light">'
@@ -231,11 +236,12 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
             f'word-wrap:break-word;font-family:{_FONT}">'
             '<div class="WordSection1">'
             '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-            f'width="{_COL_W}" style="width:{_COL_W}px;border-collapse:collapse"><tr>'
+            'width="100%" style="width:100%;border-collapse:collapse"><tr>'
             '<td style="padding:0">'
+            f'<div style="max-width:{_COL_MAX}px">'
             f'{_banner_html(d)}{BLANK}{intro_html}{index_block}{recent_html}{earnings_html}'
             f'{analysts_block}{"".join(sections)}'
-            '</td></tr></table></div></body></html>')
+            '</div></td></tr></table></div></body></html>')
 
 
 # ── Imagens: data-URI/URL → anexo inline "cid:" (o Outlook BLOQUEIA data:image) ──────
@@ -247,8 +253,10 @@ _IMG_SRC_RE = re.compile(r'\bsrc="([^"]+)"', re.I)    # o src DENTRO da tag
 # edição tem muitas fotos. Passou do teto: a imagem segue como link, não some.
 _INLINE_BUDGET = 2_500_000
 
-# Largura da coluna do e-mail e teto de imagem DENTRO dela (deixa uma folga p/ a borda).
-_COL_W    = 640
+# A coluna do e-mail é FLUIDA (acompanha a janela); _COL_MAX é só o teto p/ os clientes que
+# entendem max-width. _IMG_MAX_W = teto de cada imagem (o Outlook não conhece max-width, então
+# sem largura em ATRIBUTO uma imagem grande arrasta a tabela e corta o texto de tudo).
+_COL_MAX   = 1100
 _IMG_MAX_W = 620
 
 
