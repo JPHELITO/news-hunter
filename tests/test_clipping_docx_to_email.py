@@ -62,8 +62,11 @@ class TestDerivadoDoWord:
         assert "Equity Research" in html and "Daily News" in html
 
     def test_logo_nao_duplica(self):
-        """A logo está no corpo E no cabeçalho do Word; o e-mail leva UMA."""
-        assert len(re.findall(r"<img", _html())) == 1 + 0   # só a logo (sem imagem de artigo aqui)
+        """A logo está no corpo E no cabeçalho do Word — injetar a do cabeçalho fazia o
+        e-mail sair com DUAS. Regra geral: nenhuma imagem repetida no HTML."""
+        srcs = re.findall(r'src="(data:[^"]+)"', _html())
+        assert srcs, "esperava ao menos a logo"
+        assert len(srcs) == len(set(srcs)), "imagem repetida no e-mail (logo duplicada?)"
 
     def test_imagens_no_tamanho_do_word(self):
         """Largura vem do extent do .docx (não inventada)."""
@@ -98,3 +101,37 @@ class TestIntegracaoComOEmail:
     def test_sem_docx_segue_o_caminho_antigo(self):
         html = build_html(_items(), date(2026, 8, 10), _cfg())
         assert "Sector Headlines" in html
+
+
+class TestBarrinha:
+    """A 'barrinha de cima' é uma forma `round2SameRect` no Word: reta à esquerda, com os
+    DOIS cantos da DIREITA arredondados. E-mail não tem border-radius → a ponta vira uma
+    imagenzinha (pedido do usuário), e a barra segue FLUIDA (imagem larga já nos custou o
+    texto cortado antes)."""
+
+    def test_barra_fluida_com_ponta_em_imagem(self):
+        html = _html()
+        assert 'width="100%"' in html
+        # a ponta: imagem estreita, com altura igual à da forma
+        assert re.search(r'<img src="data:image/png;base64,[^"]+" width="(\d{1,2})" height="(\d{2})"', html)
+
+    def test_ponta_desenhada_com_o_raio_do_word(self):
+        from clipping.docx_to_email import _cap_png
+        assert _cap_png(55, 9, 13), "deveria desenhar a ponta (Pillow presente)"
+
+    def test_celula_da_ponta_e_preta_por_baixo(self):
+        """Se sobrar 1px na junção, tem que sobrar PRETO — não branco (costura visível)."""
+        assert re.search(r'<td width="\d+" bgcolor="#000000"', _html())
+
+    def test_sem_pillow_a_barra_nao_quebra(self, monkeypatch):
+        import builtins
+        real = builtins.__import__
+
+        def sem_pil(name, *a, **k):
+            if name.startswith("PIL"):
+                raise ImportError("sem Pillow")
+            return real(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", sem_pil)
+        html = _html()
+        assert 'bgcolor="#000000"' in html and "Equity Research" in html

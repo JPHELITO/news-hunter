@@ -61,6 +61,38 @@ def _px(emu: str | int | None) -> int | None:
         return None
 
 
+def _cap_png(h_px: int, radius: int, w_px: int) -> str | None:
+    """PNG da ponta DIREITA da barra preta (os 2 cantos arredondados) em base64.
+
+    Fundo BRANCO de propósito — o e-mail é branco e o Outlook renderiza transparência de
+    PNG de forma inconsistente. Desenhado 3× maior e reduzido, p/ o arco sair liso.
+    Devolve None se o Pillow não estiver disponível (o chamador então usa a barra reta).
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:                                       # pragma: no cover
+        log.info("eml: Pillow ausente — ponta da barra fica reta")
+        return None
+    try:
+        s = 3
+        im = Image.new("RGB", (w_px * s, h_px * s), "#FFFFFF")
+        dr = ImageDraw.Draw(im)
+        box = [-((radius + w_px) * s), 0, w_px * s - 1, h_px * s - 1]
+        try:
+            dr.rounded_rectangle(box, radius=radius * s, fill="#000000",
+                                 corners=(False, True, True, False))
+        except TypeError:                                     # Pillow < 9.4 não tem `corners`
+            dr.rounded_rectangle(box, radius=radius * s, fill="#000000")
+        im = im.resize((w_px, h_px), Image.LANCZOS)
+        from io import BytesIO as _B
+        buf = _B()
+        im.save(buf, "PNG", optimize=True)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as e:                                    # pragma: no cover
+        log.info("eml: nao desenhei a ponta da barra (%s)", e)
+        return None
+
+
 def _tw_pt(twips: str | int | None) -> float | None:
     """twip (1/20 pt) → pt."""
     try:
@@ -206,22 +238,49 @@ class _DocxEmail:
         return ""
 
     def _banner_html(self, drawing, txbx) -> str:
-        """A 'barrinha de cima': no Word é uma FORMA (round2SameRect) preta com texto branco.
-        Em e-mail não existe forma — vira célula preta com a MESMA altura e a mesma tipografia
-        (o Outlook ignora border-radius, então os 2 cantos arredondados não têm equivalente)."""
+        """A 'barrinha de cima'. No Word é uma FORMA `round2SameRect` preta: reta na
+        esquerda e com os DOIS cantos da DIREITA arredondados.
+
+        E-mail não tem forma nem `border-radius` (o Outlook ignora), então a barra é uma
+        célula preta FLUIDA + uma IMAGENZINHA só na ponta direita com o arco (pedido do
+        usuário: "não tem como colocar a imagem da barrinha?"). Assim ganha o canto
+        arredondado SEM travar a largura numa imagem — imagem larga já nos custou o texto
+        cortado antes (ver eml._img_with_width). O texto e a data seguem sendo TEXTO
+        (nítidos em qualquer zoom, e a data muda todo dia)."""
         ext = drawing.find(f".//{_WP}extent")
-        h = _px(ext.get("cy")) if ext is not None else None
+        h = _px(ext.get("cy")) if ext is not None else 55
+        raio = self._corner_radius(drawing, h)
         linhas = []
         for p in txbx.findall(f".//{_W}p"):
             runs = "".join(self._run_html(r) for r in p.findall(f"{_W}r"))
             if runs.strip():
                 linhas.append(f'<p style="margin:0;font-family:{self.default_font};'
-                              f'font-size:{self.default_pt:.1f}pt;color:#ffffff">{runs}</p>')
-        alt = f"height:{h}px;" if h else ""
+                              f'font-size:{self.default_pt:.1f}pt;color:#ffffff;'
+                              f'line-height:normal">{runs}</p>')
+        cap_w = max(8, raio + 4)
+        cap = _cap_png(h, raio, cap_w)
+        cap_td = (f'<td width="{cap_w}" bgcolor="#000000" style="width:{cap_w}px;padding:0;'
+                  f'background:#000000;font-size:0;line-height:0">'
+                  f'<img src="data:image/png;base64,{cap}" width="{cap_w}" height="{h}" '
+                  f'style="display:block;border:0" alt=""></td>') if cap else ""
         return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
                 'style="width:100%;border-collapse:collapse;margin:0"><tr>'
-                f'<td bgcolor="#000000" style="background:#000000;{alt}padding:6px 10px">'
-                f'{"".join(linhas)}</td></tr></table>')
+                f'<td bgcolor="#000000" height="{h}" valign="middle" '
+                f'style="background:#000000;height:{h}px;padding:3px 12px;vertical-align:middle">'
+                f'{"".join(linhas)}</td>{cap_td}</tr></table>')
+
+    @staticmethod
+    def _corner_radius(drawing, h: int) -> int:
+        """Raio do arco da forma. O Word guarda o ajuste em a:gd (fmla 'val 16667' = 16,667%
+        da menor dimensão); sem ele, usa o padrão do round2SameRect."""
+        adj = 16667
+        gd = drawing.find(f".//{_A}avLst/{_A}gd")
+        if gd is not None and (gd.get("fmla") or "").startswith("val "):
+            try:
+                adj = int((gd.get("fmla") or "val 16667").split()[1])
+            except (ValueError, IndexError):
+                pass
+        return max(2, round(h * adj / 100000.0))
 
     # ── parágrafo ─────────────────────────────────────────────────────────────
     def _para(self, p) -> tuple[str, bool]:
