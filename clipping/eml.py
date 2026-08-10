@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .build import (
     ClippingItem, SECTOR_ORDER, SECTOR_LABEL, TAKE_SYMBOL, _DEFAULT_ANALYSTS,
+    InlineSeg, intro_has_content, line_text, parse_intro_lines,
 )
 
 log = logging.getLogger(__name__)
@@ -55,19 +56,28 @@ def _attr(s) -> str:
     return escape(str(s or ""), quote=True)
 
 
-def _intro_line_html(ln: str) -> str:
-    """Converte **negrito** e [texto](url) na mensagem de abertura; escapa o resto."""
-    out, pos = [], 0
-    for m in re.finditer(r'\*\*(.+?)\*\*|\[([^\]]+)\]\((https?://[^)\s]+)\)', ln):
-        if m.start() > pos:
-            out.append(_esc(ln[pos:m.start()]))
-        if m.group(1) is not None:                       # **negrito**
-            out.append(f'<b>{_esc(m.group(1))}</b>')
-        else:                                            # [texto](url)
-            out.append(f'<a href="{_attr(m.group(3))}">{_esc(m.group(2))}</a>')
-        pos = m.end()
-    if pos < len(ln):
-        out.append(_esc(ln[pos:]))
+def _segs_html(segs: list[InlineSeg]) -> str:
+    """Segmentos da mensagem de abertura → HTML (negrito/itálico/sublinhado/cor/link).
+
+    São os MESMOS segmentos que o Word usa (`build.parse_intro_lines`) → e-mail e .docx
+    saem com a mesma formatação. Cor sempre inline (o Outlook ignora CSS de <head>)."""
+    out = []
+    for sg in segs:
+        if not sg.text:
+            continue
+        t = _esc(sg.text)
+        if sg.bold:
+            t = f"<b>{t}</b>"
+        if sg.italic:
+            t = f"<i>{t}</i>"
+        if sg.underline and not sg.url:                  # link já vem sublinhado
+            t = f"<u>{t}</u>"
+        color = sg.color or ("0000FF" if sg.url else "")
+        if sg.url:
+            t = f'<a href="{_attr(sg.url)}" style="color:#{color}">{t}</a>'
+        elif color:
+            t = f'<span style="color:#{color}">{t}</span>'
+        out.append(t)
     return "".join(out)
 
 
@@ -145,9 +155,10 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
     config = config or {}
     intro = config.get("intro") or {}
     intro_html = ""
-    if intro.get("on") and (intro.get("text") or "").strip():
+    if intro_has_content(intro):
         intro_html = "".join(
-            (f'{_PJ}{_intro_line_html(ln)}</p>' if ln.strip() else BLANK) for ln in intro["text"].splitlines()
+            (f'{_PJ}{_segs_html(ln)}</p>' if line_text(ln).strip() else BLANK)
+            for ln in parse_intro_lines(intro)
         ) + BLANK
     _er = config.get("earnings_review") or {}
     recent_html   = _pub_html("Recent Publications", config.get("recent_publications"))

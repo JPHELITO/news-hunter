@@ -11,6 +11,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
+from html.parser import HTMLParser
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,210 @@ TAKE_COLOR_HEX = {"+": "00B050", "-": "FF0000"}   # "=" fica PRETO (sem cor) —
 # Marcação inline da "Mensagem de abertura": **negrito** e [texto](url).
 # grupo 1 = texto em negrito · grupos 2/3 = (texto, url) do link.
 _INLINE_RE = re.compile(r'\*\*(.+?)\*\*|\[([^\]]+)\]\((https?://[^)\s]+)\)')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MENSAGEM DE ABERTURA — formatação rica (negrito · itálico · sublinhado · cor · link)
+#
+# O editor da dashboard grava HTML em config['intro']['html'] (formato canônico, tipo Word).
+# Mensagens antigas guardaram só `**negrito**` e `[texto](url)` em config['intro']['text'] —
+# o mesmo parser lê as duas. É UMA fonte de verdade: o Word (build.py) e o e-mail (eml.py)
+# renderizam a MESMA lista de segmentos, então nunca divergem.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class InlineSeg:
+    """Trecho contíguo de texto da mensagem de abertura + a formatação dele."""
+    text:      str
+    bold:      bool = False
+    italic:    bool = False
+    underline: bool = False
+    color:     str  = ""     # 'RRGGBB' (vazio = cor padrão do texto)
+    url:       str  = ""     # link externo (vazio = texto comum)
+
+
+_NAMED_COLORS = {
+    "black": "000000", "white": "FFFFFF", "red": "FF0000", "green": "008000",
+    "blue": "0000FF", "orange": "FFA500", "yellow": "FFFF00", "purple": "800080",
+    "gray": "808080", "grey": "808080", "navy": "000080", "maroon": "800000",
+}
+
+
+def _norm_color(raw: str) -> str:
+    """'#f00' | '#FF0000' | 'rgb(255, 0, 0)' | 'red' → 'FF0000'. '' se não reconhecer."""
+    v = (raw or "").strip().lower()
+    if not v:
+        return ""
+    m = re.match(r'rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)', v)
+    if m:
+        return "".join(f"{min(255, int(g)):02X}" for g in m.groups())
+    v = v.lstrip("#")
+    if re.fullmatch(r'[0-9a-f]{3}', v):
+        return "".join(c * 2 for c in v).upper()
+    if re.fullmatch(r'[0-9a-f]{6}', v):
+        return v.upper()
+    return _NAMED_COLORS.get(v, "")
+
+
+def _safe_url(raw: str) -> str:
+    """Só http(s) e mailto entram como link (nada de javascript:/data:)."""
+    u = (raw or "").strip()
+    return u if re.match(r'^(https?://|mailto:)', u, re.I) else ""
+
+
+class _IntroHTMLParser(HTMLParser):
+    """Percorre o HTML da mensagem de abertura e devolve LINHAS de InlineSeg.
+
+    Whitelist de tags: b/strong · i/em · u/ins · font[color] · span[style=color] ·
+    a[href] · br · p/div/li (quebram linha). Tag fora da lista é desembrulhada — o
+    conteúdo dela continua sendo lido, só a formatação é ignorada.
+    """
+
+    _BLOCKS = {"p", "div", "li", "ul", "ol", "blockquote", "h1", "h2", "h3", "h4"}
+    _DROP   = {"script", "style", "head", "title"}
+    # tags sem fechamento — não entram na pilha de formatação (senão vazam pro resto do texto)
+    _VOID   = {"br", "img", "hr", "input", "meta", "link", "col", "area", "base",
+               "source", "embed", "param", "track", "wbr"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.lines: list[list[InlineSeg]] = [[]]
+        self._fmt:  list[dict] = []    # pilha de formatação ativa
+        self._drop = 0                 # profundidade dentro de tag proibida
+        self._brk  = 0                 # quebras de linha pendentes (só valem se vier texto)
+
+    # ── formatação ativa (topo da pilha vence na cor/link) ────────────────────
+    def _state(self) -> dict:
+        st = {"bold": False, "italic": False, "underline": False, "color": "", "url": ""}
+        for f in self._fmt:
+            st["bold"]      = st["bold"]      or f.get("bold", False)
+            st["italic"]    = st["italic"]    or f.get("italic", False)
+            st["underline"] = st["underline"] or f.get("underline", False)
+            if f.get("color"):
+                st["color"] = f["color"]
+            if f.get("url"):
+                st["url"] = f["url"]
+        return st
+
+    @staticmethod
+    def _color_attr(a: dict) -> str:
+        """Cor da LETRA da tag: style="color:…" (não 'background-color') ou color="…"."""
+        m = re.search(r'(?<!-)\bcolor\s*:\s*([^;]+)', a.get("style", ""), re.I)
+        return (_norm_color(m.group(1)) if m else "") or _norm_color(a.get("color", ""))
+
+    def handle_starttag(self, tag, attrs) -> None:
+        tag = tag.lower()
+        a   = {k.lower(): (v or "") for k, v in attrs}
+        if tag in self._DROP:
+            self._drop += 1
+            return
+        if tag == "br":
+            self._brk += 1
+            return
+        if tag in self._BLOCKS and self.lines[-1]:
+            self._brk = max(self._brk, 1)   # linha nova só se já houver conteúdo
+        if tag in self._VOID:
+            return
+        fmt: dict = {"_t": tag}
+        if tag in ("b", "strong"):
+            fmt["bold"] = True
+        elif tag in ("i", "em"):
+            fmt["italic"] = True
+        elif tag in ("u", "ins"):
+            fmt["underline"] = True
+        elif tag == "a":
+            fmt["url"] = _safe_url(a.get("href", ""))
+        # a cor pode vir em QUALQUER tag (o editor aproveita o elemento que já envolve a
+        # seleção: <i style="color:…">, <a style="color:…">, <div style="color:…">…)
+        col = self._color_attr(a)
+        if col:
+            fmt["color"] = col
+        self._fmt.append(fmt)
+
+    def handle_startendtag(self, tag, attrs) -> None:
+        if tag.lower() == "br":
+            self._brk += 1
+
+    def handle_endtag(self, tag) -> None:
+        tag = tag.lower()
+        if tag in self._DROP:
+            self._drop = max(0, self._drop - 1)
+            return
+        if tag in self._BLOCKS and self.lines[-1]:
+            self._brk = max(self._brk, 1)
+        for i in range(len(self._fmt) - 1, -1, -1):     # fecha o mais recente daquela tag
+            if self._fmt[i].get("_t") == tag:
+                self._fmt.pop(i)
+                break
+
+    def handle_data(self, data) -> None:
+        if self._drop:
+            return
+        # HTML colapsa run de espaço/tab/newline em UM espaço. Cuidado: `\s` do Python também
+        # casaria o &nbsp; (\xa0) — que é espaço PROPOSITAL do editor e tem que sobreviver.
+        text = re.sub(r'[ \t\r\n\f\v]+', ' ', data or "")
+        if not text:
+            return
+        if not text.strip() and not self.lines[-1]:
+            return                                        # espaço solto entre tags
+        for _ in range(self._brk):                        # materializa as quebras pendentes
+            self.lines.append([])
+        self._brk = 0
+        self.lines[-1].append(InlineSeg(text=text, **self._state()))
+
+
+def _intro_lines_from_html(src: str) -> list[list[InlineSeg]]:
+    p = _IntroHTMLParser()
+    try:
+        p.feed(src)
+        p.close()
+    except Exception as e:                                # pragma: no cover
+        log.warning("clipping: HTML da mensagem de abertura ilegível (%s) — caindo p/ texto puro", e)
+        plain = html.unescape(re.sub(r'<[^>]+>', ' ', src))
+        return [[InlineSeg(text=plain.strip())]]
+    return p.lines
+
+
+def _intro_lines_from_markdown(text: str) -> list[list[InlineSeg]]:
+    """Formato antigo do editor: `**negrito**` e `[texto](url)`, uma linha por \\n."""
+    lines: list[list[InlineSeg]] = []
+    for ln in (text or "").splitlines():
+        segs: list[InlineSeg] = []
+        pos = 0
+        for m in _INLINE_RE.finditer(ln):
+            if m.start() > pos:
+                segs.append(InlineSeg(text=ln[pos:m.start()]))
+            if m.group(1) is not None:
+                segs.append(InlineSeg(text=m.group(1), bold=True))
+            else:
+                segs.append(InlineSeg(text=m.group(2), url=_safe_url(m.group(3))))
+            pos = m.end()
+        if pos < len(ln):
+            segs.append(InlineSeg(text=ln[pos:]))
+        lines.append(segs)
+    return lines
+
+
+def parse_intro_lines(intro: dict | None) -> list[list[InlineSeg]]:
+    """config['intro'] → linhas de segmentos formatados. Prefere o HTML do editor novo;
+    cai no markdown antigo (`**bold**`/`[t](u)`) quando não há HTML gravado."""
+    intro = intro or {}
+    src = (intro.get("html") or "").strip()
+    if src:
+        return _intro_lines_from_html(src)
+    return _intro_lines_from_markdown(intro.get("text") or "")
+
+
+def line_text(segs: list[InlineSeg]) -> str:
+    return "".join(s.text for s in segs)
+
+
+def intro_has_content(intro: dict | None) -> bool:
+    """True se a mensagem de abertura está LIGADA e tem texto de verdade."""
+    intro = intro or {}
+    if not intro.get("on"):
+        return False
+    return any(line_text(ln).strip() for ln in parse_intro_lines(intro))
 
 
 def _is_platts_boilerplate(text: str) -> bool:
@@ -783,13 +988,15 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         numPr.append(numId_el)
         pPr.append(numPr)
 
-    def _run(para, text, *, bold=False, italic=False, size_pt=None,
+    def _run(para, text, *, bold=False, italic=False, underline=False, size_pt=None,
              color_hex=None, hl=None):
         from docx.shared import RGBColor
         run = para.add_run(text)
         run.font.name   = FONT
         run.font.bold   = bold
         run.font.italic = italic
+        if underline:
+            run.font.underline = True
         if size_pt is not None:
             run.font.size = Pt(size_pt)
         if color_hex:
@@ -875,7 +1082,8 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         p.append(bm_end)
 
     def _external_hyperlink_run(para, text: str, url: str, *, size_pt: float = 9.5,
-                                color: str = "000000", underline: bool = False) -> None:
+                                color: str = "000000", underline: bool = False,
+                                bold: bool = False, italic: bool = False) -> None:
         """Run com hyperlink externo (URL) — abre no browser. color/underline configuráveis:
         publicações = preto liso (padrão); link na mensagem de abertura = azul sublinhado."""
         from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -888,6 +1096,10 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         rFonts.set(qn("w:ascii"), FONT)
         rFonts.set(qn("w:hAnsi"), FONT)
         rPr.append(rFonts)
+        if bold:
+            rPr.append(OxmlElement("w:b"))
+        if italic:
+            rPr.append(OxmlElement("w:i"))
         sz = OxmlElement("w:sz")
         sz.set(qn("w:val"), str(int(size_pt * 2)))   # Word: 2 × pt
         rPr.append(sz)
@@ -988,26 +1200,24 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
     # INTRO / MENSAGEM (configurável — vai no topo; o mesmo texto entra no e-mail)
     # ══════════════════════════════════════════════════════════════════════════
     _intro = (config.get("intro") or {})
-    _has_intro = bool(_intro.get("on") and (_intro.get("text") or "").strip())
+    _has_intro = intro_has_content(_intro)
     if _has_intro:
         _blanks(1)   # logo do Itaú → Mensagem de abertura: 1 linha
-        for _line in _intro["text"].splitlines():
+        # negrito · itálico · sublinhado · cor · link, vindos do editor da dashboard
+        # (mesmos segmentos que o e-mail usa → Word e .eml nunca divergem)
+        for _segs in parse_intro_lines(_intro):
             p = doc.add_paragraph()
             _intro_para_fmt(p)   # justificado + entrelinha ao menos 16pt (Arial 11)
-            if _line.strip():
-                # **negrito** e [texto](url) na mesma linha; resto = texto normal
-                _pos = 0
-                for _m in _INLINE_RE.finditer(_line):
-                    if _m.start() > _pos:
-                        _run(p, _line[_pos:_m.start()], size_pt=11)
-                    if _m.group(1) is not None:                        # **negrito**
-                        _run(p, _m.group(1), bold=True, size_pt=11)
-                    else:                                              # [texto](url)
-                        _external_hyperlink_run(p, _m.group(2), _m.group(3), size_pt=11,
-                                                color="0000FF", underline=True)
-                    _pos = _m.end()
-                if _pos < len(_line):
-                    _run(p, _line[_pos:], size_pt=11)
+            for _sg in _segs:
+                if not _sg.text:
+                    continue
+                if _sg.url:
+                    _external_hyperlink_run(p, _sg.text, _sg.url, size_pt=11,
+                                            color=_sg.color or "0000FF", underline=True,
+                                            bold=_sg.bold, italic=_sg.italic)
+                else:
+                    _run(p, _sg.text, bold=_sg.bold, italic=_sg.italic,
+                         underline=_sg.underline, size_pt=11, color_hex=_sg.color or None)
         _blanks(2)   # Mensagem de abertura → Sector Headlines: 2 linhas
     else:
         _blanks(2)   # sem mensagem: logo do Itaú → Sector Headlines: 2 linhas
