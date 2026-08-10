@@ -99,8 +99,15 @@ def _by_sector(items: list[ClippingItem]):
 
 
 def _section_h(text: str) -> str:
-    """Cabeçalho de seção — PRETO em negrito (Sector Headlines, STEEL & MINING, Recent…)."""
-    return f'{_P}<b><span style="font-size:14.0pt;color:#000000">{_esc(text)}</span></b></p>'
+    """Cabeçalho de seção (Sector Headlines / STEEL & MINING / Recent Publications…).
+
+    Usa o MESMO idioma que o próprio Word escreve ao exportar o clipping em HTML:
+    16pt Arial negrito, `color:white;background:black` — o realce PRETO de verdade, igual
+    ao .docx. Antes era texto preto de 14pt SEM realce: era a diferença que fazia o e-mail
+    "não parecer o Word" (o usuário reparou em 2026-08-10). O `background` inline é o que o
+    motor do Word/Outlook entende — foi copiado da exportação dele mesmo, não inventado."""
+    return (f'{_P}<b><span style="font-size:16.0pt;color:#ffffff;background:#000000">'
+            f'{_esc(text)}</span></b></p>')
 
 
 def _banner_html(d: date) -> str:
