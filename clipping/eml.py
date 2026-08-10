@@ -158,7 +158,25 @@ def _pub_html(title_label: str, pub_list) -> str:
     return _section_h(title_label) + f'<ul type="disc">{"".join(lis)}</ul>' + BLANK
 
 
-def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -> str:
+def build_html(items: list[ClippingItem], d: date, config: dict | None = None,
+               docx_bytes: bytes | None = None) -> str:
+    """HTML do e-mail (e da prévia).
+
+    Com o `.docx` em mão, o HTML é **derivado do próprio Word** (`docx_to_email_html`) —
+    tamanho de fonte, negrito, cor, highlight (o amarelo dos títulos!), espaçamento, recuo
+    e imagens saem do arquivo, não de regras escritas à mão aqui. Sem o .docx (ou se a
+    conversão falhar) cai no HTML montado abaixo, que é aproximado."""
+    if docx_bytes:
+        try:
+            from .docx_to_email import docx_to_email_html
+            # o índice do Word usa âncora interna (art0, art1…); em e-mail âncora não
+            # funciona → mapeia p/ a URL da notícia, na MESMA ordem em que o Word numerou
+            urls = {f"art{i}": it.url for i, it in enumerate(items)}
+            urls.update({f"art{i}tr": it.url for i, it in enumerate(items)})
+            return docx_to_email_html(docx_bytes, url_by_bookmark=urls)
+        except Exception as e:
+            log.warning("eml: nao consegui derivar o HTML do Word (%s) — usando o HTML montado", e)
+
     config = config or {}
     intro = config.get("intro") or {}
     intro_html = ""
@@ -373,7 +391,8 @@ def build_eml_bytes(items: list[ClippingItem], d: date | None = None,
     msg["X-Unsent"] = "1"
     msg.set_content(build_plain_text(items, d), charset="utf-8")
 
-    html_email, images = _inline_images(build_html(items, d, config))
+    # o .docx e a fonte da verdade do formato -> o HTML sai dele
+    html_email, images = _inline_images(build_html(items, d, config, docx_bytes=docx_bytes))
     msg.add_alternative(html_email, subtype="html")
     if images:
         # anexa as imagens ao corpo HTML (vira multipart/related) — assim o Outlook mostra
