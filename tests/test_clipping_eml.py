@@ -84,3 +84,66 @@ def test_anexo_docx_presente():
     msg = email.message_from_bytes(_raw())
     nomes = [p.get_filename() for p in msg.walk() if p.get_filename()]
     assert "clipping_20260804.docx" in nomes
+
+
+# ── Largura: uma imagem grande estourava o e-mail INTEIRO (2026-08-10) ────────────
+#
+# `max-width:100%` NÃO EXISTE no motor do Outlook/Word. Sem `width=` na tag, o print de
+# tabela/mapa de 903px esticava a tabela de 640px p/ ~904px (medido: 9,42in de largura numa
+# página de 5,91in úteis) e TODO o texto do e-mail saía CORTADO à direita, em toda página.
+
+def _png(w: int, h: int) -> bytes:
+    """PNG mínimo com o cabeçalho IHDR de w×h (é de lá que o tamanho é lido)."""
+    import struct, zlib
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    def chunk(tag, data):
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(b"\x00" * (3 * w + 1) * h, 1)) + chunk(b"IEND", b""))
+
+
+def test_imagem_larga_ganha_width_limitado():
+    from clipping.eml import _img_with_width, _IMG_MAX_W
+    tag = _img_with_width('<img style="max-width:100%;height:auto" src="cid:img9">', _png(903, 948))
+    assert f'width="{_IMG_MAX_W}"' in tag, "imagem larga tem que sair limitada à coluna"
+
+
+def test_imagem_pequena_mantem_tamanho_real():
+    from clipping.eml import _img_with_width
+    tag = _img_with_width('<img src="cid:img9">', _png(570, 191))
+    assert 'width="570"' in tag
+
+
+def test_nao_duplica_width_existente():
+    """A logo do banner já vem com width — não pode ganhar um segundo."""
+    from clipping.eml import _img_with_width
+    tag = _img_with_width('<img src="cid:img1" width="104" height="55">', _png(154, 81))
+    assert tag.count("width=") == 1 and 'width="104"' in tag
+
+
+def test_imagem_ilegivel_nao_quebra():
+    from clipping.eml import _img_with_width
+    tag = '<img src="cid:img9">'
+    assert _img_with_width(tag, b"nao sou imagem") == tag
+
+
+def test_pagina_no_formato_que_o_word_entende():
+    """Imprimir/encaminhar pagina no motor do Word. `@page` sozinho ele IGNORA (margem
+    seguia 1,18in → coluna de 6,67in passava da margem); com `@page WordSection1` +
+    `div.WordSection1` a margem vira 0,6in (7,07in úteis) e cabe."""
+    msg = email.message_from_bytes(_raw(), policy=policy.default)
+    html = next(p.get_content() for p in msg.walk() if p.get_content_type() == "text/html")
+    assert "@page WordSection1" in html
+    assert 'div.WordSection1{page:WordSection1;}' in html
+    assert '<div class="WordSection1">' in html
+
+
+def test_toda_imagem_do_email_tem_width():
+    """Contrato de saída: nenhuma imagem do .eml pode ir sem largura declarada."""
+    import re
+    msg = email.message_from_bytes(_raw(), policy=policy.default)
+    html = next(p.get_content() for p in msg.walk() if p.get_content_type() == "text/html")
+    tags = re.findall(r"<img[^>]*>", html)
+    assert tags, "esperava ao menos a logo"
+    assert all(re.search(r'\bwidth="\d+"', t) for t in tags), tags

@@ -216,26 +216,70 @@ def build_html(items: list[ClippingItem], d: date, config: dict | None = None) -
 
     # Largura: o Outlook IGNORA max-width em <div> (o texto correria de ponta a ponta da
     # janela); table com width fixo ele respeita — fica com a "cara de página" do Word.
+    # O @page é p/ o caminho IMPRIMIR/ENCAMINHAR: aí o motor do Word pagina o e-mail e,
+    # com as margens padrão (A4 com 1,18in de cada lado = 5,91in úteis) a coluna de 640px
+    # (6,67in) passava da margem. Margem de 0,6in dá 7,07in úteis → cabe com folga.
+    # ⚠️ TEM que ser no formato do Word (`@page WordSection1` + `div.WordSection1`
+    # envolvendo o corpo): `@page` sozinho o importador de HTML do Word IGNORA (medido:
+    # margem seguia 1,18in). No painel de leitura do Outlook isso é ignorado — lá não muda.
     return ('<html><head><meta charset="utf-8">'
             '<meta name="color-scheme" content="light only">'
-            '<meta name="supported-color-schemes" content="light"></head>'
+            '<meta name="supported-color-schemes" content="light">'
+            '<style>@page WordSection1{size:8.27in 11.69in;margin:0.6in 0.6in 0.6in 0.6in;}'
+            'div.WordSection1{page:WordSection1;}</style></head>'
             f'<body lang="EN-US" style="margin:0;padding:0;background:#ffffff;color:#000000;'
             f'word-wrap:break-word;font-family:{_FONT}">'
+            '<div class="WordSection1">'
             '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-            'width="640" style="width:640px;border-collapse:collapse"><tr>'
+            f'width="{_COL_W}" style="width:{_COL_W}px;border-collapse:collapse"><tr>'
             '<td style="padding:0">'
             f'{_banner_html(d)}{BLANK}{intro_html}{index_block}{recent_html}{earnings_html}'
             f'{analysts_block}{"".join(sections)}'
-            '</td></tr></table></body></html>')
+            '</td></tr></table></div></body></html>')
 
 
 # ── Imagens: data-URI/URL → anexo inline "cid:" (o Outlook BLOQUEIA data:image) ──────
 
-_IMG_SRC_RE = re.compile(r'<img\b[^>]*?\bsrc="([^"]+)"', re.I)
+_IMG_TAG_RE = re.compile(r'<img\b[^>]*?>', re.I)      # a tag INTEIRA (precisa p/ pôr width)
+_IMG_SRC_RE = re.compile(r'\bsrc="([^"]+)"', re.I)    # o src DENTRO da tag
 
 # Teto p/ fotos REMOTAS embutidas (base64 infla ~33%) — evita e-mail gigante quando a
 # edição tem muitas fotos. Passou do teto: a imagem segue como link, não some.
 _INLINE_BUDGET = 2_500_000
+
+# Largura da coluna do e-mail e teto de imagem DENTRO dela (deixa uma folga p/ a borda).
+_COL_W    = 640
+_IMG_MAX_W = 620
+
+
+def _px_size(data: bytes) -> tuple[int, int] | None:
+    """Largura×altura em pixels do binário da imagem — usa o leitor do python-docx
+    (já é dependência do clipping; NÃO precisa de Pillow no runner do Actions)."""
+    try:
+        from docx.image.image import Image as _DocxImage
+        im = _DocxImage.from_blob(data)
+        return int(im.px_width), int(im.px_height)
+    except Exception as e:                                    # formato exótico/corrompido
+        log.info("eml: tamanho da imagem ilegível (%s)", e)
+        return None
+
+
+def _img_with_width(tag: str, data: bytes) -> str:
+    """Põe `width=` explícito na tag, limitado à largura da coluna.
+
+    ⚠️ **`max-width:100%` NÃO EXISTE no motor do Outlook/Word.** Sem `width=`, uma imagem
+    grande (ex.: print de tabela do Platts com 903px) ESTICA a tabela de 640px inteira →
+    a coluna vira ~904px e TODO o texto do e-mail passa da margem e sai CORTADO à direita
+    (medido: tabela 9,42in numa página de 5,91in úteis). Com `width=`, o motor respeita.
+    Só a largura é escrita — a altura o próprio motor calcula, preservando a proporção.
+    """
+    if re.search(r'\bwidth\s*=', tag, re.I):                  # já tem (ex.: a logo)
+        return tag
+    size = _px_size(data)
+    if not size:
+        return tag
+    w = min(size[0], _IMG_MAX_W)
+    return tag[:-1].rstrip() + f' width="{w}">'
 
 
 def _inline_images(html: str) -> tuple[str, list[tuple[str, bytes, str]]]:
@@ -244,40 +288,47 @@ def _inline_images(html: str) -> tuple[str, list[tuple[str, bytes, str]]]:
     O Outlook não mostra `data:image;base64` (logo/tabelas do Platts viravam quadrado
     quebrado) e pede permissão p/ imagem remota — `cid:` funciona nos dois casos.
     Se o download falhar, o src original fica como estava (nunca perde a imagem).
+    Aproveita que os bytes estão em mão para fixar a LARGURA de cada imagem (ver
+    `_img_with_width`) — é o que impede uma imagem larga de estourar o e-mail.
     """
     from .build import _fetch_image
 
     parts: list[tuple[str, bytes, str]] = []
-    seen: dict[str, str] = {}
+    seen: dict[str, tuple[str, bytes]] = {}
     budget = [_INLINE_BUDGET]
 
     def repl(m: re.Match) -> str:
-        src = m.group(1)
+        tag = m.group(0)
+        msrc = _IMG_SRC_RE.search(tag)
+        if not msrc:
+            return tag
+        src = msrc.group(1)
         if src.startswith("cid:"):
-            return m.group(0)
+            return tag
         # Foto remota só entra enquanto couber no orçamento; data-URI SEMPRE entra
         # (fora do e-mail ela não existe — ficaria quebrada de qualquer jeito).
         is_data = src.startswith("data:")
         if not is_data and budget[0] <= 0:
-            return m.group(0)
-        cid = seen.get(src)
-        if cid is None:
+            return tag
+        hit = seen.get(src)
+        if hit is None:
             try:
                 got = _fetch_image(src)
             except Exception:
                 got = None
             if not got:
                 log.info("eml: imagem não embutida (segue como link): %.80s", src)
-                return m.group(0)
+                return tag
             data, ext = got
             if not is_data:
                 budget[0] -= len(data)
             cid = f"img{len(parts) + 1}"
             parts.append((cid, data, "jpeg" if ext == "jpg" else ext))
-            seen[src] = cid
-        return m.group(0).replace(f'src="{src}"', f'src="cid:{cid}"')
+            seen[src] = hit = (cid, data)
+        cid, data = hit
+        return _img_with_width(tag.replace(f'src="{src}"', f'src="cid:{cid}"'), data)
 
-    return _IMG_SRC_RE.sub(repl, html), parts
+    return _IMG_TAG_RE.sub(repl, html), parts
 
 
 def build_plain_text(items: list[ClippingItem], d: date) -> str:
