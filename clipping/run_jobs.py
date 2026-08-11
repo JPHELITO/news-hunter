@@ -10,6 +10,7 @@ import argparse
 import logging
 import os
 from datetime import date, datetime, timezone
+from urllib.parse import quote
 
 import requests
 
@@ -65,24 +66,35 @@ def read_job(job_id: str) -> dict | None:
     return data[0] if data else None
 
 
+def _enc(path: str) -> str:
+    """Caminho do arquivo → pedaço de URL. O nome tem ESPAÇO ("NEWS - MMDDYYYY.docx"),
+    então tem que ir codificado (%20); explícito para não depender do requests."""
+    return quote(path, safe="/")
+
+
 def _upload(path: str, data: bytes, content_type: str) -> None:
     url, key = _env()
-    r = requests.post(f"{url}/storage/v1/object/{BUCKET}/{path}",
+    r = requests.post(f"{url}/storage/v1/object/{BUCKET}/{_enc(path)}",
                       headers=_h(key, {"Content-Type": content_type, "x-upsert": "true"}),
                       data=data, timeout=90)
     if not r.ok:
         raise RuntimeError(f"upload {path} -> {r.status_code} {r.text[:200]}")
 
 
-def _sign(path: str) -> str:
+def _sign(path: str, download: str | None = None) -> str:
     url, key = _env()
-    r = requests.post(f"{url}/storage/v1/object/sign/{BUCKET}/{path}",
+    r = requests.post(f"{url}/storage/v1/object/sign/{BUCKET}/{_enc(path)}",
                       headers=_h(key, {"Content-Type": "application/json"}),
                       json={"expiresIn": SIGN_TTL}, timeout=30)
     if not r.ok:
         raise RuntimeError(f"sign {path} -> {r.status_code} {r.text[:200]}")
     signed = r.json()["signedURL"]            # ex.: /object/sign/<bucket>/<path>?token=...
-    return f"{url}/storage/v1{signed}"
+    out = f"{url}/storage/v1{signed}"
+    if download:
+        # &download=<nome> → o Storage responde Content-Disposition: attachment com ESTE
+        # nome, então o navegador salva "NEWS - MMDDYYYY.docx" mesmo que a URL mude.
+        out += ("&" if "?" in out else "?") + f"download={quote(download)}"
+    return out
 
 
 def patch_job(job_id: str, fields: dict) -> None:
@@ -108,8 +120,8 @@ def process(job: dict) -> None:
         errs = [{"url": u, "reason": r} for (u, r) in (res.get("errors") or [])]
         patch_job(jid, {
             "status": "done",
-            "docx_path": _sign(f"{base}/{res['docx_name']}"),
-            "eml_path": _sign(f"{base}/{res['eml_name']}"),
+            "docx_path": _sign(f"{base}/{res['docx_name']}", download=res["docx_name"]),
+            "eml_path": _sign(f"{base}/{res['eml_name']}", download=res["eml_name"]),
             "preview_path": _sign(f"{base}/{res['html_name']}"),   # prévia inline (HTML)
             "error": None, "errors": errs, "finished_at": _now(), "updated_at": _now(),
         })

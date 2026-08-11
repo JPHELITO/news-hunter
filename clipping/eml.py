@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .build import (
     ClippingItem, SECTOR_ORDER, SECTOR_LABEL, TAKE_SYMBOL, _DEFAULT_ANALYSTS,
-    InlineSeg, intro_has_content, line_text, parse_intro_lines,
+    InlineSeg, clipping_basename, intro_has_content, line_text, parse_intro_lines,
 )
 
 log = logging.getLogger(__name__)
@@ -401,7 +401,7 @@ def build_eml_bytes(items: list[ClippingItem], d: date | None = None,
             html_part.add_related(data, maintype="image", subtype=subtype, cid=f"<{cid}>")
 
     if docx_bytes:
-        name = docx_name or f"clipping_{d.strftime('%Y%m%d')}.docx"
+        name = docx_name or f"{clipping_basename(d)}.docx"
         msg.add_attachment(
             docx_bytes,
             maintype="application",

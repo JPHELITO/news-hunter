@@ -17,7 +17,8 @@ from datetime import date
 from pathlib import Path
 
 from .build import (
-    ClippingItem, build_docx, detect_sector, _BILINGUAL_DOMAINS, _translate_to_english,
+    ClippingItem, build_docx, clipping_basename, detect_sector,
+    _BILINGUAL_DOMAINS, _translate_to_english,
 )
 from .bodies import fetch_body, norm_domain, get_stored_body, store_body
 from .eml import build_eml_bytes, build_html
@@ -91,12 +92,13 @@ def build_from_payload(payload: list[dict], d: date | None = None, fetch: bool =
     errors: list = []
     items = [_to_item(r, fetch, errors) for r in rows]
     docx = build_docx(items, d, config)
-    docx_name = f"clipping_{d.strftime('%Y%m%d')}.docx"
+    base = clipping_basename(d)                              # "NEWS - MMDDYYYY"
+    docx_name = f"{base}.docx"
     eml = build_eml_bytes(items, d, docx_bytes=docx, docx_name=docx_name, config=config)
     html = build_html(items, d, config, docx_bytes=docx)      # prévia inline (mesmo HTML do e-mail)
     return {"docx": docx, "eml": eml, "docx_name": docx_name,
-            "eml_name": f"clipping_{d.strftime('%Y%m%d')}.eml",
-            "html": html, "html_name": f"clipping_{d.strftime('%Y%m%d')}.html",
+            "eml_name": f"{base}.eml",
+            "html": html, "html_name": f"{base}.html",
             "items": items, "errors": errors}
 
 

@@ -13,7 +13,7 @@ Dois modos (o script escolhe sozinho):
 O script NUNCA envia nada.
 
 Uso:
-  1) Baixe o clipping_AAAAMMDD.docx na dashboard (cai no Downloads).
+  1) Baixe o "NEWS - MMDDYYYY.docx" na dashboard (cai no Downloads).
   2) De 2 cliques em "Montar email do clipping.bat" (pega o .docx mais novo do Downloads),
      ou arraste um .docx especifico pra cima do .bat.
 
@@ -46,26 +46,35 @@ def die(msg):
 
 
 def find_docx():
-    """.docx passado como argumento (arrastar no .bat); senao o clipping_*.docx mais novo do Downloads."""
+    """.docx passado como argumento (arrastar no .bat); senao o clipping mais novo do Downloads.
+
+    Nome atual: "NEWS - MMDDYYYY.docx". O antigo "clipping_AAAAMMDD.docx" segue aceito
+    (arquivos ja baixados antes da mudanca de nome).
+    """
     for a in sys.argv[1:]:
         if a.lower().endswith(".docx"):
             if os.path.isfile(a):
                 return a
             die(f"Arquivo nao encontrado: {a}")
     dl = os.path.join(os.path.expanduser("~"), "Downloads")
-    cands = glob.glob(os.path.join(dl, "clipping_*.docx"))
+    cands = glob.glob(os.path.join(dl, "NEWS - *.docx")) + glob.glob(os.path.join(dl, "clipping_*.docx"))
     if not cands:
-        die("Nenhum clipping_*.docx no Downloads.\n"
+        die("Nenhum \"NEWS - MMDDYYYY.docx\" no Downloads.\n"
             "Baixe o Word do clipping na dashboard primeiro, ou arraste o .docx pra cima do .bat.")
     return max(cands, key=os.path.getmtime)
 
 
 def subject_from(path):
-    m = re.search(r"clipping_(\d{4})(\d{2})(\d{2})", os.path.basename(path))
+    base = os.path.basename(path)
+    m = re.search(r"NEWS\s*-\s*(\d{2})(\d{2})(\d{4})", base)      # NEWS - MMDDYYYY
     if m:
+        mo, d, y = m.groups()
+    else:
+        m = re.search(r"clipping_(\d{4})(\d{2})(\d{2})", base)    # nome antigo
+        if not m:
+            return "*** ITAU BBA Daily News: LatAm Steel & Mining, Pulp & Paper ***"
         y, mo, d = m.groups()
-        return f"*** ITAU BBA Daily News: LatAm Steel & Mining, Pulp & Paper - {mo}/{d}/{y} ***"
-    return "*** ITAU BBA Daily News: LatAm Steel & Mining, Pulp & Paper ***"
+    return f"*** ITAU BBA Daily News: LatAm Steel & Mining, Pulp & Paper - {mo}/{d}/{y} ***"
 
 
 def get_outlook(win32):

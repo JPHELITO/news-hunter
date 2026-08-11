@@ -41,7 +41,7 @@ def _items():
 
 def _raw():
     return build_eml_bytes(_items(), date(2026, 8, 4), docx_bytes=b"PK\x03\x04fake",
-                           docx_name="clipping_20260804.docx")
+                           docx_name="NEWS - 08042026.docx")
 
 
 def test_quebras_de_linha_sao_crlf():
@@ -83,7 +83,7 @@ def test_linhas_dentro_do_limite_mime():
 def test_anexo_docx_presente():
     msg = email.message_from_bytes(_raw())
     nomes = [p.get_filename() for p in msg.walk() if p.get_filename()]
-    assert "clipping_20260804.docx" in nomes
+    assert "NEWS - 08042026.docx" in nomes
 
 
 # ── Largura: uma imagem grande estourava o e-mail INTEIRO (2026-08-10) ────────────

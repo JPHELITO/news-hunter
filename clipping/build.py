@@ -20,6 +20,15 @@ _ROOT = Path(__file__).resolve().parent          # pasta do pacote clipping/ (te
 _TEMPLATE_PATH = _ROOT / "template.docx"
 OUT_DIR = _ROOT / "out"
 
+
+def clipping_basename(d: date) -> str:
+    """Nome dos arquivos que saem do clipping: "NEWS - MMDDYYYY" (mês-dia-ano).
+
+    Um lugar só para o Word, o .eml, a prévia e o anexo dentro do e-mail nunca
+    divergirem. (Convenção do usuário, 2026-08-11 — antes era clipping_AAAAMMDD.)
+    """
+    return f"NEWS - {d.strftime('%m%d%Y')}"
+
 # ── Sector detection ──────────────────────────────────────────────────────────
 
 _SM_DOMAINS    = {"core.spglobal.com", "www.mining.com"}
@@ -1599,7 +1608,7 @@ def generate_clipping(
                     log.debug("clipping: erro na tradução: %s", e)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"clipping_{d.strftime('%Y%m%d')}.docx"
+    filename = f"{clipping_basename(d)}.docx"
     out_path = OUT_DIR / filename
 
     try:
