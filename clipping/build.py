@@ -322,6 +322,28 @@ _DEFAULT_ANALYSTS: list[dict] = [
 ]
 
 
+# Entidade HTML de verdade: &rsquo; &amp; &uacute; &#8217; &#x27; — exige o ";" no fim,
+# então um "&" solto ("Pulp & Paper") ou "AT&T" NÃO casa e passa intacto.
+_ENTITY_RE = re.compile(r"&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});")
+
+
+def clean_headline(t: str) -> str:
+    """Manchete → texto de verdade. "Arauco&rsquo;s Sucuri&uacute;" → "Arauco’s Sucuriú".
+
+    O Fastmarkets entrega o título com CÓDIGO DE HTML dentro e o banco guarda assim (122 de
+    124 casos medidos em 11.540 manchetes). Na dashboard o navegador decodifica sozinho e
+    ninguém vê; no Word/e-mail vira texto literal — era o título "todo cagado" no clipping.
+
+    Rede de segurança do lado do clipping: o `hunter/fastmarkets_scraper.py` já decodifica na
+    coleta, mas as manchetes que JÁ estão no banco vieram cruas (o push é ignore-duplicates,
+    não reescreve título). Só age quando existe entidade de fato — medido: dos 11.416 títulos
+    sem entidade, ZERO mudariam. Um passe basta (0 casos de codificação dupla no banco).
+    """
+    if not t or "&" not in t:
+        return t
+    return html.unescape(t) if _ENTITY_RE.search(t) else t
+
+
 @dataclass
 class ClippingItem:
     url:              str
@@ -335,6 +357,11 @@ class ClippingItem:
     # Campos opcionais para artigos bilíngues (Valor/Estadão/El Financiero)
     translated_title: str = field(default="")
     translated_body:  str = field(default="")
+
+    def __post_init__(self):
+        # vale p/ QUEM construir o item (geração, aquecedor, testes) — não dá p/ esquecer
+        self.title            = clean_headline(self.title)
+        self.translated_title = clean_headline(self.translated_title)
 
 
 # ── HTML → structured blocks (texto + imagens) ────────────────────────────────

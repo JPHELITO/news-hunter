@@ -17,7 +17,7 @@ from datetime import date
 from pathlib import Path
 
 from .build import (
-    ClippingItem, build_docx, clipping_basename, detect_sector,
+    ClippingItem, build_docx, clean_headline, clipping_basename, detect_sector,
     _BILINGUAL_DOMAINS, _translate_to_english,
 )
 from .bodies import fetch_body, norm_domain, get_stored_body, store_body
@@ -50,7 +50,9 @@ def _to_item(row: dict, fetch: bool, errors: list) -> ClippingItem:
     dom = norm_domain(url)
     take = row.get("take") or "="
     sector = row.get("sector") if row.get("sector") in _VALID_SECTORS else ""
-    title = row.get("title") or url
+    # título vem do banco e pode ter código de HTML dentro (Fastmarkets) → decodifica ANTES
+    # de tudo: entra limpo na tradução, no corpo guardado e no detect_sector.
+    title = clean_headline(row.get("title") or url)
     src = row.get("source_name") or dom
     body = row.get("body") or ""          # 1) corpo colado no payload (item 8) tem prioridade
     tt = tb = ""
@@ -81,7 +83,7 @@ def _to_item(row: dict, fetch: bool, errors: list) -> ClippingItem:
         except Exception as e:
             log.warning("clipping: tradução falhou (%s): %s", url, e)
     if tt:
-        it.translated_title, it.translated_body = tt, tb
+        it.translated_title, it.translated_body = clean_headline(tt), tb
     return it
 
 

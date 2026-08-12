@@ -56,6 +56,15 @@ def _html_to_text(h: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _clean_title(t: str) -> str:
+    """A API do FM devolve o TÍTULO com código de HTML dentro ("Arauco&rsquo;s Sucuri&uacute;").
+
+    O snippet já passava pelo _html_to_text (que decodifica); o título ia cru pro banco e
+    saía literal no clipping. Só decodifica — sem tirar tag, que em manchete não existe.
+    """
+    return re.sub(r"\s+", " ", _html.unescape(t or "").replace("�", "")).strip()
+
+
 def _parse_date(s: str | None) -> datetime | None:
     if not s:
         return None
@@ -164,7 +173,7 @@ def _scrape() -> list[RawArticle]:
                     )
                     results_meta.append({
                         "id": article_id,
-                        "title": art.get("title") or "",
+                        "title": _clean_title(art.get("title") or ""),
                         "snippet": snippet,
                         "published_at": art.get("publishedDate"),
                         "url": f"https://dashboard.fastmarkets.com/a/{article_id}",
