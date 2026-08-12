@@ -265,6 +265,10 @@ def _fetch_yahoo_chart(symbol: str, range_: str | None = None,
                 "price": price,
                 "change_abs": change_abs,
                 "change_pct": change_pct,
+                # instante (epoch) da última negociação que formou este preço. Usado pelo
+                # Market Pulse para descartar mercado em feriado, que devolve o fechamento
+                # anterior como se fosse de hoje. Aditivo: nenhum caller antigo lê esta chave.
+                "quote_time": meta.get("regularMarketTime"),
             }
             if range_ and interval:
                 ts = res0.get("timestamp") or []

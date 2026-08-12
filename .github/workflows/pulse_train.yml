@@ -1,0 +1,54 @@
+name: Market Pulse — treino semanal do modelo
+# ─────────────────────────────────────────────────────────────────────────────
+# Re-treina os pesos do Market Pulse com todo o histórico acumulado em pulse_snapshot
+# e grava em pulse_model. É o ÚNICO lugar do projeto que instala pandas/numpy/sklearn —
+# o caminho diário é Python puro de propósito, para não engordar o hunt-loop de 5 min.
+#
+# QUANDO: domingo de manhã (mercado fechado, nada disputa com a rodada diária) e sob
+# demanda pelo botão. Uma semana a mais de dado muda pouco os pesos; o valor do retreino
+# é acompanhar deriva, não perseguir o último pregão.
+#
+# O QUE OLHAR NO LOG: a coluna `ic_oos`. Referência do holdout de 205 pregões —
+#   AURA33 0,57 · VALE3 0,47 · CSNA3 0,37 · CMIN3 0,28 · GGBR4 0,25
+#   USIM5  0,25 · KLBN11 0,21 · SUZB3 e RANI3 ~0 (sem sinal, é esperado)
+# Queda forte e generalizada quase sempre é problema de CAPTURA (horário, feriado,
+# símbolo faltando), não do modelo. Confira pulse_snapshot antes de mexer em qualquer peso.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 12 * * 0"      # domingo, 09:00 BRT
+
+permissions:
+  contents: read
+
+concurrency:
+  group: market-pulse-train
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependências (só aqui)
+        run: pip install requests python-dotenv pandas numpy scipy scikit-learn
+
+      - name: Treinar e gravar em pulse_model
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+        run: python scripts/pulse_train.py

@@ -1,0 +1,78 @@
+name: Market Pulse — rodada diária (07:00 e 09:00 BRT)
+# ─────────────────────────────────────────────────────────────────────────────
+# O QUE ESTE WORKFLOW FAZ
+#
+# Duas vezes por dia útil ele tira uma "foto" do mundo (23 instrumentos de Ásia,
+# Europa, commodities, futuros e câmbio) e estima quanto cada coberta deve ABRIR
+# acima ou abaixo do fechamento de ontem. Grava em pulse_daily; a dashboard lê dali.
+#
+# POR QUE DOIS HORÁRIOS
+#   07:00 BRT → leitura preliminar, chega junto com o clipping da manhã (IC 0,273)
+#   09:00 BRT → leitura definitiva, uma hora antes da abertura         (IC 0,290)
+# Cada corte tem o SEU PRÓPRIO jogo de pesos em pulse_model, porque foram validados
+# em separado. O corte é deduzido da hora UTC do run (hunter/pulse_snapshot.cut_agora).
+#
+# POR QUE CONCURRENCY PRÓPRIA
+# O hunt-loop e o hunt-playwright são CORRENTES: cada run ocupa o grupo por até 5h55.
+# Um run nascido em grupo compartilhado ficaria PENDING atrás da corrente e seria
+# cancelado sem executar nada — foi exatamente o que aconteceu com o botão "Buscar
+# novas agora" em 2026-08-06. Grupo próprio = nunca cai atrás de ninguém.
+#
+# CUSTO: leve. Uma chamada ao Yahoo com 23 símbolos em paralelo e alguns upserts.
+# Sem pandas, sem numpy — o modelo é linear e pontuar é um produto escalar.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      cut:
+        description: "corte a rodar (vazio = deduz pela hora UTC)"
+        required: false
+        default: ""
+        type: choice
+        options: ["", "07", "09"]
+  schedule:
+    # O GitHub Actions atrasa cron em horário de pico. Rodamos 10 min antes do alvo
+    # para o dado chegar a tempo; se atrasar um pouco, o snapshot ainda é pré-abertura
+    # (a B3 abre 13:00 UTC e a pontuação exige margem, não pontualidade).
+    - cron: "50 9 * * 1-5"      # ~07:00 BRT — preliminar
+    - cron: "50 11 * * 1-5"     # ~09:00 BRT — definitiva
+
+permissions:
+  contents: read
+
+concurrency:
+  group: market-pulse-daily
+  cancel-in-progress: false
+
+jobs:
+  pulse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install requests python-dotenv
+
+      - name: Tirar a foto e pontuar
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+          CUT_INPUT:            ${{ github.event.inputs.cut }}
+        run: |
+          if [ -n "$CUT_INPUT" ]; then
+            python -m hunter.pulse_daily --cut "$CUT_INPUT"
+          else
+            python -m hunter.pulse_daily
+          fi
