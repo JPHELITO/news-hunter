@@ -64,6 +64,10 @@ QUOTES_LIST = [
     ("COPEC.SN",    "Copec",             "pp",          "BCS",   "yahoo", "COPEC.SN"),
     ("GMEXICOB.MX", "Grupo México",      "copper",      "BMV",   "yahoo", "GMEXICOB.MX"),
     # ── Steel ────────────────────────────────────────────────────────────
+    # GGB = a ADR da Gerdau em Nova York (mesma empresa da GGBR4.SA, em USD). Fica só
+    # aqui, no grupo do setor, e NÃO no G_COVERAGE do front — senão a Gerdau contaria
+    # duas vezes na cobertura. Mesmo tratamento de VALE (ADR) e AUGO.
+    ("GGB",         "Gerdau (NYSE)",     "steel",       "NYSE",  "yahoo", "GGB"),
     ("MT",          "ArcelorMittal",     "steel",       "NYSE",  "yahoo", "MT"),
     ("NUE",         "Nucor",             "steel",       "NYSE",  "yahoo", "NUE"),
     ("CMC",         "Commercial Metals", "steel",       "NYSE",  "yahoo", "CMC"),
