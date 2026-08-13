@@ -110,9 +110,13 @@ def _bar_png(linhas: list[tuple[str, bool]], w_px: int, h_px: int, pt: float,
                                  fill="#000000", corners=(False, True, True, False))
         except TypeError:                                      # Pillow < 9.4
             dr.rectangle([0, 0, w_px * s - 1, h_px * s - 1], fill="#000000")
-        # lIns/tIns do bodyPr da forma: 0,1in e 0,05in
-        x, alt = round(9.6 * s), pt * 96 / 72 * 1.25
-        y = round((h_px - alt * len(linhas)) / 2) * s
+        # Calibrado contra o bitmap da barra do e-mail REAL do usuário (1497x56):
+        # texto começa em x=14 (lIns 0,1in = 9,6px + folga interna da caixa) e as duas
+        # linhas ficam 17px uma da outra (1,06x o corpo de 12pt), bloco centrado na altura.
+        px = pt * 96 / 72
+        x = round((9.6 + 4) * s)
+        alt = px * 1.06
+        y = round((h_px - alt * len(linhas)) / 2 * s)
         for txt, bold in linhas:
             dr.text((x, y), txt, font=(fb if bold else fr), fill="#FFFFFF")
             y += round(alt * s)
@@ -172,7 +176,12 @@ class _DocxEmail:
         return data, ("jpeg" if ext in ("jpg", "jpeg") else ext)
 
     def _defaults(self) -> tuple[float, str]:
-        """Tamanho e fonte padrão do documento (docDefaults/styles)."""
+        """Tamanho e fonte padrão de um parágrafo SEM estilo próprio.
+
+        ⚠️ O Word herda do estilo **Normal**, não do `docDefaults` — e aqui os dois diferem
+        (docDefaults 22 = 11pt · Normal 24 = **12pt**). Eu usava o docDefaults e o texto da
+        barra saía 11pt: medido contra o bitmap da barra do e-mail REAL do usuário, a linha 2
+        dele tem 335px e 12pt dá 336px (11pt daria 309). O `Normal` manda."""
         pt, font = 11.0, _FONT_FALLBACK
         try:
             from lxml import etree
@@ -180,6 +189,12 @@ class _DocxEmail:
             sz = root.find(f".//{_W}docDefaults//{_W}rPr/{_W}sz")
             if sz is not None and sz.get(f"{_W}val"):
                 pt = int(sz.get(f"{_W}val")) / 2.0
+            for st in root.findall(f"{_W}style"):        # o estilo Normal vence
+                if st.get(f"{_W}styleId") == "Normal":
+                    nsz = st.find(f"{_W}rPr/{_W}sz")
+                    if nsz is not None and nsz.get(f"{_W}val"):
+                        pt = int(nsz.get(f"{_W}val")) / 2.0
+                    break
             rf = root.find(f".//{_W}docDefaults//{_W}rPr/{_W}rFonts")
             if rf is not None and rf.get(f"{_W}ascii"):
                 font = f'{rf.get(f"{_W}ascii")},Helvetica,sans-serif'
