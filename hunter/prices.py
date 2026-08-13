@@ -395,10 +395,30 @@ def update_quotes() -> int:
     return _supa_upsert("quotes", rows)
 
 
+# Teto de séries INTEIRAS re-puxadas num mesmo ciclo. Existe para o hunt-loop (que roda
+# a cada 5 min) nunca engordar: se a quote_history estiver vazia — antes do backfill, ou
+# quando um ticker novo entra no QUOTES_LIST — o robô se cura sozinho ao longo de alguns
+# ciclos em vez de baixar ~30 MB de uma vez dentro de uma iteração.
+_FULL_PER_RUN = 5
+
+
 def update_quote_history(max_age_hours: float = 18.0) -> int:
-    """Atualiza a série DIÁRIA (~1 ano) de cada empresa — base p/ WoW/MoM/YoY e o gráfico
-    do modal. Auto-throttled: só rebusca tickers cujo `daily` está ausente ou mais velho que
-    max_age_hours. Na maioria dos ciclos não faz nada; ~1×/dia rebusca os 14. Retorna nº rows.
+    """Mantém o histórico dos papéis SEM re-baixar o que já é passado.
+
+    Dois campos, dois públicos — e o segundo é DERIVADO do primeiro (a redução acontece
+    no Postgres, dentro de append_quote_history), então as duas séries nunca divergem:
+      • quote_history.daily → série DIÁRIA COMPLETA (a aba Market busca sob demanda)
+      • quotes.daily        → série LEVE (mensal + 1 ano diário) que a home baixa inteira
+
+    Todo dia, por papel: UMA requisição de janela curta (~1,7 KB) que já traz
+    `events.splits`. A série inteira só é re-puxada quando (a) o papel ainda não tem
+    histórico ou (b) veio um SPLIT novo — que reescreve o passado retroativamente.
+
+    Antes isto re-baixava `1y` + `max` de todo mundo, todo dia: 61 KB por papel = 2,8 MB/dia
+    só para descobrir um fechamento novo. Agora são 79 KB/dia. Histórico é histórico.
+
+    Enquanto `admin/supabase_quote_history.sql` não tiver sido rodado, cai no caminho
+    ANTIGO (`_update_quotes_daily_legacy`) para a home não ficar sem série no intervalo.
     """
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("SUPABASE_SERVICE_KEY", "")
@@ -430,9 +450,66 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
     if not stale:
         return 0
 
+    from hunter import quote_history as qh
+
+    estado = qh.load_state()
+    if estado is None:                       # SQL ainda não rodado → caminho antigo
+        return _update_quotes_daily_legacy(stale, url, key)
+
+    n = fulls = 0
+    for ticker, qsym in stale:
+        st = estado.get(ticker) or {}
+
+        # (a) papel sem histórico nenhum: puxa a série inteira (respeitando o teto do ciclo)
+        if not st:
+            if fulls >= _FULL_PER_RUN:
+                continue                     # fica para o próximo ciclo — não engorda o loop
+            full = qh.fetch_full(qsym)
+            fulls += 1
+            if len(full) < 2:
+                continue
+            log.info("quote_history: %s sem histórico — série inteira puxada (%d pontos)", ticker, len(full))
+            if qh.append(ticker, full, replace=True):
+                n += 1
+            continue
+
+        # (b) dia a dia: janela curta, que já diz se houve SPLIT
+        recent, splits = qh.fetch_recent(qsym, days=7)
+        novo_split = max(splits) if splits else None
+        if novo_split and novo_split > (st.get("last_split_ts") or 0):
+            # O split reescreve o passado: fazer append aqui criaria um DEGRAU FALSO na
+            # série (metade em escala velha). Por isso re-puxa tudo e substitui.
+            if fulls >= _FULL_PER_RUN:
+                continue
+            full = qh.fetch_full(qsym)
+            fulls += 1
+            if len(full) < 2:
+                continue
+            log.info("quote_history: %s teve split — série inteira re-puxada (%d pontos)", ticker, len(full))
+            if qh.append(ticker, full, last_split_ts=novo_split, replace=True):
+                n += 1
+            continue
+
+        if not recent:
+            continue
+        if qh.append(ticker, recent):
+            n += 1
+
+    if n:
+        log.info("quote_history: %d papéis atualizados (%d séries inteiras)", n, fulls)
+    return n
+
+
+def _update_quotes_daily_legacy(stale: list[tuple[str, str]], url: str, key: str) -> int:
+    """Caminho ANTIGO: re-baixa 1y+max do Yahoo e grava só `quotes.daily`.
+
+    Só roda enquanto `admin/supabase_quote_history.sql` não tiver sido aplicado. Custa
+    61 KB por papel por dia (contra 1,7 KB do caminho novo) — é o preço de não deixar a
+    home sem série no intervalo entre o deploy do código e a execução do SQL.
+    """
     syms = [qsym for _, qsym in stale]
     daily_data = fetch_yahoo(syms, range_="1y",  interval="1d")   # granular (último ano)
-    hist_data  = fetch_yahoo(syms, range_="max", interval="1d")   # mensal (histórico completo)
+    hist_data  = fetch_yahoo(syms, range_="max", interval="1d")   # mensal (o Yahoo rebaixa)
     # PATCH (não upsert): a linha do ticker já existe (update_quotes roda antes). Upsert
     # parcial tentaria INSERT com name/price nulos (NOT NULL) → 23502. PATCH só altera daily.
     h = {"apikey": key, "Authorization": f"Bearer {key}",
@@ -444,7 +521,6 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
         if not d1 and not dm:
             continue
         # Série única: mensal antigo (< início do diário) + diário do último ano.
-        # Cobre WoW/MoM/YoY/YTD (cauda diária) e Max (série inteira) com 1 só campo.
         merged = ([p for p in dm if p[0] < d1[0][0]] + d1) if d1 else dm
         try:
             r = requests.patch(
@@ -458,7 +534,7 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
         except Exception as e:
             log.warning("quote_history PATCH %s exceção: %s", ticker, e)
     if n:
-        log.info("quote_history: %d séries (mensal+diário) atualizadas", n)
+        log.info("quote_history (legado): %d séries (mensal+diário) atualizadas", n)
     return n
 
 

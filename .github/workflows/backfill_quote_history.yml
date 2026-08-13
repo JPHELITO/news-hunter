@@ -1,0 +1,75 @@
+name: Quote History — backfill do histórico diário completo
+# ─────────────────────────────────────────────────────────────────────────────
+# Puxa a série DIÁRIA COMPLETA de cada papel da aba Market e grava em quote_history.
+# É trabalho de UMA VEZ: depois disso o hunt-loop só acrescenta o fechamento do dia
+# (hunter/prices.py::update_quote_history, ~1,7 KB por papel por dia).
+#
+# ANTES DE RODAR: aplicar `admin/supabase_quote_history.sql` (repo do dashboard) no
+# SQL Editor do Supabase. Sem a tabela e a função, o script não tem onde gravar.
+#
+# CUSTO MEDIDO (ensaio com os 47 papéis): 103 s, 320.237 pontos, 0 falhas.
+# São 47 requisições ao Yahoo — o hunt-loop já faz 47 a cada 5 minutos, então isto
+# é ~0,3% de um dia normal de tráfego. Não chega perto de nenhum limite.
+#
+# ⚠️ O script usa period1/period2, NÃO `range=max`: com range=max o Yahoo ignora o
+#    `interval=1d` e devolve barras MENSAIS (VALE3 = 320 pontos em 26 anos).
+#
+# SEM AGENDAMENTO de propósito: histórico é histórico. Rodar de novo só quando quiser
+# forçar (--force) ou incluir um papel novo — e mesmo o papel novo o robô diário adota
+# sozinho, puxando a série inteira dele no ciclo seguinte.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Re-puxar TODOS, inclusive quem já tem série"
+        type: boolean
+        default: false
+      only:
+        description: "Só estes tickers (separados por vírgula). Vazio = todos."
+        type: string
+        default: ""
+      dry_run:
+        description: "Só medir, sem gravar"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quote-history-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install requests python-dotenv
+
+      - name: Backfill do histórico diário
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+        run: |
+          ARGS=""
+          if [ "${{ inputs.force }}"   = "true" ]; then ARGS="$ARGS --force";   fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${{ inputs.only }}" ];          then ARGS="$ARGS --only '${{ inputs.only }}'"; fi
+          echo "rodando: python scripts/backfill_quote_history.py $ARGS"
+          eval python scripts/backfill_quote_history.py $ARGS
