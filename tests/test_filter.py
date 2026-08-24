@@ -207,6 +207,10 @@ class TestPlattsPassThrough:
     def test_platts_rationale_in_title_blocked(self):
         assert not _passes("Iron ore rationale: IODEX edges lower", "assessment", "S&P Platts")
 
+    def test_platts_pricing_rational_typo_blocked(self):
+        # grafia errada da fonte ("Rational" sem o "e") — ver _EXCLUDE_CONTENT_TYPES
+        assert not _passes("Pricing Rational: NBSK CIF China", "market", "S&P Platts")
+
     def test_platts_rationale_case_insensitive(self):
         assert not _passes("HRC China Rationale", "", "S&P Platts")
 

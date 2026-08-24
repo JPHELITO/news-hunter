@@ -77,7 +77,10 @@ def patch_take(art: dict, dry_run: bool) -> bool:
         art.get("snippet", ""),
         art.get("source_name", ""),
     ]))
-    meta = {"source_name": art.get("source_name", "")}
+    meta = {
+        "source_name": art.get("source_name", ""),
+        "title":       art.get("title") or "",  # escopo do bloqueio de Rationale
+    }
     result = classify_take(text, meta)
 
     take_data = {

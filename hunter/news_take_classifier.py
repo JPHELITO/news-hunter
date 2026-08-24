@@ -315,8 +315,15 @@ _MACRO_NEG_RE = re.compile(
     r"desaceler\w*|crise|fraqueza)\b", re.I,
 )
 
-# Termos de exclusão automática (tipo de conteúdo)
-_EXCLUDE_CONTENT_TYPES = frozenset(["rationale"])
+# Termos de exclusão automática (tipo de conteúdo). Casam por SUBSTRING, e só
+# contra TÍTULO / ContentType / fonte (ver _is_rationale).
+# "pricing rational" (sem o "e") NÃO é erro nosso: é como a Fastmarkets passou a
+# escrever o título da série semanal "Pricing Rationale: NBSK CIF China" a partir
+# de 07/08/2026. As edições de 14/08 e 21/08 só ficaram de fora porque a palavra
+# "rationale" aparecia no CORPO delas — bloqueio por acidente, pelo mesmo defeito
+# que derrubava notícia boa; a de 07/08, sem a palavra no corpo, vazou para a
+# dashboard. Com o escopo corrigido, a grafia errada precisa ser explícita.
+_EXCLUDE_CONTENT_TYPES = frozenset(["rationale", "pricing rational"])
 
 # Cripto "hard" — nomes de moeda/token que NUNCA são da nossa cobertura.
 # Excluído SEMPRE, mesmo que um alias ambíguo (ex: 'vale') case de carona.
@@ -622,6 +629,14 @@ def _topic_direction_map(norm: str, topics: set[str], window: int = 60) -> dict[
 
 
 def _is_rationale(text: str, source: str = "") -> bool:
+    """True se `text` identifica um documento "Rationale" (metodologia de preço).
+
+    ⚠️ Casa por SUBSTRING nua, então só pode receber TÍTULO, ContentType ou nome
+    da fonte — NUNCA o corpo/snippet do artigo. Uma notícia legítima que apenas
+    *mencione* a palavra ("producers raise prices without clear rationale") não é
+    um Rationale, e já foi barrada indevidamente por isso. Quem chama garante o
+    escopo (ver should_exclude_news).
+    """
     norm = normalize_text(text)
     if any(t in norm for t in _EXCLUDE_CONTENT_TYPES):
         return True
@@ -712,8 +727,16 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     source = metadata.get("source_name", "") or metadata.get("source", "") or ""
     content_type = metadata.get("content_type", "") or metadata.get("news_type", "") or ""
 
-    # 1. Rationale automático
-    if _is_rationale(text, source) or _is_rationale("", content_type):
+    # 1. Rationale automático — escopo: TÍTULO + ContentType + fonte, nunca o corpo.
+    #    Coerente com as outras 2 camadas (platts_scraper._type_allowed via ContentType
+    #    e filter.SOURCE_FILTER_RULES['S&P Platts']['title_exclude'] via título).
+    #    Buscar "rationale" no texto inteiro derrubava notícia boa cujo corpo só citava
+    #    a palavra — e, em fonte curada, rationale_news é a ÚNICA exclusão que barra
+    #    (ver classify_take), então o falso positivo sumia da dash e do clipping.
+    #    `title` ausente (None) = chamada legada que passa só o título em `text`.
+    _title = metadata.get("title")
+    rationale_scope = text if _title is None else _title
+    if _is_rationale(rationale_scope, source) or _is_rationale("", content_type):
         return True, "rationale_news"
 
     norm = normalize_text(text)
@@ -1259,6 +1282,8 @@ def classify_article_take(art: dict) -> dict:
     meta = {
         "source_name":  art.get("source_name", ""),
         "content_type": art.get("content_type", art.get("news_type", "")),
+        # Escopo do bloqueio de Rationale (chave sempre presente, mesmo vazia).
+        "title":        art.get("title") or art.get("headline") or "",
     }
     result = classify_take(text, meta)
 

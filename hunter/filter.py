@@ -24,7 +24,7 @@ SOURCE_FILTER_RULES: dict[str, dict] = {
     # (também barrado por ContentType em platts_scraper._WANTED_TYPES).
     "S&P Platts": {
         "pass_through": True,
-        "title_exclude": ["rationale"],
+        "title_exclude": ["rationale", "pricing rational"],
     },
 }
 

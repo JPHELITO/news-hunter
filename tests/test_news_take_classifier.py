@@ -158,6 +158,50 @@ class TestShouldExcludeNews:
         assert exclude is True
         assert reason == "rationale_news"
 
+    # ── Regressão: "rationale" no CORPO não é um documento Rationale ──────────
+    # Caso real: Platts 21/08/2026 "Turkish rebar export prices hold steady as
+    # market uncertainty persists", cujo snippet dizia "Producers raise prices
+    # without clear rationale: sources". Entrou no banco com include_in_report
+    # = false e sumiu da dashboard e do clipping.
+    def test_rationale_no_corpo_nao_exclui(self):
+        exclude, reason = should_exclude_news(
+            "Turkish rebar export prices hold steady as market uncertainty persists "
+            "Producers raise prices without clear rationale: sources",
+            {"source_name": "S&P Platts", "content_type": "Market Commentary",
+             "title": "Turkish rebar export prices hold steady as market uncertainty persists"},
+        )
+        assert exclude is False, reason
+
+    def test_rationale_no_corpo_de_index_report_nao_exclui(self):
+        # Caso real: Platts 05/06/2026 — boilerplate "This rationale applies to symbol".
+        exclude, _ = should_exclude_news(
+            "Platts Mexican rebar index falls to 139.13 points "
+            "This rationale applies to symbol SBMAU03.",
+            {"source_name": "S&P Platts",
+             "title": "Platts Mexican rebar index falls to 139.13 points"},
+        )
+        assert exclude is False
+
+    def test_rationale_no_titulo_ainda_exclui_com_corpo_junto(self):
+        # A regra legítima continua valendo quando o TÍTULO é de Rationale.
+        exclude, reason = should_exclude_news(
+            "Platts EMEA Turkish Rebar Daily Rationale The assessment was rolled over.",
+            {"source_name": "S&P Platts",
+             "title": "Platts EMEA Turkish Rebar Daily Rationale"},
+        )
+        assert exclude is True
+        assert reason == "rationale_news"
+
+    def test_rationale_por_content_type_com_titulo_limpo(self):
+        # Título limpo, mas a Platts marcou o documento como Rationale.
+        exclude, reason = should_exclude_news(
+            "NBSK CIF China assessment",
+            {"source_name": "S&P Platts", "content_type": "Pricing Rationale",
+             "title": "NBSK CIF China assessment"},
+        )
+        assert exclude is True
+        assert reason == "rationale_news"
+
     def test_relevant_not_excluded(self):
         exclude, _ = should_exclude_news(
             "China HRC prices rise amid stronger demand",
@@ -878,6 +922,46 @@ class TestCuratedSourcesAlwaysInclude:
         r = classify_take("Smurfit Westrock partners with Coca-Cola on World Cup packaging",
                           {"source_name": "Fastmarkets"})
         assert r["include_in_report"] is True
+
+    def test_platts_rationale_so_no_snippet_entra(self):
+        """Regressão do caso 21/08/2026: Platts é fonte curada e rationale_news é a
+        ÚNICA exclusão que a barra — 'rationale' no snippet apagava a notícia."""
+        from hunter.news_take_classifier import classify_article_take
+        art = classify_article_take({
+            "title": "Turkish rebar export prices hold steady as market uncertainty persists",
+            "snippet": "Turkish rebar export prices hold at $580/mt Producers raise prices "
+                       "without clear rationale: sources EU buyers show limited interest",
+            "source_name": "S&P Platts",
+            "news_type": "market",
+        })
+        assert art["include_in_report"] is True
+        assert art["exclusion_reason"] is None
+        assert art["take_sector"] == "steel_mining"
+
+    def test_platts_rationale_de_verdade_continua_fora(self):
+        from hunter.news_take_classifier import classify_article_take
+        art = classify_article_take({
+            "title": "Platts EMEA Turkish Rebar Daily Rationale",
+            "snippet": "The assessment was rolled over on limited liquidity.",
+            "source_name": "S&P Platts",
+            "news_type": "Rationale",
+        })
+        assert art["include_in_report"] is False
+        assert art["exclusion_reason"] == "rationale_news"
+
+    def test_fm_pricing_rational_typo_excluido(self):
+        """A Fastmarkets escreve 'Pricing Rational' (sem o 'e') desde 07/08/2026.
+        Antes só era barrado quando a palavra 'rationale' calhava de estar no CORPO;
+        a edição de 07/08 vazou para a dashboard por isso."""
+        from hunter.news_take_classifier import classify_article_take
+        art = classify_article_take({
+            "title": "Pricing Rational: NBSK CIF China",
+            "snippet": "Imported NBSK prices in China softened in the week to Friday "
+                       "August 7, with weak pulp futures, Fastmarkets learned.",
+            "source_name": "Fastmarkets", "news_type": "market",
+        })
+        assert art["include_in_report"] is False
+        assert art["exclusion_reason"] == "rationale_news"
 
     def test_fm_rationale_ainda_excluido(self):
         r = classify_take("Pricing Rationale: NBSK CIF China", {"source_name": "Fastmarkets"})
