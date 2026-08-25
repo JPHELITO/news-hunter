@@ -649,16 +649,15 @@ SPARK_SCALE  = 1000   # resolução vertical da forma
 SPARK_KEEP   = 500    # pontos guardados na tabela privada (~2 anos, folga sobre a janela)
 
 
-def commodity_shape(values: list[float]) -> list[int]:
-    """Série de preços -> FORMA normalizada (0..SPARK_SCALE), sem escala e sem datas.
+# Janelas do seletor de período do carrossel: (chave, pontos DESENHADOS, pregões ATRÁS
+# para a variação). O desenho tem piso de ~1 mês mesmo em D/WoW — uma semana são 5 pontos
+# e viraria um risco reto sem informação.
+SPARK_PERIODS = (("d", 22, 1), ("w", 22, 5), ("m", 66, 22), ("ytd", None, None), ("y", 250, 250))
 
-    ⚠️ Descarta o ÚLTIMO ponto de propósito. O preço de hoje e a variação % são públicos
-    no painel; se a curva fosse até D0, esses dois valores seriam DUAS âncoras absolutas —
-    o bastante para resolver mínimo e amplitude e reconstruir a série inteira. Terminando
-    em D−1 sobra UMA equação para DUAS incógnitas: não tem solução.
-    """
-    vals = values[:-1][-SPARK_WINDOW:]
-    if len(vals) < 8:
+
+def _forma(vals: list[float]) -> list[int]:
+    """Lista de preços -> FORMA normalizada 0..SPARK_SCALE (sem escala, sem datas)."""
+    if len(vals) < 3:
         return []
     if len(vals) > SPARK_POINTS:                 # reamostra por índice (a série já é diária)
         step = (len(vals) - 1) / (SPARK_POINTS - 1)
@@ -667,6 +666,50 @@ def commodity_shape(values: list[float]) -> list[int]:
     if hi == lo:
         return [SPARK_SCALE // 2] * len(vals)
     return [round((v - lo) / (hi - lo) * SPARK_SCALE) for v in vals]
+
+
+def commodity_shape(values: list[float]) -> list[int]:
+    """Janela de ~12 meses, normalizada. Mantida para compatibilidade do formato antigo."""
+    return _forma(values[-SPARK_WINDOW:])
+
+
+def commodity_periods(serie: list[list]) -> dict:
+    """[[epoch, valor], ...] -> {"d": {"c": var%, "s": [forma]}, "w": ..., "m", "ytd", "y"}.
+
+    É o que alimenta o seletor D/WoW/MoM/YTD/YoY do carrossel: para cada período, a
+    VARIAÇÃO (contra o preço de hoje) e a FORMA da janela, normalizada de forma
+    independente.
+
+    ⚠️ NOTA DE PRIVACIDADE — decisão explícita do usuário (2026-08-25). Até aqui a forma
+    terminava em D−1 justamente para que a curva não fosse reconstruível: com o preço de
+    hoje público, UMA âncora não resolve mínimo e amplitude. Publicar a variação de
+    semana/mês/ano entrega âncoras absolutas adicionais, e com duas ou mais a curva sai
+    por conta. O usuário optou pela paridade com o heatmap sabendo disso — então a
+    proteção do D−1 perdeu a função e a forma passou a ir até o último ponto, para o
+    desenho e o número falarem do mesmo dia. NÃO reintroduzir o corte sem rever isto.
+    """
+    pts = [p for p in serie if isinstance(p, (list, tuple)) and len(p) == 2]
+    if len(pts) < 4:
+        return {}
+    vals = [float(p[1]) for p in pts]
+    anos = [datetime.fromtimestamp(int(p[0]), timezone.utc).year for p in pts]
+    ano = anos[-1]
+    ult = vals[-1]
+    out: dict = {}
+    for chave, janela, atras in SPARK_PERIODS:
+        if chave == "ytd":
+            antes = [i for i, a in enumerate(anos) if a < ano]
+            base_i = antes[-1] if antes else 0
+            sub = vals[base_i:]
+        else:
+            sub = vals[-janela:] if janela else vals
+            base_i = max(0, len(vals) - 1 - atras)
+        forma = _forma(sub)
+        if not forma:
+            continue
+        base = vals[base_i]
+        out[chave] = {"c": round((ult / base - 1) * 100, 2) if base else None, "s": forma}
+    return out
 
 
 def update_commodity_spark(max_age_hours: float = 18.0) -> int:
@@ -735,7 +778,7 @@ def update_commodity_spark(max_age_hours: float = 18.0) -> int:
         serie.sort(key=lambda p: p[0])
         serie = serie[-SPARK_KEEP:]
 
-        sp = commodity_shape([float(p[1]) for p in serie])
+        sp = commodity_periods(serie)
         if not sp:
             continue
         try:
