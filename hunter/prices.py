@@ -635,6 +635,125 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
     return n
 
 
+
+# ───────────────────────────────────────────────────────────────────────────
+# Risquinho do carrossel (commodities.spark) + histórico privado
+# ───────────────────────────────────────────────────────────────────────────
+# O cartão de cada commodity na home desenha uma curva. O que vai para o navegador é
+# só a FORMA (`commodities.spark`): inteiros 0..SPARK_SCALE, sem escala e sem datas.
+# O histórico em NÚMEROS (assessment Platts) fica em `commodity_history`, tabela com
+# RLS sem policy — o cliente não tem direito a ele (ver admin/supabase_commodity_spark.sql).
+SPARK_WINDOW = 250    # pregões desenhados (~12 meses)
+SPARK_POINTS = 90     # pontos do desenho (o cartão é estreito; 90 já sai liso)
+SPARK_SCALE  = 1000   # resolução vertical da forma
+SPARK_KEEP   = 500    # pontos guardados na tabela privada (~2 anos, folga sobre a janela)
+
+
+def commodity_shape(values: list[float]) -> list[int]:
+    """Série de preços -> FORMA normalizada (0..SPARK_SCALE), sem escala e sem datas.
+
+    ⚠️ Descarta o ÚLTIMO ponto de propósito. O preço de hoje e a variação % são públicos
+    no painel; se a curva fosse até D0, esses dois valores seriam DUAS âncoras absolutas —
+    o bastante para resolver mínimo e amplitude e reconstruir a série inteira. Terminando
+    em D−1 sobra UMA equação para DUAS incógnitas: não tem solução.
+    """
+    vals = values[:-1][-SPARK_WINDOW:]
+    if len(vals) < 8:
+        return []
+    if len(vals) > SPARK_POINTS:                 # reamostra por índice (a série já é diária)
+        step = (len(vals) - 1) / (SPARK_POINTS - 1)
+        vals = [vals[round(i * step)] for i in range(SPARK_POINTS)]
+    lo, hi = min(vals), max(vals)
+    if hi == lo:
+        return [SPARK_SCALE // 2] * len(vals)
+    return [round((v - lo) / (hi - lo) * SPARK_SCALE) for v in vals]
+
+
+def update_commodity_spark(max_age_hours: float = 18.0) -> int:
+    """Acrescenta o assessment do dia ao histórico privado e recalcula `commodities.spark`.
+
+    A "fotografia" inicial vem de `seed_platts_history.py` (planilha do Platts, rodado na
+    máquina do analista). Daqui pra frente esta função mantém a curva viva sozinha:
+    append do valor do dia (dedup por data) + recálculo da forma. Auto-throttled por
+    `commodity_history.updated_at` (~1×/dia). Retorna nº de commodities atualizadas.
+
+    Se a tabela `commodity_history` ainda não existir (SQL não rodado), sai quieta.
+    """
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return 0
+    h = {"apikey": key, "Authorization": f"Bearer {key}"}
+    try:
+        r = requests.get(f"{url}/rest/v1/commodity_history?select=code,series,updated_at",
+                         headers=h, timeout=20)
+        if r.status_code in (404, 406):
+            log.info("commodity_spark: tabela commodity_history ainda não existe — pulando")
+            return 0
+        r.raise_for_status()
+        hist = {row["code"]: row for row in r.json()}
+        c = requests.get(f"{url}/rest/v1/commodities?select=code,price,assessed_at,daily",
+                         headers=h, timeout=20)
+        c.raise_for_status()
+        rows = c.json()
+    except Exception as e:
+        log.warning("commodity_spark: leitura falhou: %s", e)
+        return 0
+
+    now = datetime.now(timezone.utc)
+    hw = {**h, "Content-Type": "application/json", "Prefer": "return=minimal"}
+    n = 0
+    for row in rows:
+        code = row.get("code")
+        cur = hist.get(code)
+        if cur:
+            du = cur.get("updated_at")
+            if du:
+                try:
+                    age_h = (now - datetime.fromisoformat(du.replace("Z", "+00:00"))).total_seconds() / 3600
+                    if age_h <= max_age_hours:
+                        continue                  # já rodou hoje
+                except Exception:
+                    pass
+            serie = [p for p in (cur.get("series") or []) if isinstance(p, list) and len(p) == 2]
+            source = None
+        else:
+            # commodity sem fotografia (nova, ou Yahoo/acumulada): semeia do `daily`
+            serie = [p for p in (row.get("daily") or []) if isinstance(p, list) and len(p) == 2]
+            source = "daily"
+            if not serie:
+                continue
+
+        price, assessed = row.get("price"), row.get("assessed_at")
+        if price is not None and assessed:
+            try:
+                ep = int(datetime.fromisoformat(str(assessed)[:10] + "T00:00:00+00:00").timestamp())
+                serie = [p for p in serie if p[0] != ep]          # dedup por data
+                serie.append([ep, round(float(price), 4)])
+            except Exception:
+                pass
+        serie.sort(key=lambda p: p[0])
+        serie = serie[-SPARK_KEEP:]
+
+        sp = commodity_shape([float(p[1]) for p in serie])
+        if not sp:
+            continue
+        try:
+            body = {"code": code, "series": serie, "updated_at": _now_iso()}
+            if source:
+                body["source"] = source
+            requests.post(f"{url}/rest/v1/commodity_history", json=body,
+                          headers={**hw, "Prefer": "resolution=merge-duplicates,return=minimal"},
+                          timeout=20).raise_for_status()
+            requests.patch(f"{url}/rest/v1/commodities?code=eq.{code}", json={"spark": sp},
+                           headers=hw, timeout=20).raise_for_status()
+            n += 1
+        except Exception as e:
+            log.warning("commodity_spark %s: gravação falhou: %s", code, e)
+    if n:
+        log.info("commodity_spark: %d curvas atualizadas (append do dia + forma recalculada)", n)
+    return n
+
 # ───────────────────────────────────────────────────────────────────────────
 # Iron Ore 62% Fe CFR China (USD/t) — Trading Economics (SÓ para a aba Market)
 # ───────────────────────────────────────────────────────────────────────────
