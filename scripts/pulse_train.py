@@ -49,7 +49,7 @@ except ImportError:
 from hunter.prices import HEADERS, _YAHOO_HOSTS, _supa_upsert          # noqa: E402
 from hunter.pulse_score import _supa_get                                # noqa: E402
 from hunter.pulse_snapshot import (COMPANIES, CUT_BASE, CUTS_SCORE,     # noqa: E402
-                                   GEMEO, SNAPSHOT_SYMBOLS)
+                                   GEMEO, PANEL_KEY, SNAPSHOT_SYMBOLS)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pulse_train")
@@ -210,6 +210,132 @@ def walk_forward(X: pd.DataFrame, y: pd.Series, alpha: float) -> pd.DataFrame:
     return pd.concat(linhas) if linhas else pd.DataFrame()
 
 
+# ───────────────────────── painel (pooling) ─────────────────────────
+# NOVE ridges de ~350 pregões cada é o pior dos mundos: pouca amostra para cada um e
+# nenhuma troca de informação entre eles. O painel empilha as nove empresas (~3.000
+# observações), aprende UM vetor de pesos sobre o alvo padronizado (gap/σ da empresa) e
+# devolve à escala de cada uma multiplicando pelo σ dela. Quem tem sinal próprio quase não
+# muda; quem é fraco para de sobreajustar o próprio ruído e é puxado para o comportamento
+# do setor.
+#
+# MEDIDO em 2026-08-26 (`scripts/pulse_pooling.py`, corte 09): a média per-name+painel bate
+# o per-name em 9 de 9 empresas, +0,052 de IC. O ganho se concentra exatamente onde a
+# teoria manda — SUZB3 0,094→0,232 · RANI3 0,008→0,120 · KLBN11 0,234→0,298 — e não custa
+# nada aos fortes (VALE3 0,668→0,672). O que vai a produção é a MÉDIA dos dois, não o
+# painel sozinho: combinação simples é notoriamente difícil de bater e protege o que já
+# funciona caso o painel degrade.
+# (PANEL_KEY vive em hunter/pulse_snapshot.py — o scorer também precisa dele.)
+
+
+def colunas_comuns(X: pd.DataFrame, G: pd.DataFrame) -> list[str]:
+    """Instrumentos que servem a TODAS as empresas — o painel precisa de um vetor único."""
+    comuns = None
+    for emp in COMPANIES:
+        if emp not in G.columns:
+            continue
+        c = set(_colunas_uteis(X, G[emp].reindex(X.index), emp))
+        comuns = c if comuns is None else (comuns & c)
+    return [c for c in X.columns if c in (comuns or set())]
+
+
+def fit_painel(X: pd.DataFrame, G: pd.DataFrame, comuns: list[str], idx, alpha: float):
+    """Ajusta o ridge do painel sobre as linhas `idx`. Devolve (mdl, mu, sd, {empresa: σ})."""
+    Xp, yp, sigma_emp = [], [], {}
+    for emp in COMPANIES:
+        if emp not in G.columns:
+            continue
+        y = G[emp].reindex(X.index)
+        m = (X[comuns].notna().all(axis=1) & y.notna()).reindex(idx, fill_value=False)
+        dias = m[m].index
+        if len(dias) < 50:
+            continue
+        s = float(y[dias].std()) or 1e-9
+        sigma_emp[emp] = s
+        Xp.append(X.loc[dias, comuns])
+        yp.append(y[dias] / s)
+    if not Xp:
+        return None, None, None, {}
+    mdl, mu, sd, _ = _fit(pd.concat(Xp), pd.concat(yp), alpha)
+    return mdl, mu, sd, sigma_emp
+
+
+def walk_forward_conjunto(X: pd.DataFrame, G: pd.DataFrame, alpha: float) -> pd.DataFrame:
+    """
+    Walk-forward paralelo das três leituras (per-name, painel, média) sobre exatamente os
+    mesmos dias. É daqui que sai o `ic_oos` gravado: ele tem de medir o que a produção
+    PUBLICA — a média — e não o per-name, senão o gate de publicação decide olhando um
+    número que ninguém vê.
+    """
+    comuns = colunas_comuns(X, G)
+    n, linhas = len(X), []
+    for start in range(MIN_TRAIN, n, REFIT):
+        end = min(start + REFIT, n)
+        idx_tr, idx_te = X.index[:start], X.index[start:end]
+        mdl_p, mu_p, sd_p, sigma_emp = fit_painel(X, G, comuns, idx_tr, alpha)
+        if mdl_p is None:
+            continue
+        for emp in COMPANIES:
+            if emp not in G.columns or emp not in sigma_emp:
+                continue
+            cols = _colunas_uteis(X, G[emp].reindex(X.index), emp)
+            y = G[emp].reindex(X.index)
+            m = X[cols].notna().all(axis=1) & y.notna()
+            tr = m.reindex(idx_tr, fill_value=False)
+            if tr.sum() < 50:
+                continue
+            mdl_n, mu_n, sd_n, sigma_n = _fit(X.loc[tr[tr].index, cols], y[tr[tr].index], alpha)
+            te = m.reindex(idx_te, fill_value=False)
+            dias = te[te].index
+            if not len(dias):
+                continue
+            p_name = mdl_n.predict(((X.loc[dias, cols] - mu_n) / sd_n).values)
+            p_pain = mdl_p.predict(((X.loc[dias, comuns] - mu_p) / sd_p).values) * sigma_emp[emp]
+            media = (p_name + p_pain) / 2
+            conc = X.loc[dias, cols].apply(lambda r: abs(np.sign(r.values).mean()), axis=1).values
+            linhas.append(pd.DataFrame({
+                "empresa": emp, "y": y[dias].values, "per_name": p_name, "painel": p_pain,
+                "pred": media, "mag": np.clip(np.abs(media) / (sigma_n or 1e-9), 0, 4),
+                "conc": conc,
+            }, index=dias))
+    return pd.concat(linhas) if linhas else pd.DataFrame()
+
+
+def _calibrar_apresentacao(oos: pd.DataFrame) -> dict:
+    """
+    O que o produto precisa para falar com honestidade sobre a própria incerteza.
+    Tudo medido nas previsões FORA DA AMOSTRA — nunca no ajuste.
+
+    BANDA (conformal split). O quantil empírico dos resíduos out-of-sample dá um intervalo
+    com cobertura ~80% sem supor normalidade: banda = [ŷ + q10, ŷ + q90]. É assimétrica de
+    propósito — gap de abertura tem cauda mais gorda de um lado em vários papéis, e forçar
+    simetria mentiria sobre o lado que costuma surpreender. A cobertura REALIZADA vai junto
+    (`band_cov`) para o painel poder dizer "a banda acertou X% das vezes" em vez de prometer.
+
+    CONVICÇÃO. Três faixas por |ŷ|/σ, com o acerto direcional MEDIDO em cada uma. O produto
+    exibe o número histórico ao lado do selo, então "high conviction" deixa de ser adjetivo
+    e passa a ser uma afirmação verificável. Faixas com menos de 20 observações não viram
+    promessa: devolvem `null` e o painel mostra o selo sem porcentagem.
+    """
+    resid = (oos.y - oos.pred).astype(float)
+    q10, q90 = float(resid.quantile(0.10)), float(resid.quantile(0.90))
+    dentro = ((oos.y >= oos.pred + q10) & (oos.y <= oos.pred + q90)).mean()
+
+    out = {"band_q10": q10, "band_q90": q90, "band_cov": float(dentro),
+           "band_n": int(len(resid)),
+           # dispersão das previsões que a produção EMITE (a média per-name+painel). O
+           # `sigma_pred` do modelo mede só o per-name; usá-lo para escalar o score da
+           # média distorceria a régua de convicção.
+           "sigma_media": float(oos.pred.std())}
+
+    acertou = (oos.pred > 0) == (oos.y > 0)
+    for nome, (lo, hi) in {"low": (0.0, 0.5), "mid": (0.5, 1.0), "high": (1.0, 99.0)}.items():
+        faixa = (oos.mag >= lo) & (oos.mag < hi)
+        n = int(faixa.sum())
+        out[f"hit_{nome}"] = float(acertou[faixa].mean()) if n >= 20 else None
+        out[f"n_{nome}"] = n
+    return out
+
+
 def _colunas_uteis(X: pd.DataFrame, y: pd.Series, empresa: str) -> list[str]:
     """
     Quais instrumentos entram no modelo DESTA empresa.
@@ -251,7 +377,16 @@ def _colunas_uteis(X: pd.DataFrame, y: pd.Series, empresa: str) -> list[str]:
     return manter
 
 
-def treinar(X: pd.DataFrame, y: pd.Series, empresa: str, cut: str, alpha: float) -> dict | None:
+def treinar(X: pd.DataFrame, y: pd.Series, empresa: str, cut: str, alpha: float,
+            oos: pd.DataFrame | None = None) -> dict | None:
+    """
+    Treina o modelo por empresa no histórico inteiro.
+
+    `oos` são as previsões fora da amostra JÁ medidas pelo walk-forward conjunto (a média
+    per-name+painel, que é o que a produção publica). Quando não vem, cai no walk-forward
+    só do per-name — é o caminho usado pelos scripts de experimento, que comparam variantes
+    isoladas.
+    """
     X = X[_colunas_uteis(X, y, empresa)]
     m = X.notna().all(axis=1) & y.notna()
     X, y = X[m], y[m]
@@ -260,7 +395,8 @@ def treinar(X: pd.DataFrame, y: pd.Series, empresa: str, cut: str, alpha: float)
                     empresa, cut, len(X), MIN_LINHAS)
         return None
 
-    oos = walk_forward(X, y, alpha)
+    if oos is None:
+        oos = walk_forward(X, y, alpha)
     ic = float(stats.spearmanr(oos.pred, oos.y)[0]) if len(oos) > 30 else None
     acerto = float(((oos.pred > 0) == (oos.y > 0)).mean()) if len(oos) > 30 else None
 
@@ -276,8 +412,12 @@ def treinar(X: pd.DataFrame, y: pd.Series, empresa: str, cut: str, alpha: float)
             lr = LogisticRegression().fit(feats, alvo)
             conf_w = {"mag": float(lr.coef_[0][0]), "conc": float(lr.coef_[0][1]),
                       "intercept": float(lr.intercept_[0])}
+        conf_w = {**(conf_w or {}), **_calibrar_apresentacao(oos)}
 
     mdl, mu, sd, sigma = _fit(X, y, alpha)
+    # σ do ALVO (não da previsão): é por ele que o scorer devolve a previsão do painel,
+    # que trabalha em unidades padronizadas, para a escala de gap desta empresa.
+    conf_w = {**(conf_w or {}), "sigma_y": float(y.std())}
     log.info("  %-11s %s  n=%4d  ic_oos=%s  acerto=%s",
              empresa, cut, len(X),
              f"{ic:+.3f}" if ic is not None else "  —  ",
@@ -293,6 +433,28 @@ def treinar(X: pd.DataFrame, y: pd.Series, empresa: str, cut: str, alpha: float)
     }
 
 
+def treinar_painel(X: pd.DataFrame, G: pd.DataFrame, cut: str, alpha: float) -> dict | None:
+    """A linha `_PANEL_` de pulse_model: um jogo de pesos só, para todas as empresas."""
+    comuns = colunas_comuns(X, G)
+    if not comuns:
+        return None
+    mdl, mu, sd, sigma_emp = fit_painel(X, G, comuns, X.index, alpha)
+    if mdl is None:
+        return None
+    log.info("  %-11s %s  %d instrumentos comuns, %d empresas",
+             PANEL_KEY, cut, len(comuns), len(sigma_emp))
+    return {
+        "company": PANEL_KEY, "cut": cut,
+        "coefs": {c: float(b) for c, b in zip(comuns, mdl.coef_)},
+        "mu": {c: float(v) for c, v in mu.items()},
+        "sd": {c: float(v) for c, v in sd.items()},
+        # o alvo do painel é padronizado, então a escala vem do σ de cada empresa
+        "sigma_pred": 1.0, "conf_w": None,
+        "n_train": int(len(X)), "ic_oos": None,
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -304,6 +466,8 @@ def main() -> int:
                     help="não descarta os pregões que abriram sem negócio no leilão")
     ap.add_argument("--symbols", choices=["todos", "base"], default="todos",
                     help="'base' restringe aos 23 instrumentos do v2 (linha de comparação)")
+    ap.add_argument("--sem-painel", action="store_true",
+                    help="treina só os modelos por empresa (linha de comparação)")
     args = ap.parse_args()
 
     log.info("baixando o alvo (gap de abertura das %d cobertas) ...", len(COMPANIES))
@@ -320,11 +484,24 @@ def main() -> int:
             X = X.reindex(columns=[s for s in SYMBOLS_BASE_V2 if s in X.columns])
         log.info("corte %s (janela %s, %s): %d pregões x %d instrumentos",
                  cut, args.janela, args.symbols, X.shape[0], X.shape[1])
+
+        # Walk-forward CONJUNTO: mede a média per-name+painel, que é o que a produção
+        # publica. O ic_oos de cada empresa sai daqui — o gate de publicação precisa
+        # olhar o número que o cliente vai ver, não o de um modelo intermediário.
+        if args.sem_painel:
+            oos_por_empresa = {}
+        else:
+            R = walk_forward_conjunto(X, G, args.alpha)
+            oos_por_empresa = {e: g for e, g in R.groupby("empresa")} if not R.empty else {}
+            p = treinar_painel(X, G, cut, args.alpha)
+            if p:
+                modelos.append(p)
+
         for empresa in COMPANIES:
             if empresa not in G.columns:
                 continue
             y = G[empresa].reindex(X.index)
-            r = treinar(X, y, empresa, cut, args.alpha)
+            r = treinar(X, y, empresa, cut, args.alpha, oos=oos_por_empresa.get(empresa))
             if r:
                 modelos.append(r)
 

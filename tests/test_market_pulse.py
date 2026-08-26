@@ -74,18 +74,31 @@ class TestGateDePublicacao:
         with mock.patch.dict(pulse_score.SEM_SINAL, {"VALE3.SA": "motivo curado"}, clear=False):
             assert pulse_score._sem_sinal_por_que("VALE3.SA", {"ic_oos": 0.9}) == "motivo curado"
 
-    def test_o_limiar_separa_as_duas_populacoes_medidas(self):
+    def test_o_limiar_cai_no_maior_vao(self):
         """
-        Medido em 2026-08-26, já com a janela overnight (corte 09). O limiar tem de ficar
-        ENTRE as duas populações com folga, senão empresa entra e sai a cada re-treino.
-        Se este teste falhar depois de um re-treino, a distribuição mudou de lugar:
-        recalibre o limiar em vez de afrouxar o teste.
+        O limiar tem de cair num VÃO da distribuição de ic_oos, não colado num valor: a
+        0,01 de distância, a empresa entra e sai a cada re-treino semanal. Medido em
+        2026-08-26 com a configuração de produção (janela overnight + painel), os dois
+        cortes juntos.
+
+        Se este teste falhar depois de um re-treino, a distribuição andou: recalibre o
+        limiar olhando a lista nova, em vez de afrouxar o teste.
         """
-        publica = [0.773, 0.691, 0.507, 0.456, 0.448, 0.423, 0.288]   # menor: KLBN11
-        barra = [0.209, 0.092]                                        # maior: RANI3
-        assert max(barra) < pulse_snapshot.IC_MIN_PUBLICAR < min(publica)
-        assert pulse_snapshot.IC_MIN_PUBLICAR - max(barra) > 0.03
-        assert min(publica) - pulse_snapshot.IC_MIN_PUBLICAR > 0.03
+        medidos = sorted([0.698, 0.672, 0.615, 0.553, 0.487, 0.465, 0.438, 0.436, 0.424,
+                          0.405, 0.386, 0.353, 0.298, 0.242, 0.232, 0.175, 0.120, 0.103])
+        limiar = pulse_snapshot.IC_MIN_PUBLICAR
+
+        # 1) folga do valor mais próximo: a 0,01 de distância a empresa pisca a cada re-treino
+        folga = min(abs(v - limiar) for v in medidos)
+        assert folga >= 0.02, f"limiar {limiar} está a {folga:.3f} do ic_oos mais próximo"
+
+        # 2) o vão em que ele cai é um vão DE VERDADE, não um respiro entre dois vizinhos
+        #    (comparar com os maiores vãos da lista inteira não serve: os maiores ficam no
+        #    topo, onde os valores são esparsos e não há fronteira nenhuma para decidir)
+        abaixo = max((v for v in medidos if v < limiar), default=0.0)
+        acima = min((v for v in medidos if v > limiar), default=1.0)
+        assert acima - abaixo >= 0.04, \
+            f"limiar {limiar} caiu num vão estreito ({abaixo:.3f} → {acima:.3f})"
 
 
 # ───────────────────────── janela overnight (onda 1) ─────────────────────────

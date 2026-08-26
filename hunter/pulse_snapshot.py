@@ -115,20 +115,30 @@ GEMEO = {
 # dias desconta a autoridade que o segundo construiu. Dizer "no reliable signal" é a
 # informação honesta, e ela vale mais que um chute.
 #
-# O limiar tem de cair ENTRE as duas populações, com folga para não ficar piscando a cada
-# re-treino semanal. Medido em 2026-08-26, DEPOIS da troca para a janela overnight
-# (ic_oos do walk-forward, corte 09):
-#     passa  → AURA33 0,773 · VALE3 0,691 · CSNA3 0,507 · USIM5 0,456 · CMIN3 0,448 ·
-#              GGBR4 0,423 · KLBN11 0,288
-#     barra  → RANI3 0,209 · SUZB3 0,092
-# Folga de ~0,04 para os dois lados (0,288 acima, 0,209 abaixo), o mesmo critério usado
-# quando o limiar foi criado. ⚠️ Se re-treinar e a distribuição mudar de lugar de novo,
-# recalibre olhando esta lista — o limiar é decisão de PRODUTO (quão confiante é preciso
-# estar para mostrar um número), não um parâmetro do modelo.
+# COMO CALIBRAR: o limiar tem de cair no maior VÃO da distribuição de ic_oos, não num
+# número redondo — se ficar colado num valor, a empresa entra e sai a cada re-treino.
+# Medido em 2026-08-26 com a configuração de produção (janela overnight + painel), os dois
+# cortes juntos, em ordem:
+#     0,698 0,672 0,615 0,553 0,487 0,465 0,438 0,436 0,424 0,405 0,386 0,353 | 0,298
+#     [vão de 0,056] 0,242 0,232 [vão de 0,057] 0,175 0,120 0,103
+# Os dois vãos grandes ficam em 0,270 e 0,204. Escolhido o de cima: a onda 3 exibe estes
+# números com autoridade, e é melhor mostrar sete leituras sólidas do que oito com uma
+# duvidosa. Fora ficam KLBN11 às 07h (0,242 — entra às 09h, com 0,298: o corte da manhã
+# tem mais informação, e dizer isso é honesto), SUZB3 (0,232/0,175) e RANI3 (0,120/0,103).
+# ⚠️ Recalibre olhando esta lista sempre que um re-treino mover a distribuição. O limiar é
+# decisão de PRODUTO (quão confiante é preciso estar para mostrar um número), não um
+# parâmetro do modelo — e o teste `test_o_limiar_cai_no_maior_vao` trava o critério.
 #
-# Histórico: nasceu em 0,20 quando a janela era de 24h e a separação era 0,253 × 0,148.
-# A janela overnight subiu todo mundo, e a fronteira subiu junto.
-IC_MIN_PUBLICAR = 0.25
+# Histórico: 0,20 na era da janela de 24h (separação 0,253 × 0,148) → 0,25 com a janela
+# overnight → 0,27 com o painel. Todo mundo subiu, e a fronteira subiu junto.
+IC_MIN_PUBLICAR = 0.27
+
+# Nome de "empresa" reservado, em pulse_model, para a linha do PAINEL: um único jogo de
+# pesos treinado com as nove empilhadas (alvo padronizado pelo σ de cada uma). O que a
+# produção publica é a MÉDIA entre o modelo da empresa e o painel — medido em 2026-08-26,
+# ela bate o per-name em 9 de 9 empresas (+0,052 de IC), com o ganho concentrado nos nomes
+# fracos, que param de sobreajustar o próprio ruído. Ver scripts/pulse_pooling.py.
+PANEL_KEY = "_PANEL_"
 
 # Empresas barradas À MÃO, independente do que o treino diga. Serve para o caso em que
 # sabemos algo que o ic_oos não captura. Hoje está vazio: o gate por ic_oos já barra

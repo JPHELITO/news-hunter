@@ -28,7 +28,7 @@ import requests
 
 from .prices import _supa_upsert
 from .pulse_snapshot import (COMPANIES, CUT_BASE, GRUPO_DE, IC_MIN_PUBLICAR,
-                             SEM_SINAL)
+                             PANEL_KEY, SEM_SINAL)
 
 log = logging.getLogger(__name__)
 
@@ -124,22 +124,58 @@ def features(cut: str) -> tuple[str, dict[str, float], datetime | None]:
     return hoje, x, captura
 
 
-def pontuar_empresa(modelo: dict, x: dict[str, float]) -> dict | None:
-    """Aplica um modelo (linha de pulse_model) ao vetor de features do dia."""
+def _aplicar(modelo: dict, x: dict[str, float]) -> tuple[dict[str, float], float] | None:
+    """Produto escalar de um modelo sobre o vetor do dia. None se faltar instrumento."""
     coefs, mu, sd = modelo["coefs"], modelo["mu"], modelo["sd"]
-    sigma = float(modelo["sigma_pred"]) or 1e-9
-
     faltando = [s for s in coefs if s not in x]
     if faltando:
-        log.warning("  %s: sem dado para %s -> sem_dado", modelo["company"], faltando)
+        log.warning("  %s: sem dado para %s", modelo.get("company", "?"), faltando)
         return None
-
     contrib, y = {}, 0.0
     for sym, beta in coefs.items():
         z = (x[sym] - float(mu[sym])) / (float(sd[sym]) or 1e-12)
         c = float(beta) * z
         contrib[sym] = c
         y += c
+    return contrib, y
+
+
+def pontuar_empresa(modelo: dict, x: dict[str, float],
+                    painel: dict | None = None) -> dict | None:
+    """
+    Aplica o modelo do dia e devolve a leitura publicável.
+
+    O que sai é a MÉDIA de duas previsões: a do modelo da própria empresa e a do painel
+    (um ridge só, treinado com as nove empilhadas, devolvido à escala desta empresa pelo
+    σ do alvo dela). Medido em 2026-08-26: a média bate o per-name em 9 de 9 empresas.
+
+    ⚠️ FALHA FECHADA TAMBÉM QUANDO SÓ O PAINEL FALTA. O `ic_oos` que autoriza a publicação
+    foi medido sobre a MÉDIA; cair no per-name sozinho seria trocar de modelo em silêncio e
+    publicar um número que ninguém validou.
+    """
+    w = modelo.get("conf_w") or {}
+    r = _aplicar(modelo, x)
+    if r is None:
+        return None
+    contrib, y = r
+
+    if painel is not None:
+        sigma_y = float(w.get("sigma_y") or 0)
+        rp = _aplicar(painel, x) if sigma_y else None
+        if rp is None:
+            log.warning("  %s: painel não aplicável -> sem_dado", modelo["company"])
+            return None
+        contrib_p, y_p = rp
+        y = (y + y_p * sigma_y) / 2.0
+        # a soma das contribuições continua batendo EXATAMENTE com o gap esperado: cada
+        # instrumento entra com a média das duas contribuições, e quem falta num dos
+        # modelos entra com zero daquele lado
+        for sym in set(contrib) | set(contrib_p):
+            contrib[sym] = (contrib.get(sym, 0.0) + contrib_p.get(sym, 0.0) * sigma_y) / 2.0
+
+    # dispersão das previsões que a produção de fato emite (a média). Cai no σ do per-name
+    # enquanto um modelo antigo não tiver a calibração nova.
+    sigma = float(w.get("sigma_media") or modelo["sigma_pred"]) or 1e-9
 
     grupos: dict[str, float] = {}
     for sym, c in contrib.items():
@@ -152,9 +188,8 @@ def pontuar_empresa(modelo: dict, x: dict[str, float]) -> dict | None:
     # concordância — completude é sempre 1,0 aqui (se faltasse instrumento, teríamos
     # devolvido None lá em cima), então não é informação.
     conf = None
-    w = modelo.get("conf_w") or {}
     if w:
-        sinais = [1 if x[s] > 0 else (-1 if x[s] < 0 else 0) for s in coefs]
+        sinais = [1 if x[s] > 0 else (-1 if x[s] < 0 else 0) for s in modelo["coefs"]]
         concordancia = abs(sum(sinais) / len(sinais)) if sinais else 0.0
         z = (float(w.get("intercept", 0.0))
              + float(w.get("mag", 0.0)) * _clip(abs(y) / sigma, 0, 4)
@@ -164,6 +199,23 @@ def pontuar_empresa(modelo: dict, x: dict[str, float]) -> dict | None:
     # 6 casas: o front mostra 2, e sobra precisão de sobra para a soma das atribuições
     # continuar batendo com o gap esperado em qualquer arredondamento de exibição.
     drivers = sorted(contrib.items(), key=lambda kv: -abs(kv[1]))[:5]
+
+    # Banda e convicção viajam DENTRO do `attribution` (jsonb) de propósito: são campos de
+    # apresentação, mudam com a calibração e não valem um ALTER TABLE — assim o painel os
+    # recebe pela RPC que já existe, e uma rodada nunca falha por falta de coluna.
+    extra = {}
+    if w:
+        lo, hi = w.get("band_q10"), w.get("band_q90")
+        if lo is not None and hi is not None:
+            extra["band"] = [round(100.0 * (y + float(lo)), 4),
+                             round(100.0 * (y + float(hi)), 4)]
+            extra["band_cov"] = round(float(w.get("band_cov") or 0), 4)
+        mag = abs(y) / sigma
+        faixa = "high" if mag >= 1.0 else ("mid" if mag >= 0.5 else "low")
+        extra["conviction"] = faixa
+        acerto_hist = w.get(f"hit_{faixa}")
+        extra["conviction_hit"] = round(float(acerto_hist), 4) if acerto_hist is not None else None
+
     return {
         "gap_expected": round(100.0 * y, 6),                       # publicado em %
         "score": round(score, 1),
@@ -172,6 +224,7 @@ def pontuar_empresa(modelo: dict, x: dict[str, float]) -> dict | None:
             "grupos": {g: round(100.0 * v, 6) for g, v in
                        sorted(grupos.items(), key=lambda kv: -abs(kv[1]))},
             "drivers": [[s, round(100.0 * v, 6)] for s, v in drivers],
+            **extra,
         },
     }
 
@@ -209,6 +262,10 @@ def score(cut: str, dry_run: bool = False) -> list[dict]:
                _supa_get(f"pulse_model?cut=eq.{cut}&select=*")}
     if not modelos:
         raise RuntimeError(f"corte {cut}: pulse_model vazio — rode scripts/pulse_train.py antes")
+    painel = modelos.pop(PANEL_KEY, None)
+    if painel is None:
+        log.warning("corte %s: sem a linha do painel (%s) em pulse_model — pontuando só com "
+                    "os modelos por empresa. Rode scripts/pulse_train.py.", cut, PANEL_KEY)
 
     agora = datetime.now(timezone.utc).isoformat()
     rows = []
@@ -223,7 +280,7 @@ def score(cut: str, dry_run: bool = False) -> list[dict]:
                          "attribution": {"motivo": motivo}})
             continue
         m = modelos.get(empresa)
-        out = pontuar_empresa(m, x) if m else None
+        out = pontuar_empresa(m, x, painel) if m else None
         if out is None:
             rows.append({**base, "status": "sem_dado", "gap_expected": None,
                          "score": None, "confidence": None, "attribution": None})
