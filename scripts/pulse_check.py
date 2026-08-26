@@ -12,6 +12,13 @@ CRITÉRIO DE LIBERAÇÃO: IC agregado > 0,15 e acerto > 55%.
 Se ficar abaixo, o suspeito nº1 é a CAPTURA (horário, feriado, símbolo faltando),
 não o modelo — confira `pulse_snapshot` antes de mexer em qualquer peso.
 
+⚠️ QUANTOS PREGÕES ANTES DE ACREDITAR NO NÚMERO. Com n pregões, o desvio-padrão do IC
+sob a hipótese "não há sinal nenhum" é ~1/raiz(n): com 10 pregões isso dá ±0,33, ou seja,
+um IC de −0,34 sai do puro acaso uma vez a cada seis janelas. Para afirmar que um modelo
+quebrou são precisos ~35 pregões (n > (1,96/IC)²). Abaixo disso o resultado é
+direcionalmente informativo e nada mais — não desligue empresa nem re-treine por causa
+de uma quinzena ruim.
+
 Uso:
     python scripts/pulse_check.py --dias 20
     python scripts/pulse_check.py --dias 60 --cut 09
@@ -67,8 +74,16 @@ def _spearman(xs: list[float], ys: list[float]) -> float:
     return num / (dx * dy) if dx and dy else float("nan")
 
 
-def gaps_reais(desde: str) -> dict[tuple[str, str], float]:
-    """{(empresa, data): gap de abertura realizado, em %}."""
+def gaps_reais(desde: str) -> dict[tuple[str, str], tuple[float, bool]]:
+    """
+    {(empresa, data): (gap de abertura realizado em %, houve negócio no leilão?)}.
+
+    ⚠️ ABERTURA CARIMBADA NÃO É ERRO DE PREVISÃO. Quando o preço de abertura sai
+    EXATAMENTE igual ao fechamento anterior, o leilão não formou preço — não existe gap
+    para acertar, e contar esses dias como erro rebaixa o placar de papéis ilíquidos sem
+    dizer nada sobre o modelo. Medido em 3 meses (2026-08): RANI3 27,7% dos pregões,
+    CMIN3 e KLBN11 16,9%, USIM5 7,7%. Eles saem do acerto e do IC, e são reportados à parte.
+    """
     out = {}
     for sym in COMPANIES:
         js = None
@@ -88,7 +103,7 @@ def gaps_reais(desde: str) -> dict[tuple[str, str], float]:
         q = res["indicators"]["quote"][0]
         adjs = (res["indicators"].get("adjclose") or [{}])[0].get("adjclose") or q.get("close")
         off = res["meta"].get("gmtoffset", -10800)
-        prev = None
+        prev = prev_close = None
         for i, ts in enumerate(res["timestamp"]):
             o, c, a = q["open"][i], q["close"][i], adjs[i]
             d = datetime.fromtimestamp(ts + off, timezone.utc).date().isoformat()
@@ -96,9 +111,12 @@ def gaps_reais(desde: str) -> dict[tuple[str, str], float]:
                 if prev and d >= desde:
                     fac = a / c
                     g = (o * fac) / prev - 1
+                    # o carimbo se detecta no preço CRU: no ajustado, um dia de provento
+                    # daria diferente de zero e o filtro passaria batido
+                    negociou = abs(o / prev_close - 1) > 1e-9 if prev_close else True
                     if abs(g) < 0.40:
-                        out[(sym, d)] = 100 * g
-                prev = a
+                        out[(sym, d)] = (100 * g, negociou)
+                prev, prev_close = a, c
         time.sleep(0.3)
     return out
 
@@ -125,16 +143,23 @@ def main() -> int:
     print("buscando os gaps realizados no Yahoo ...")
     reais = gaps_reais(min(datas))
 
-    linhas = []
+    linhas, empates = [], 0
     for r in pub:
-        y = reais.get((r["company"], r["session_date"]))
-        if y is None or r.get("score") is None:
+        real = reais.get((r["company"], r["session_date"]))
+        if real is None or r.get("score") is None:
+            continue
+        y, negociou = real
+        if not negociou:
+            empates += 1          # leilão sem negócio: não há gap para acertar
             continue
         linhas.append((r["cut"], r["company"], float(r["score"]),
                        float(r["gap_expected"]), y, r.get("confidence")))
     if not linhas:
         print("nenhuma previsão casou com um gap realizado — confira as datas.")
         return 1
+    if empates:
+        print(f"({empates} previsões fora da conta: abertura carimbada no fechamento "
+              f"anterior, ou seja, leilão sem negócio)")
 
     for cut in sorted({l[0] for l in linhas}):
         sub = [l for l in linhas if l[0] == cut]

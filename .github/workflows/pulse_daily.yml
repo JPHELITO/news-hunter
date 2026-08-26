@@ -1,16 +1,25 @@
-name: Market Pulse — rodada diária (07:00 e 09:00 BRT)
+name: Market Pulse — rodada diária (18:00 · 07:00 · 09:00 BRT)
 # ─────────────────────────────────────────────────────────────────────────────
 # O QUE ESTE WORKFLOW FAZ
 #
-# Duas vezes por dia útil ele tira uma "foto" do mundo (23 instrumentos de Ásia,
-# Europa, commodities, futuros e câmbio) e estima quanto cada coberta deve ABRIR
-# acima ou abaixo do fechamento de ontem. Grava em pulse_daily; a dashboard lê dali.
+# Três vezes por dia útil ele tira uma "foto" do mundo (Ásia, Europa, commodities,
+# futuros, câmbio e o pré-mercado dos ADRs em Nova York). Nos dois cortes da manhã
+# ele também estima quanto cada coberta deve ABRIR acima ou abaixo do fechamento de
+# ontem. Grava em pulse_daily; a dashboard lê dali.
 #
-# POR QUE DOIS HORÁRIOS
-#   07:00 BRT → leitura preliminar, chega junto com o clipping da manhã (IC 0,273)
-#   09:00 BRT → leitura definitiva, uma hora antes da abertura         (IC 0,290)
-# Cada corte tem o SEU PRÓPRIO jogo de pesos em pulse_model, porque foram validados
-# em separado. O corte é deduzido da hora UTC do run (hunter/pulse_snapshot.cut_agora).
+# POR QUE TRÊS HORÁRIOS
+#   18:00 BRT → ÂNCORA: o mundo no instante em que a B3 fechou. NÃO pontua — é o ponto
+#               de partida da variação overnight que os cortes da manhã medem.
+#   07:00 BRT → leitura preliminar, chega junto com o clipping da manhã
+#   09:00 BRT → leitura definitiva, uma hora antes da abertura
+#
+# ⚠️ A ÂNCORA É PRÉ-REQUISITO DA MANHÃ SEGUINTE. Sem a foto das 18:00 de ontem não há
+# janela overnight para medir, e a rodada da manhã sai com 'sem_dado' — de propósito
+# (falha fechada). Se a âncora falhar, dá para recuperar rodando --cut 18 ainda no
+# mesmo dia; depois do fechamento dos mercados o retrato já não é o mesmo.
+#
+# Cada corte de pontuação tem o SEU PRÓPRIO jogo de pesos em pulse_model, porque foram
+# validados em separado. O corte é deduzido da hora UTC do run (pulse_snapshot.cut_agora).
 #
 # POR QUE CONCURRENCY PRÓPRIA
 # O hunt-loop e o hunt-playwright são CORRENTES: cada run ocupa o grupo por até 5h55.
@@ -30,13 +39,14 @@ on:
         required: false
         default: ""
         type: choice
-        options: ["", "07", "09"]
+        options: ["", "07", "09", "18"]
   schedule:
     # O GitHub Actions atrasa cron em horário de pico. Rodamos 10 min antes do alvo
     # para o dado chegar a tempo; se atrasar um pouco, o snapshot ainda é pré-abertura
     # (a B3 abre 13:00 UTC e a pontuação exige margem, não pontualidade).
     - cron: "50 9 * * 1-5"      # ~07:00 BRT — preliminar
     - cron: "50 11 * * 1-5"     # ~09:00 BRT — definitiva
+    - cron: "50 20 * * 1-5"     # ~18:00 BRT — âncora do fechamento (não pontua)
 
 permissions:
   contents: read

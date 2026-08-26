@@ -1,9 +1,9 @@
 """
 Market Pulse v2 — pontuação diária. Python puro, sem numpy.
 
-O modelo é um ridge linear, então pontuar é um produto escalar sobre 23 números:
+O modelo é um ridge linear, então pontuar é um produto escalar sobre os instrumentos:
 
-    x  = preço(hoje) / preço(ontem) − 1          (dentro do mesmo corte)
+    x  = preço(corte, hoje) / preço(18h, ontem) − 1     (variação OVERNIGHT)
     z  = (x − mu) / sd                           (mu/sd vêm SÓ da janela de treino)
     ŷ  = Σ β·z                                   (gap esperado, em fração)
 
@@ -27,7 +27,8 @@ from datetime import datetime, timezone
 import requests
 
 from .prices import _supa_upsert
-from .pulse_snapshot import COMPANIES, GRUPO_DE, SEM_SINAL
+from .pulse_snapshot import (COMPANIES, CUT_BASE, GRUPO_DE, IC_MIN_PUBLICAR,
+                             SEM_SINAL)
 
 log = logging.getLogger(__name__)
 
@@ -57,39 +58,50 @@ def _logistica(z: float) -> float:
 
 def features(cut: str) -> tuple[str, dict[str, float], datetime | None]:
     """
-    Monta a variação de 24h de cada instrumento no corte pedido.
+    Monta a variação OVERNIGHT de cada instrumento: do fechamento da B3 de ontem
+    (âncora das 18h) até o corte de hoje.
+
     Devolve (data do pregão, {símbolo: x}, instante da captura).
+
+    ⚠️ A âncora é do PREGÃO ANTERIOR, não do mesmo dia — por isso a busca da data base
+    exige `session_date < hoje`. Numa segunda-feira isso pega a sexta sozinho; num
+    feriado, o último pregão que existiu. É por comparação de datas justamente para
+    não precisar de calendário.
     """
     datas = _supa_get(f"pulse_snapshot?cut=eq.{cut}&select=session_date"
-                      f"&order=session_date.desc&limit=200")
-    distintas = []
-    for row in datas:
-        d = row["session_date"]
-        if d not in distintas:
-            distintas.append(d)
-        if len(distintas) == 2:
-            break
-    if len(distintas) < 2:
-        raise RuntimeError(f"corte {cut}: preciso de 2 pregões de snapshot, achei {len(distintas)}")
-    hoje, ontem = distintas[0], distintas[1]
+                      f"&order=session_date.desc&limit=50")
+    hoje = next((r["session_date"] for r in datas), None)
+    if not hoje:
+        raise RuntimeError(f"corte {cut}: pulse_snapshot vazio")
 
-    linhas = _supa_get(f"pulse_snapshot?cut=eq.{cut}"
-                       f"&session_date=in.({hoje},{ontem})"
-                       f"&select=session_date,symbol,price,captured_at&limit=2000")
-    p_hoje = {r["symbol"]: float(r["price"]) for r in linhas if r["session_date"] == hoje}
-    p_ontem = {r["symbol"]: float(r["price"]) for r in linhas if r["session_date"] == ontem}
+    base = _supa_get(f"pulse_snapshot?cut=eq.{CUT_BASE}&session_date=lt.{hoje}"
+                     f"&select=session_date&order=session_date.desc&limit=1")
+    ontem = next((r["session_date"] for r in base), None)
+    if not ontem:
+        raise RuntimeError(
+            f"corte {cut}: não achei âncora do fechamento (cut={CUT_BASE}) antes de {hoje}. "
+            f"A captura das 18:00 BRT rodou ontem?")
+
+    hoje_rows = _supa_get(f"pulse_snapshot?cut=eq.{cut}&session_date=eq.{hoje}"
+                          f"&select=symbol,price,captured_at&limit=2000")
+    base_rows = _supa_get(f"pulse_snapshot?cut=eq.{CUT_BASE}&session_date=eq.{ontem}"
+                          f"&select=symbol,price&limit=2000")
+    p_hoje = {r["symbol"]: float(r["price"]) for r in hoje_rows}
+    p_base = {r["symbol"]: float(r["price"]) for r in base_rows}
+
     captura = None
-    for r in linhas:
-        if r["session_date"] == hoje and r.get("captured_at"):
+    for r in hoje_rows:
+        if r.get("captured_at"):
             ts = datetime.fromisoformat(r["captured_at"].replace("Z", "+00:00"))
             captura = ts if captura is None else max(captura, ts)
 
     x = {}
     for sym, ph in p_hoje.items():
-        po = p_ontem.get(sym)
+        po = p_base.get(sym)
         if po:
             x[sym] = ph / po - 1.0
-    log.info("pulse features %s: pregão %s vs %s, %d instrumentos", cut, hoje, ontem, len(x))
+    log.info("pulse features %s: overnight de %s (18h) até %s (%sh), %d instrumentos",
+             cut, ontem, hoje, cut, len(x))
     return hoje, x, captura
 
 
@@ -145,6 +157,32 @@ def pontuar_empresa(modelo: dict, x: dict[str, float]) -> dict | None:
     }
 
 
+def _sem_sinal_por_que(empresa: str, modelo: dict | None) -> str | None:
+    """
+    A empresa deve sair como "no signal"? Devolve o motivo (em inglês, vai para o tooltip
+    do cliente) ou None se ela pode publicar número.
+
+    Duas portas, nesta ordem:
+      1. barra manual (`SEM_SINAL`) — para o que sabemos e o número não mostra;
+      2. piso de qualidade: o `ic_oos` do walk-forward tem de alcançar IC_MIN_PUBLICAR.
+
+    A segunda é a que importa no dia a dia, e é DERIVADA do treino: quando o modelo de uma
+    empresa melhora (feature nova, regime que volta), ela reentra sozinha no re-treino
+    seguinte; quando piora, sai sozinha. Nada de lista mantida à mão.
+    """
+    if empresa in SEM_SINAL:
+        return SEM_SINAL[empresa]
+    if modelo is None:
+        return "no model trained yet for this name"
+    ic = modelo.get("ic_oos")
+    if ic is None:
+        return "model not validated out-of-sample yet"
+    if float(ic) < IC_MIN_PUBLICAR:
+        return (f"model too weak to publish (out-of-sample IC {float(ic):+.2f}, "
+                f"floor {IC_MIN_PUBLICAR:.2f})")
+    return None
+
+
 def score(cut: str, dry_run: bool = False) -> list[dict]:
     """Pontua todas as cobertas no corte e grava em pulse_daily."""
     sessao, x, captura = features(cut)
@@ -159,10 +197,11 @@ def score(cut: str, dry_run: bool = False) -> list[dict]:
         base = {"session_date": sessao, "cut": cut, "company": empresa,
                 "snapshot_at": captura.isoformat() if captura else None,
                 "updated_at": agora}
-        if empresa in SEM_SINAL:
+        motivo = _sem_sinal_por_que(empresa, modelos.get(empresa))
+        if motivo:
             rows.append({**base, "status": "sem_sinal", "gap_expected": None,
                          "score": None, "confidence": None,
-                         "attribution": {"motivo": SEM_SINAL[empresa]}})
+                         "attribution": {"motivo": motivo}})
             continue
         m = modelos.get(empresa)
         out = pontuar_empresa(m, x) if m else None

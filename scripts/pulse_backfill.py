@@ -39,7 +39,8 @@ except ImportError:
     pass
 
 from hunter.prices import HEADERS, _YAHOO_HOSTS, _supa_upsert       # noqa: E402
-from hunter.pulse_snapshot import CUTS, SNAPSHOT_SYMBOLS           # noqa: E402
+from hunter.pulse_snapshot import (CUTS, PREMARKET_SYMBOLS,         # noqa: E402
+                                   SNAPSHOT_SYMBOLS)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pulse_backfill")
@@ -68,8 +69,16 @@ def _yahoo(symbol: str, params: str) -> dict | None:
 
 
 def barras_horarias(symbol: str) -> list[tuple[int, float]]:
-    """[(instante UTC em que a barra FECHOU, preço), ...] dos últimos 730 dias."""
-    js = _yahoo(symbol, "range=730d&interval=1h&includePrePost=false")
+    """
+    [(instante UTC em que a barra FECHOU, preço), ...] dos últimos 730 dias.
+
+    Para os símbolos de pré-mercado o Yahoo só devolve as barras estendidas com
+    `includePrePost=true` — e devolve MESMO no histórico (medido em 2026-08-26: VALE tem
+    288 barras de pré-mercado em 60 dias com o flag e ZERO sem ele). É por isso que os
+    ADRs podem entrar no modelo já treinados, em vez de esperar meses de coleta.
+    """
+    pre = "true" if symbol in PREMARKET_SYMBOLS else "false"
+    js = _yahoo(symbol, f"range=730d&interval=1h&includePrePost={pre}")
     if not js:
         return []
     try:

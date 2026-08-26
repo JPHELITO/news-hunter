@@ -7,6 +7,10 @@ Market Pulse v2 — entrypoint da rodada diária. Roda no pulse_daily.yml, 2x po
 
 Sequência: tira a foto do mundo -> pontua as cobertas -> grava. Se a foto falhar, NÃO
 pontua: publicar um pulse com metade dos instrumentos seria pior que não publicar.
+
+O corte "18" (21:00 UTC) é a ÂNCORA do overnight — ele SÓ TIRA A FOTO, não pontua: é o
+retrato do mundo no instante em que a B3 fechou, e serve de ponto de partida para a
+variação overnight que os cortes das 07h e 09h medem no dia seguinte.
 """
 from __future__ import annotations
 
@@ -21,13 +25,15 @@ try:
 except ImportError:
     pass
 
-from . import pulse_score, pulse_snapshot
+from . import pulse_score, pulse_sina, pulse_snapshot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pulse_daily")
 
-# Abaixo disto o dia está capenga demais para publicar (feriado em cadeia, Yahoo bloqueando).
-MIN_INSTRUMENTOS = 18
+# Abaixo desta FRAÇÃO dos instrumentos o dia está capenga demais para publicar (feriado em
+# cadeia, Yahoo bloqueando). Fração e não número fixo: a lista de instrumentos cresce, e um
+# piso absoluto envelhece em silêncio — passaria a aceitar metade da foto sem ninguém notar.
+MIN_FRACAO_INSTRUMENTOS = 0.75
 
 
 def main() -> int:
@@ -42,16 +48,33 @@ def main() -> int:
     cut = args.cut or pulse_snapshot.cut_agora()
     log.info("=== Market Pulse — corte %s (%02d:00 BRT) ===", cut, pulse_snapshot.CUTS[cut] - 3)
 
+    total = len(pulse_snapshot.SNAPSHOT_SYMBOLS)
+    minimo = int(total * MIN_FRACAO_INSTRUMENTOS)
+
     if not args.skip_capture:
         try:
             precos = pulse_snapshot.capture(cut, dry_run=args.dry_run)
         except Exception as e:
             log.error("captura falhou: %s", e)
             return 1
-        if len(precos) < MIN_INSTRUMENTOS:
+        if len(precos) < minimo:
             log.error("só %d de %d instrumentos capturados (mínimo %d) — não vou pontuar.",
-                      len(precos), len(pulse_snapshot.SNAPSHOT_SYMBOLS), MIN_INSTRUMENTOS)
+                      len(precos), total, minimo)
             return 1
+
+        # Minério de Cingapura e futuros da China. Ainda não entram no modelo (ver o
+        # cabeçalho de pulse_sina.py) — estão acumulando histórico ao vivo. Falha aqui
+        # NUNCA derruba a rodada: são dados extras, não o vetor do modelo.
+        try:
+            pulse_sina.capture(cut, pulse_snapshot.sessao_hoje(), dry_run=args.dry_run)
+        except Exception as e:
+            log.warning("coletor sina falhou (ignorado): %s", e)
+
+    # A âncora do fechamento não pontua: ela é o ponto de partida da janela overnight
+    # que os cortes da manhã seguinte vão medir.
+    if cut == pulse_snapshot.CUT_BASE:
+        log.info("corte %s é a âncora do fechamento — foto tirada, sem pontuação.", cut)
+        return 0
 
     if args.dry_run and not args.skip_capture:
         log.info("dry-run: a foto não foi gravada, então a pontuação usaria dado velho. "
