@@ -51,6 +51,25 @@ class TestCortes:
         syms = pulse_snapshot.SNAPSHOT_SYMBOLS
         assert len(syms) == len(set(syms))
 
+    def test_alvos_de_fora_da_b3_abrem_depois_do_corte(self):
+        """
+        SCCO e TX abrem na NYSE (10:30 BRT) e a GMEXICOB na Bolsa Mexicana, que sincroniza
+        com ela. Os dois cortes de pontuação são de manhã, ANTES disso — é o que torna a
+        previsão delas quase um nowcast, e é o que não pode ser quebrado ao mexer nos
+        horários. O corte mais tardio (09h BRT = 12h UTC) tem de ficar antes das 13:30 UTC.
+        """
+        for c in pulse_snapshot.CUTS_SCORE:
+            assert pulse_snapshot.CUTS[c] < 13, f"corte {c} não é mais pré-abertura de NY"
+
+    def test_um_alvo_nunca_e_seu_proprio_instrumento(self):
+        """
+        SCCO e TX são ALVOS. Se algum deles entrasse também no snapshot, o modelo veria o
+        preço da própria ação e o IC viraria ficção.
+        """
+        for alvo in pulse_snapshot.COMPANIES:
+            assert alvo not in pulse_snapshot.SNAPSHOT_SYMBOLS, \
+                f"{alvo} é alvo E instrumento — look-ahead"
+
 
 # ───────────────────────── gate de publicação (onda 0) ─────────────────────────
 class TestGateDePublicacao:
@@ -58,10 +77,10 @@ class TestGateDePublicacao:
         assert pulse_score._sem_sinal_por_que("VALE3.SA", {"ic_oos": 0.69}) is None
 
     def test_modelo_fraco_nao_publica(self):
-        """RANI3: 0,209 com a janela overnight — small cap com 28% de leilões sem negócio."""
-        motivo = pulse_score._sem_sinal_por_que("RANI3.SA", {"ic_oos": 0.209})
+        """RANI3: 0,119 — small cap com 28% de leilões sem negócio."""
+        motivo = pulse_score._sem_sinal_por_que("RANI3.SA", {"ic_oos": 0.119})
         assert motivo and "too weak" in motivo
-        assert "+0.21" in motivo          # o número aparece: o cliente vê POR QUE
+        assert "+0.12" in motivo          # o número aparece: o cliente vê POR QUE
 
     def test_limite_e_inclusivo(self):
         assert pulse_score._sem_sinal_por_que("X", {"ic_oos": pulse_snapshot.IC_MIN_PUBLICAR}) is None
@@ -84,8 +103,9 @@ class TestGateDePublicacao:
         Se este teste falhar depois de um re-treino, a distribuição andou: recalibre o
         limiar olhando a lista nova, em vez de afrouxar o teste.
         """
-        medidos = sorted([0.698, 0.672, 0.615, 0.553, 0.487, 0.465, 0.438, 0.436, 0.424,
-                          0.405, 0.386, 0.353, 0.298, 0.242, 0.232, 0.175, 0.120, 0.103])
+        medidos = sorted([0.760, 0.699, 0.680, 0.674, 0.640, 0.624, 0.580, 0.561, 0.501,
+                          0.472, 0.446, 0.446, 0.426, 0.415, 0.398, 0.377, 0.361, 0.354,
+                          0.319, 0.257, 0.235, 0.187, 0.119, 0.097])
         limiar = pulse_snapshot.IC_MIN_PUBLICAR
 
         # 1) folga do valor mais próximo: a 0,01 de distância a empresa pisca a cada re-treino
@@ -298,3 +318,36 @@ class TestPainelEApresentacao:
     def test_a_linha_do_painel_nao_e_confundida_com_empresa(self):
         assert pulse_snapshot.PANEL_KEY not in pulse_snapshot.COMPANIES
         assert pulse_snapshot.PANEL_KEY.startswith("_")
+
+
+# ───────────────────── trava anti-look-ahead (onda 4) ─────────────────────
+class TestTravaPosAbertura:
+    """
+    Um corte de manhã só pode ser capturado ANTES de a B3 abrir. O Actions atrasa rodadas,
+    e `cut_agora()` devolveria '09' às 13h UTC — gravando com o rótulo das 09:00 uma foto
+    tirada DEPOIS da abertura. Essa linha entraria no treino como se fosse pré-abertura e
+    envenenaria o histórico em silêncio. Perder a rodada do dia é o mal menor.
+    """
+    def _rodar(self, argv, hora_utc):
+        from hunter import pulse_daily
+        with mock.patch.object(sys, "argv", ["pulse_daily"] + argv),              mock.patch("hunter.pulse_daily.datetime") as dt,              mock.patch("hunter.pulse_daily.pulse_snapshot.capture") as cap,              mock.patch("hunter.pulse_daily.pulse_score.score") as sc,              mock.patch("hunter.pulse_daily.pulse_sina.capture"):
+            dt.now.return_value = mock.Mock(hour=hora_utc, minute=20)
+            rc = pulse_daily.main()
+        return rc, cap.called, sc.called
+
+    def test_recusa_capturar_depois_da_abertura(self):
+        rc, capturou, pontuou = self._rodar(["--cut", "09"], hora_utc=13)
+        assert rc == 1 and not capturou and not pontuou
+
+    def test_antes_da_abertura_captura_normalmente(self):
+        rc, capturou, _ = self._rodar(["--cut", "09"], hora_utc=12)
+        assert capturou
+
+    def test_a_ancora_das_18h_nao_e_afetada(self):
+        """A âncora é capturada às 21h UTC, muito depois da abertura — e tem de continuar."""
+        _, capturou, _ = self._rodar(["--cut", pulse_snapshot.CUT_BASE], hora_utc=21)
+        assert capturou
+
+    def test_repontuar_sem_capturar_continua_permitido(self):
+        rc, capturou, pontuou = self._rodar(["--cut", "09", "--skip-capture"], hora_utc=13)
+        assert not capturou and pontuou

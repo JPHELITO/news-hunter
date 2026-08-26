@@ -46,6 +46,7 @@ on:
     # (a B3 abre 13:00 UTC e a pontuação exige margem, não pontualidade).
     - cron: "50 9 * * 1-5"      # ~07:00 BRT — preliminar
     - cron: "50 11 * * 1-5"     # ~09:00 BRT — definitiva
+    - cron: "20 13 * * 1-5"     # ~10:20 BRT — fecha o PLACAR (a B3 já abriu)
     - cron: "50 20 * * 1-5"     # ~18:00 BRT — âncora do fechamento (não pontua)
 
 permissions:
@@ -81,8 +82,15 @@ jobs:
           PYTHONIOENCODING:     utf-8
           CUT_INPUT:            ${{ github.event.inputs.cut }}
         run: |
+          # A rodada das 13:20 UTC não captura nem pontua: a B3 já abriu, e o que ela faz é
+          # fechar o placar do dia (previsto x realizado). `cut_agora` mapearia 13h para o
+          # corte das 09h e RE-CAPTURARIA a foto com preços de depois da abertura — que é
+          # look-ahead puro. Por isso o modo é decidido pela HORA, aqui, e não lá dentro.
+          HORA=$(date -u +%H)
           if [ -n "$CUT_INPUT" ]; then
             python -m hunter.pulse_daily --cut "$CUT_INPUT"
+          elif [ "$HORA" = "13" ]; then
+            python -m hunter.pulse_daily --so-placar
           else
             python -m hunter.pulse_daily
           fi

@@ -90,9 +90,21 @@ GRUPO_DE = {s: g for g, v in GRUPOS.items() for s in v}
 # ontem — é preciso ler as barras estendidas. Ver `_preco_estendido`.
 PREMARKET_SYMBOLS = frozenset(GRUPOS["NY pre-market"])
 
-# As 9 cobertas negociadas na B3 (o alvo é o gap de abertura de cada uma).
+# As cobertas cujo gap de abertura o modelo estima. Nove na B3 (abre 10:00 BRT) e três nas
+# Américas (NYSE 10:30 BRT, Bolsa Mexicana em sincronia com ela).
+#
+# As três de fora da B3 entraram em 2026-08-26 e são, por construção, o caso mais fácil do
+# universo: elas abrem UMA HORA E MEIA depois do corte das 09h, e o driver delas — o cobre
+# na COMEX, o aço nos EUA — já negociou a noite inteira. É quase um nowcast, e a medição
+# confirma (walk-forward, corte 09): SCCO ic_oos 0,787 / 81,0% de acerto · TX 0,628 / 74,7%
+# · GMEXICOB 0,362 / 66,7%. O SCCO é o melhor modelo de todo o produto.
+#
+# ⚠️ O horário de verão americano move a abertura deles para 11:30 BRT entre novembro e
+# março. Continua depois do corte, então o alinhamento não muda — mas não encoste o corte
+# das 09h para mais tarde sem refazer esta conta.
 COMPANIES = ["VALE3.SA", "CSNA3.SA", "CMIN3.SA", "GGBR4.SA", "USIM5.SA",
-             "KLBN11.SA", "SUZB3.SA", "RANI3.SA", "AURA33.SA"]
+             "KLBN11.SA", "SUZB3.SA", "RANI3.SA", "AURA33.SA",
+             "SCCO", "TX", "GMEXICOB.MX"]
 
 # O papel GÊMEO de cada coberta em Nova York. É o mesmo ativo econômico negociando num
 # fuso que abre antes: às 09:00 BRT o pré-mercado americano já roda há quatro horas.
@@ -115,23 +127,27 @@ GEMEO = {
 # dias desconta a autoridade que o segundo construiu. Dizer "no reliable signal" é a
 # informação honesta, e ela vale mais que um chute.
 #
-# COMO CALIBRAR: o limiar tem de cair no maior VÃO da distribuição de ic_oos, não num
-# número redondo — se ficar colado num valor, a empresa entra e sai a cada re-treino.
-# Medido em 2026-08-26 com a configuração de produção (janela overnight + painel), os dois
-# cortes juntos, em ordem:
-#     0,698 0,672 0,615 0,553 0,487 0,465 0,438 0,436 0,424 0,405 0,386 0,353 | 0,298
-#     [vão de 0,056] 0,242 0,232 [vão de 0,057] 0,175 0,120 0,103
-# Os dois vãos grandes ficam em 0,270 e 0,204. Escolhido o de cima: a onda 3 exibe estes
-# números com autoridade, e é melhor mostrar sete leituras sólidas do que oito com uma
-# duvidosa. Fora ficam KLBN11 às 07h (0,242 — entra às 09h, com 0,298: o corte da manhã
-# tem mais informação, e dizer isso é honesto), SUZB3 (0,232/0,175) e RANI3 (0,120/0,103).
-# ⚠️ Recalibre olhando esta lista sempre que um re-treino mover a distribuição. O limiar é
+# A INTENÇÃO, que não muda: publicar só onde o modelo acerta a direção em torno de 60% das
+# vezes ou mais. Um IC de ~0,29 corresponde a isso na nossa amostra.
+#
+# COMO CALIBRAR: o limiar tem de cair num VÃO da distribuição de ic_oos, não colado num
+# valor — a 0,01 de distância a empresa entra e sai a cada re-treino semanal. Medido em
+# 2026-08-26 com a configuração de produção (janela overnight + painel + 12 empresas), os
+# dois cortes juntos, em ordem:
+#     0,760 0,699 0,680 0,674 0,640 0,624 0,580 0,561 0,501 0,472 0,446 0,446 0,426
+#     0,415 0,398 0,377 0,361 0,354 0,319 | [vão de 0,062] 0,257 0,235 0,187 0,119 0,097
+# O vão da fronteira vai de 0,257 (KLBN11 às 07h) a 0,319 (KLBN11 às 09h); 0,29 fica no
+# meio, com folga de ~0,03 dos dois lados. A Klabin publica às 09h e não às 07h — o corte
+# da manhã tem mais informação, e dizer isso é mais honesto que arredondar para os dois.
+# Fora ficam SUZB3 (0,235/0,187) e RANI3 (0,119/0,097).
+#
+# ⚠️ Recalibre olhando a lista nova sempre que um re-treino mover a distribuição. O limiar é
 # decisão de PRODUTO (quão confiante é preciso estar para mostrar um número), não um
 # parâmetro do modelo — e o teste `test_o_limiar_cai_no_maior_vao` trava o critério.
 #
-# Histórico: 0,20 na era da janela de 24h (separação 0,253 × 0,148) → 0,25 com a janela
-# overnight → 0,27 com o painel. Todo mundo subiu, e a fronteira subiu junto.
-IC_MIN_PUBLICAR = 0.27
+# Histórico: 0,20 na era da janela de 24h → 0,25 com a janela overnight → 0,27 com o painel
+# → 0,29 com as três das Américas. Todo mundo subiu, e a fronteira subiu junto.
+IC_MIN_PUBLICAR = 0.29
 
 # Nome de "empresa" reservado, em pulse_model, para a linha do PAINEL: um único jogo de
 # pesos treinado com as nove empilhadas (alvo padronizado pelo σ de cada uma). O que a
