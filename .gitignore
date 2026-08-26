@@ -1,10 +1,18 @@
 .env
+# ⚠️ O `.env` sozinho NÃO cobre as cópias. Em 2026-08-26 havia um
+# `.env.bak-20260807` com 7 chaves (service key do Supabase inclusa) parado no
+# diretório, visível ao `git status` como arquivo novo — e este repositório é
+# PÚBLICO: um `git add .` distraído publicaria tudo.
+.env.*
+!.env.example
 __pycache__/
 *.pyc
 .venv/
 venv/
 .DS_Store
 *.log
+# despejo local do hunt (estado do último run) — não é código nem dado do produto
+_live.pkl
 
 # Gabarito do analista (dados/IP — não versionar; repo é público)
 data/labeled/*.pdf
