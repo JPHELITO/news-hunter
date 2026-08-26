@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import math
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import requests
 
@@ -31,6 +31,10 @@ from .pulse_snapshot import (COMPANIES, CUT_BASE, GRUPO_DE, IC_MIN_PUBLICAR,
                              SEM_SINAL)
 
 log = logging.getLogger(__name__)
+
+# Maior distância aceitável entre a âncora do fechamento e o pregão sendo pontuado.
+# Cobre fim de semana (3) e o feriado mais longo da B3, o Carnaval (sexta→quarta = 4).
+MAX_IDADE_ANCORA_DIAS = 5
 
 
 def _supa_get(path: str) -> list[dict]:
@@ -81,6 +85,21 @@ def features(cut: str) -> tuple[str, dict[str, float], datetime | None]:
         raise RuntimeError(
             f"corte {cut}: não achei âncora do fechamento (cut={CUT_BASE}) antes de {hoje}. "
             f"A captura das 18:00 BRT rodou ontem?")
+
+    # ⚠️ Âncora velha demais = janela de vários dias se passando por overnight. Não dá para
+    # distinguir "feriado longo" de "a captura das 18h falhou" só pela data, então limitamos
+    # pelo maior feriado plausível da B3 (Carnaval: sexta a quarta = 4 dias corridos) e
+    # falhamos fechado acima disso. Sem esta trava, uma noite sem captura sairia como um
+    # pulse normal — com a feature medindo 48h e ninguém percebendo.
+    idade = (date.fromisoformat(hoje) - date.fromisoformat(ontem)).days
+    if idade > MAX_IDADE_ANCORA_DIAS:
+        raise RuntimeError(
+            f"corte {cut}: a âncora mais recente é de {ontem}, {idade} dias antes de {hoje} "
+            f"(limite {MAX_IDADE_ANCORA_DIAS}). A captura das 18:00 BRT falhou? "
+            f"Recuperar com: python -m hunter.pulse_daily --cut {CUT_BASE}")
+    if idade > 1:
+        log.info("pulse features %s: âncora de %d dias atrás (%s) — fim de semana ou feriado",
+                 cut, idade, ontem)
 
     hoje_rows = _supa_get(f"pulse_snapshot?cut=eq.{cut}&session_date=eq.{hoje}"
                           f"&select=symbol,price,captured_at&limit=2000")

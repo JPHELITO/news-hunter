@@ -142,6 +142,26 @@ class TestJanelaOvernight:
             with pytest.raises(RuntimeError, match="âncora"):
                 pulse_score.features("09")
 
+    def test_fim_de_semana_e_feriado_passam(self):
+        """Segunda-feira ancora na sexta (3 dias) — é o caso normal, não pode falhar."""
+        with mock.patch.object(pulse_score, "_supa_get",
+                               side_effect=self._snapshot_falso(base_date="2026-08-21",
+                                                                hoje="2026-08-24")):
+            sessao, x, _ = pulse_score.features("09")
+        assert sessao == "2026-08-24" and x
+
+    def test_ancora_velha_demais_falha_fechada(self):
+        """
+        Se a captura das 18h falhar, a âncora disponível vira a de anteontem — e a feature
+        mediria 48h+ se passando por overnight, sem avisar ninguém. Este é o defeito
+        silencioso que a trava existe para impedir; a mensagem diz como recuperar.
+        """
+        with mock.patch.object(pulse_score, "_supa_get",
+                               side_effect=self._snapshot_falso(base_date="2026-08-10",
+                                                                hoje="2026-08-26")):
+            with pytest.raises(RuntimeError, match="16 dias antes"):
+                pulse_score.features("09")
+
 
 # ───────────────────────── coletor Sina (onda 1) ─────────────────────────
 class TestSina:
