@@ -74,6 +74,34 @@ def _spearman(xs: list[float], ys: list[float]) -> float:
     return num / (dx * dy) if dx and dy else float("nan")
 
 
+# Quantos pregões antes de poder dizer que um modelo quebrou. Sob "não há sinal nenhum", o
+# desvio-padrão do IC é ~1/raiz(n): com 10 pregões isso dá ±0,33, e um IC de −0,34 sai do
+# puro acaso uma vez a cada seis janelas. Para rejeitar a hipótese com 95% de confiança são
+# precisos n > (1,96/IC)² pregões — para um IC de 0,34, cerca de 33.
+N_MIN_VEREDITO = 35
+_LEGENDA_DRIFT = ("veredito: 'ruído' = amostra pequena demais para concluir (n < "
+                  f"{N_MIN_VEREDITO}) · 'ok' = IC positivo e significante · 'QUEBROU' = "
+                  "IC negativo e significante — aí sim vale investigar")
+
+
+def _drift(ic: float, n: int) -> str:
+    """
+    O modelo desta empresa quebrou, ou foi uma quinzena ruim?
+
+    A tentação é desligar a empresa que teve duas semanas ruins. Foi exatamente o que quase
+    fizemos com a KLBN11 em agosto/2026 (IC −0,34 em 10 pregões), e a permutação mostrou
+    16,5% de chance de aquilo sair do nada. Reagir a ruído é como se destrói um modelo bom.
+    """
+    if n < N_MIN_VEREDITO or ic != ic:      # ic != ic → NaN
+        return f"ruído (n<{N_MIN_VEREDITO})"
+    z = ic * (n ** 0.5)                     # erro-padrão do IC sob a nula ≈ 1/raiz(n)
+    if z <= -1.96:
+        return "QUEBROU — investigar"
+    if z >= 1.96:
+        return "ok"
+    return "sem sinal claro"
+
+
 def gaps_reais(desde: str) -> dict[tuple[str, str], tuple[float, bool]]:
     """
     {(empresa, data): (gap de abertura realizado em %, houve negócio no leilão?)}.
@@ -188,14 +216,16 @@ def main() -> int:
         por_emp = defaultdict(list)
         for l in sub:
             por_emp[l[1]].append(l)
-        print(f"\n  {'empresa':<12}{'n':>4}{'IC':>9}{'acerto':>9}{'erro (pp)':>12}")
+        print(f"\n  {'empresa':<12}{'n':>4}{'IC':>9}{'acerto':>9}{'erro (pp)':>12}   veredito")
         for emp, ls in sorted(por_emp.items(), key=lambda kv: -len(kv[1])):
             if len(ls) < 5:
                 continue
             i2 = _spearman([l[2] for l in ls], [l[4] for l in ls])
             a2 = sum(1 for l in ls if (l[2] > 0) == (l[4] > 0)) / len(ls)
             e2 = sum(abs(l[3] - l[4]) for l in ls) / len(ls)
-            print(f"  {emp:<12}{len(ls):>4}{i2:>+9.3f}{100*a2:>8.1f}%{e2:>12.3f}")
+            print(f"  {emp:<12}{len(ls):>4}{i2:>+9.3f}{100*a2:>8.1f}%{e2:>12.3f}   {_drift(i2, len(ls))}")
+
+        print(f"\n  {_LEGENDA_DRIFT}")
 
         conf = [l for l in sub if l[5] is not None]
         if len(conf) >= 20:
