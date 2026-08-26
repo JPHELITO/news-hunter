@@ -25,7 +25,7 @@ try:
 except ImportError:
     pass
 
-from . import pulse_score, pulse_sina, pulse_snapshot
+from . import pulse_outcome, pulse_score, pulse_sina, pulse_snapshot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pulse_daily")
@@ -71,8 +71,13 @@ def main() -> int:
             log.warning("coletor sina falhou (ignorado): %s", e)
 
     # A âncora do fechamento não pontua: ela é o ponto de partida da janela overnight
-    # que os cortes da manhã seguinte vão medir.
+    # que os cortes da manhã seguinte vão medir. É também a hora certa de fechar o placar
+    # do dia: o pregão acabou, então o preço de abertura já é definitivo.
     if cut == pulse_snapshot.CUT_BASE:
+        try:
+            pulse_outcome.preencher(dry_run=args.dry_run)
+        except Exception as e:
+            log.warning("placar do dia falhou (ignorado): %s", e)
         log.info("corte %s é a âncora do fechamento — foto tirada, sem pontuação.", cut)
         return 0
 

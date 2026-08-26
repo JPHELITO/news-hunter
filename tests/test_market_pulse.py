@@ -219,3 +219,82 @@ class TestSina:
         """
         for nome in pulse_sina.SINA_SYMBOLS:
             assert nome not in pulse_snapshot.SNAPSHOT_SYMBOLS
+
+
+# ───────────────────── painel, banda e convicção (onda 2) ─────────────────────
+class TestPainelEApresentacao:
+    """
+    Um modelo mínimo, à mão, para exercitar a mecânica sem depender do banco.
+    Uma feature só, coeficiente 1, média 0 e desvio 1 → a previsão É o valor da feature.
+    """
+    def _modelo(self, **conf):
+        base = {"sigma_y": 0.02, "sigma_media": 0.01,
+                "band_q10": -0.008, "band_q90": 0.012, "band_cov": 0.80,
+                "hit_high": 0.75, "hit_mid": 0.62, "hit_low": 0.55}
+        return {"company": "X.SA", "coefs": {"GC=F": 1.0}, "mu": {"GC=F": 0.0},
+                "sd": {"GC=F": 1.0}, "sigma_pred": 0.01, "conf_w": {**base, **conf}}
+
+    def _painel(self):
+        return {"company": pulse_snapshot.PANEL_KEY, "coefs": {"GC=F": 0.5},
+                "mu": {"GC=F": 0.0}, "sd": {"GC=F": 1.0}, "sigma_pred": 1.0, "conf_w": None}
+
+    def test_publica_a_media_dos_dois_modelos(self):
+        """per-name = 0,01 · painel = 0,5 × sigma_y(0,02) × 0,01 = 0,0001 → média."""
+        out = pulse_score.pontuar_empresa(self._modelo(), {"GC=F": 0.01}, self._painel())
+        esperado = 100 * (0.01 + 0.5 * 0.01 * 0.02) / 2
+        assert out["gap_expected"] == pytest.approx(esperado, abs=1e-6)
+
+    def test_sem_painel_publica_so_o_per_name(self):
+        out = pulse_score.pontuar_empresa(self._modelo(), {"GC=F": 0.01}, None)
+        assert out["gap_expected"] == pytest.approx(1.0)
+
+    def test_painel_inaplicavel_falha_fechada(self):
+        """
+        O ic_oos que autoriza publicar foi medido sobre a MÉDIA. Cair no per-name sozinho
+        seria trocar de modelo em silêncio e publicar um número que ninguém validou.
+        """
+        painel = self._painel()
+        painel["coefs"] = {"GC=F": 0.5, "SUMIU=F": 0.3}
+        assert pulse_score.pontuar_empresa(self._modelo(), {"GC=F": 0.01}, painel) is None
+
+    def test_a_soma_das_contribuicoes_bate_com_o_gap(self):
+        """
+        A atribuição é EXATA, não aproximada — é por isso que o linear foi escolhido no
+        lugar das árvores. Com o painel entrando na média, ela tem de continuar exata.
+        """
+        out = pulse_score.pontuar_empresa(self._modelo(), {"GC=F": 0.01}, self._painel())
+        soma = sum(v for _, v, *_ in out["attribution"]["drivers"])
+        assert soma == pytest.approx(out["gap_expected"], abs=1e-4)
+
+    def test_banda_sai_em_torno_da_previsao(self):
+        out = pulse_score.pontuar_empresa(self._modelo(), {"GC=F": 0.01}, None)
+        lo, hi = out["attribution"]["band"]
+        assert lo < out["gap_expected"] < hi
+        assert out["attribution"]["band_cov"] == pytest.approx(0.80)
+
+    @pytest.mark.parametrize("x,faixa,hit", [
+        (0.02, "high", 0.75),    # |ŷ|/σ = 2,0
+        (0.008, "mid", 0.62),    # 0,8
+        (0.002, "low", 0.55),    # 0,2
+    ])
+    def test_conviccao_por_magnitude_carrega_o_acerto_historico(self, x, faixa, hit):
+        """O selo não é adjetivo: vem com o acerto MEDIDO naquela faixa."""
+        out = pulse_score.pontuar_empresa(self._modelo(), {"GC=F": x}, None)
+        assert out["attribution"]["conviction"] == faixa
+        assert out["attribution"]["conviction_hit"] == pytest.approx(hit)
+
+    def test_faixa_sem_amostra_nao_vira_promessa(self):
+        out = pulse_score.pontuar_empresa(self._modelo(hit_high=None), {"GC=F": 0.02}, None)
+        assert out["attribution"]["conviction"] == "high"
+        assert out["attribution"]["conviction_hit"] is None
+
+    def test_driver_carrega_o_movimento_do_instrumento(self):
+        """O leitor reconhece "o ouro caiu 1,3%"; a contribuição sozinha é jargão."""
+        out = pulse_score.pontuar_empresa(self._modelo(), {"GC=F": -0.013}, None)
+        sym, contrib, mov = out["attribution"]["drivers"][0]
+        assert sym == "GC=F"
+        assert mov == pytest.approx(-1.3, abs=0.01)
+
+    def test_a_linha_do_painel_nao_e_confundida_com_empresa(self):
+        assert pulse_snapshot.PANEL_KEY not in pulse_snapshot.COMPANIES
+        assert pulse_snapshot.PANEL_KEY.startswith("_")

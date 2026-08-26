@@ -223,7 +223,10 @@ def pontuar_empresa(modelo: dict, x: dict[str, float],
         "attribution": {
             "grupos": {g: round(100.0 * v, 6) for g, v in
                        sorted(grupos.items(), key=lambda kv: -abs(kv[1]))},
-            "drivers": [[s, round(100.0 * v, 6)] for s, v in drivers],
+            # [símbolo, contribuição em pp, quanto o instrumento se MOVEU no overnight].
+            # O movimento é o que o leitor reconhece ("o ouro subiu 0,7%"); a contribuição
+            # sozinha é jargão de modelo.
+            "drivers": [[s, round(100.0 * v, 6), round(100.0 * x[s], 4)] for s, v in drivers],
             **extra,
         },
     }
