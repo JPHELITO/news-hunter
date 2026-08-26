@@ -8,7 +8,7 @@ baixa os 47 de uma vez, então ela não pode engordar. Mas o cliente às vezes q
 20 anos com detalhe diário — e aí entra a `quote_history`, carregada sob demanda só
 para os papéis que estão no gráfico.
 
-DUAS ARMADILHAS DO YAHOO, AMBAS MEDIDAS (não reintroduzir)
+TRÊS ARMADILHAS DO YAHOO, TODAS MEDIDAS (não reintroduzir)
 ----------------------------------------------------------
 1. **`range=max&interval=1d` NÃO devolve diário.** O Yahoo ignora o `interval` quando
    a janela é longa e rebaixa para barras mensais: VALE3 volta com 320 pontos em 26
@@ -24,6 +24,17 @@ DUAS ARMADILHAS DO YAHOO, AMBAS MEDIDAS (não reintroduzir)
    sem erro nenhum no log. Por isso `fetch_recent()` pede `events=div,split` (custa
    zero: a resposta inteira tem 1,7 KB) e quem detecta um split novo re-puxa a série
    inteira daquele papel.
+
+3. **Feed morto se disfarça de mercado parado.** Medido no apagão da Bolsa de Santiago
+   (SGO): de 20/07 a 25/08/2026 o Yahoo devolveu 27 barras diárias de CMPC/COPEC/CAP com
+   `open = high = low = close` = o último preço real e **volume zero**. Não houve erro,
+   HTTP 200, série completa — e o gráfico virou uma linha reta enquanto a CAP caía 16% e
+   a COPEC subia 7% de verdade. O `close` da barra chegou a ficar **19% errado**.
+   Por isso `_closes()` DESCARTA barra fantasma: volume zero **e** OHLC todos iguais.
+   Um dia sem negócio nenhum também cai fora — e deve mesmo: "ninguém negociou" não é
+   "fechou no mesmo preço", e um buraco na série é honesto onde um carimbo é mentira.
+   (A série INTRADIÁRIA do mesmo Yahoo continuou correta o tempo todo: é dela que o
+   `scripts/repair_phantom_bars.py` reconstrói o que foi perdido.)
 
 ECONOMIA QUE ISTO TRAZ (medido)
 -------------------------------
@@ -76,14 +87,44 @@ def _chart(symbol: str, params: dict, timeout: int = 30) -> dict | None:
     return None
 
 
-def _closes(res: dict | None) -> list[list]:
-    """`result` do Yahoo → [[epoch, close], ...] sem nulos, em ordem crescente."""
+def eh_fantasma(o, h, l, c, v) -> bool:
+    """A barra é um CARIMBO do feed, não um pregão? (armadilha 3 da docstring do módulo)
+
+    Assinatura: `open == high == low == close` **e** volume zero. As duas condições juntas,
+    nunca uma só — volume zero sozinho derrubaria índice (^BVSP não reporta volume) e OHLC
+    igual sozinho derrubaria papel travado em leilão legítimo.
+
+    Conservador de propósito: se o Yahoo não mandou volume ou não mandou OHLC, devolve
+    False e a barra PASSA. Melhor deixar entrar uma fantasma do que descartar pregão bom.
+    """
+    if v is None or v > 0:
+        return False
+    if o is None or h is None or l is None or c is None:
+        return False
+    return o == h == l == c
+
+
+def _closes(res: dict | None, symbol: str = "") -> list[list]:
+    """`result` do Yahoo → [[epoch, close], ...] sem nulos e SEM barra fantasma, crescente."""
     if not res:
         return []
     ts = res.get("timestamp") or []
     quote = ((res.get("indicators", {}) or {}).get("quote") or [{}])[0]
     closes = quote.get("close") or []
-    out = [[int(t), round(float(c), 4)] for t, c in zip(ts, closes) if c is not None]
+    col = lambda k: (quote.get(k) or [None] * len(ts))
+    o, h, l, v = col("open"), col("high"), col("low"), col("volume")
+    out, fantasmas = [], 0
+    for i, (t, c) in enumerate(zip(ts, closes)):
+        if c is None:
+            continue
+        if eh_fantasma(o[i], h[i], l[i], c, v[i]):
+            fantasmas += 1
+            continue
+        out.append([int(t), round(float(c), 4)])
+    if fantasmas:
+        log.warning("quote_history: %s — %d barra(s) FANTASMA descartada(s) "
+                    "(volume 0 e OHLC iguais: feed parado, não mercado parado)",
+                    symbol or "?", fantasmas)
     out.sort(key=lambda p: p[0])
     return out
 
@@ -104,14 +145,14 @@ def _splits(res: dict | None) -> list[int]:
 def fetch_full(symbol: str) -> list[list]:
     """Série diária COMPLETA. period1/period2 — NUNCA range=max (ver docstring do módulo)."""
     res = _chart(symbol, {"period1": 0, "period2": int(time.time()), "interval": "1d"})
-    return _closes(res)
+    return _closes(res, symbol)
 
 
 def fetch_recent(symbol: str, days: int = 7) -> tuple[list[list], list[int]]:
     """Janela curta do dia a dia: (fechamentos, epochs de split). ~1,7 KB de resposta."""
     res = _chart(symbol, {"range": f"{max(1, int(days))}d", "interval": "1d",
                           "events": "div,split"}, timeout=15)
-    return _closes(res), _splits(res)
+    return _closes(res, symbol), _splits(res)
 
 
 # ───────────────────────────── merge ─────────────────────────────

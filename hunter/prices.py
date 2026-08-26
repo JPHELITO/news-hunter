@@ -24,6 +24,13 @@ from typing import Iterable
 
 import requests
 
+from hunter import quote_history
+
+
+def _e_diario(interval: str) -> bool:
+    """A granularidade é de UM DIA ou mais? ('1d', '1wk', '1mo' → sim; '5m', '1h' → não)"""
+    return bool(interval) and interval.endswith(("d", "wk", "mo"))
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -275,11 +282,19 @@ def _fetch_yahoo_chart(symbol: str, range_: str | None = None,
                 "quote_time": meta.get("regularMarketTime"),
             }
             if range_ and interval:
-                ts = res0.get("timestamp") or []
-                quote = (res0.get("indicators", {}).get("quote") or [{}])[0]
-                closes = quote.get("close") or []
-                out["series"] = [[int(t), round(float(c), 4)]
-                                 for t, c in zip(ts, closes) if c is not None]
+                if _e_diario(interval):
+                    # Barra DIÁRIA passa pelo mesmo filtro de fantasma do quote_history —
+                    # feed morto (volume 0 + OHLC iguais) não pode virar histórico. Ver a
+                    # armadilha 3 na docstring daquele módulo (apagão da SGO, jul-ago/2026).
+                    out["series"] = quote_history._closes(res0, symbol)
+                else:
+                    # INTRADIÁRIO (5m) fica de fora: candle de 5 minutos sem negócio é
+                    # rotina e o sparkline do dia quer a linha contínua, não buracos.
+                    ts = res0.get("timestamp") or []
+                    quote = (res0.get("indicators", {}).get("quote") or [{}])[0]
+                    closes = quote.get("close") or []
+                    out["series"] = [[int(t), round(float(c), 4)]
+                                     for t, c in zip(ts, closes) if c is not None]
                 out["prev"] = prev
             return out
         except Exception as e:
@@ -495,6 +510,10 @@ def update_quote_history(max_age_hours: float = 18.0) -> int:
             continue
 
         if not recent:
+            # Pode ser rede — ou o feed daquela bolsa parado, cujas barras o filtro de
+            # fantasma acabou de descartar (hunter/quote_history.eh_fantasma). Nos dois
+            # casos o papel segue "stale" e é re-tentado no ciclo seguinte, a 1,7 KB por
+            # tentativa: barato, e recupera o fechamento no minuto em que a fonte voltar.
             continue
         if qh.append(ticker, recent):
             n += 1

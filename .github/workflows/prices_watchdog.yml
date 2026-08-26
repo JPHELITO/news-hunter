@@ -1,0 +1,69 @@
+name: Vigia do historico de precos — barra fantasma
+# Nasceu do apagao da Bolsa de Santiago (2026-08-26): a serie diaria da SGO morreu em
+# 17/07 e o Yahoo passou 27 pregoes devolvendo uma barra por dia com open=high=low=close
+# e volume zero. HTTP 200, serie completa, nenhum erro em log nenhum. CMPC, COPEC e CAP
+# viraram linha reta enquanto a CAP caia 16% e a COPEC subia 7%; o fechamento gravado
+# chegou a ficar 19% errado. O problema so apareceu 40 dias depois, visto a olho pelo
+# analista no grafico. Nao havia numero nenhum vigiando isso.
+#
+# Checa 1x/dia util: barra fantasma consecutiva na fonte (confirmando no intradiario se
+# houve pregao de verdade, para nao confundir feed morto com papel em leilao) e se a
+# NOSSA serie andou. Somente leitura: nao escreve nada no banco.
+#
+# Alarme: o script sai com codigo 1 -> o job FALHA de proposito -> o GitHub manda e-mail
+# ao dono do repo. Mesmo padrao do watchdog.yml e do takes_watchdog.yml, e SEM e-mail
+# quando esta tudo bem (anti-spam).
+#
+# Conserto, quando alarmar:
+#   python scripts/repair_phantom_bars.py --dry-run --only <TICKER>   # mostra o estrago
+#   python scripts/repair_phantom_bars.py --only <TICKER>             # reconstroi e grava
+
+on:
+  schedule:
+    - cron: "50 11 * * 1-5"   # 11h50 UTC = 08h50 BRT, dias uteis. Depois do fechamento
+                              # de ASX/HEL/LSE do dia anterior e ANTES da abertura das
+                              # Americas — a barra mais recente ja e definitiva.
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: "Janela olhada no Yahoo (dias)"
+        required: false
+        default: "45"
+      only:
+        description: "Tickers separados por virgula (vazio = todos)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prices-watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Vigia do historico de precos (falha = e-mail do GitHub)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+        run: >
+          python -m scripts.prices_watchdog
+          --dias ${{ github.event.inputs.dias || '45' }}
+          ${{ github.event.inputs.only && format('--only {0}', github.event.inputs.only) || '' }}
