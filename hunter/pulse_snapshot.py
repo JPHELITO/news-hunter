@@ -106,6 +106,58 @@ COMPANIES = ["VALE3.SA", "CSNA3.SA", "CMIN3.SA", "GGBR4.SA", "USIM5.SA",
              "KLBN11.SA", "SUZB3.SA", "RANI3.SA", "AURA33.SA",
              "SCCO", "TX", "GMEXICOB.MX"]
 
+# ─────────────────── que instrumentos cada empresa pode ver ───────────────────
+# POR QUE ISTO EXISTE (2026-08-26, achado pelo usuário): com os 34 instrumentos soltos, o
+# ridge escolhia "drivers" sem nenhuma economia por trás — a KLBN11 (papel e celulose)
+# aparecia explicada pelo COBRE, a USIM5 pelo ADR da Vale, e o maior peso do modelo próprio
+# da Klabin era o DAX. Matematicamente o número estava certo (aquele instrumento realmente
+# contribuiu mais naquele dia); editorialmente era indefensável, e um analista perde a
+# confiança no produto na primeira linha absurda que lê.
+#
+# A causa é colinearidade: com 34 séries que sobem e descem juntas, o ridge distribui peso
+# por acidente estatístico. E o estudo original já tinha medido isto (RESEARCH_LOG, E8):
+#     1 driver 0,195 · 3 → 0,206 · 5 → 0,222 · 12 → 0,214 · 20 → 0,208
+#     "Cinco drivers é o ponto ótimo; mais atrapalha."
+# Ou seja: restringir não é só cosmética de explicação, é o que a parcimônia já recomendava.
+#
+# Cada empresa vê o BLOCO da sua commodity + o macro que atinge todo mundo. O gêmeo entra
+# sempre (é o mesmo ativo econômico noutro fuso). ⚠️ Isto é curadoria editorial — a lista é
+# do analista, não do modelo; mexer aqui exige re-treinar.
+MACRO = ["USDBRL=X", "EURUSD=X", "DX-Y.NYB", "^VIX", "ES=F", "NQ=F", "EWZ"]
+_MINERIO = ["FMG.AX", "BHP.AX", "RIO.AX", "AAL.L", "^AXJO", "^HSI", "000001.SS"]
+# A Anglo fica no bloco do aço porque produz minério E carvão metalúrgico — os dois insumos
+# da siderurgia. Não é um "driver alheio" como o cobre era para a Klabin; é o complexo de
+# matéria-prima da própria indústria. E tirá-la custa caro: medido em 2026-08-26, o ic_oos
+# cai 0,072 na TX, 0,027 na GGBR4 e 0,016 na USIM5.
+_ACO = ["600019.SS", "5401.T", "^HSI", "000001.SS", "AAL.L"]
+_PP = ["UPM.HE", "STERV.HE", "2689.HK", "^HSI", "000001.SS"]
+
+DRIVERS_POR_EMPRESA = {
+    "VALE3.SA":    _MINERIO,
+    "CMIN3.SA":    _MINERIO,
+    "CSNA3.SA":    _MINERIO + ["600019.SS"],          # integrada: minério cativo + aço
+    "GGBR4.SA":    _ACO + ["CL=F"],                   # scrap-EAF, forte exposição aos EUA
+    "USIM5.SA":    _ACO,                              # planos: o aço chinês é o que manda
+    "TX":          _ACO + ["CL=F"],                   # LatAm/EUA
+    "AURA33.SA":   ["GC=F", "SI=F"],                  # ouro, e só
+    "SCCO":        ["HG=F", "^HSI", "000001.SS"],
+    "GMEXICOB.MX": ["HG=F", "^HSI", "000001.SS"],
+    "SUZB3.SA":    _PP,
+    "KLBN11.SA":   _PP,
+    "RANI3.SA":    _PP,
+}
+
+
+def instrumentos_de(empresa: str) -> list[str]:
+    """Os instrumentos que o modelo desta empresa pode usar: o bloco dela + macro + gêmeo."""
+    base = DRIVERS_POR_EMPRESA.get(empresa, [])
+    escolhidos = list(dict.fromkeys(list(base) + MACRO))     # sem repetir, ordem estável
+    g = GEMEO.get(empresa)
+    if g and g not in escolhidos:
+        escolhidos.append(g)
+    return [s for s in SNAPSHOT_SYMBOLS if s in set(escolhidos)]
+
+
 # O papel GÊMEO de cada coberta em Nova York. É o mesmo ativo econômico negociando num
 # fuso que abre antes: às 09:00 BRT o pré-mercado americano já roda há quatro horas.
 # Serve para duas coisas:
@@ -132,22 +184,28 @@ GEMEO = {
 #
 # COMO CALIBRAR: o limiar tem de cair num VÃO da distribuição de ic_oos, não colado num
 # valor — a 0,01 de distância a empresa entra e sai a cada re-treino semanal. Medido em
-# 2026-08-26 com a configuração de produção (janela overnight + painel + 12 empresas), os
-# dois cortes juntos, em ordem:
-#     0,760 0,699 0,680 0,674 0,640 0,624 0,580 0,561 0,501 0,472 0,446 0,446 0,426
-#     0,415 0,398 0,377 0,361 0,354 0,319 | [vão de 0,062] 0,257 0,235 0,187 0,119 0,097
-# O vão da fronteira vai de 0,257 (KLBN11 às 07h) a 0,319 (KLBN11 às 09h); 0,29 fica no
-# meio, com folga de ~0,03 dos dois lados. A Klabin publica às 09h e não às 07h — o corte
-# da manhã tem mais informação, e dizer isso é mais honesto que arredondar para os dois.
-# Fora ficam SUZB3 (0,235/0,187) e RANI3 (0,119/0,097).
+# 2026-08-26 com a configuração de produção (janela overnight + painel macro + drivers
+# curados + 12 empresas), os dois cortes juntos, em ordem:
+#     0,810 0,757 0,732 0,688 0,680 0,650 0,617 0,603 0,515 0,465 0,462 0,451 0,446
+#     0,422 0,408 0,408 0,391 | [VÃO DE 0,110] 0,281 0,252 0,244 0,232 0,120 0,036
+#
+# A curadoria de drivers abriu um vão de 0,110 onde antes havia 0,06 — as duas populações
+# ficaram nitidamente separadas, e não por acaso: sem instrumentos alheios para agarrar, o
+# modelo de quem NÃO tem driver econômico não consegue mais fabricar correlação. 0,33 fica
+# no meio, com folga de ~0,05 para cada lado.
+#
+# Fora ficam KLBN11 (0,281/0,244), SUZB3 (0,252/0,232) e RANI3 (0,120/0,036) — os três de
+# papel e celulose. Não é coincidência: falta o preço DIÁRIO de celulose, que no mundo só
+# existe no futuro SHFE de Xangai e ainda não tem histórico nosso para treinar (o coletor
+# está acumulando; ver hunter/pulse_sina.py). É o buraco conhecido do grupo, não um defeito.
 #
 # ⚠️ Recalibre olhando a lista nova sempre que um re-treino mover a distribuição. O limiar é
 # decisão de PRODUTO (quão confiante é preciso estar para mostrar um número), não um
 # parâmetro do modelo — e o teste `test_o_limiar_cai_no_maior_vao` trava o critério.
 #
-# Histórico: 0,20 na era da janela de 24h → 0,25 com a janela overnight → 0,27 com o painel
-# → 0,29 com as três das Américas. Todo mundo subiu, e a fronteira subiu junto.
-IC_MIN_PUBLICAR = 0.29
+# Histórico: 0,20 (janela de 24h) → 0,25 (janela overnight) → 0,27 (painel) → 0,29 (as três
+# das Américas) → 0,33 (drivers curados). A qualidade subiu, e a fronteira subiu junto.
+IC_MIN_PUBLICAR = 0.33
 
 # Nome de "empresa" reservado, em pulse_model, para a linha do PAINEL: um único jogo de
 # pesos treinado com as nove empilhadas (alvo padronizado pelo σ de cada uma). O que a

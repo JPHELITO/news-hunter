@@ -74,11 +74,11 @@ class TestCortes:
 # ───────────────────────── gate de publicação (onda 0) ─────────────────────────
 class TestGateDePublicacao:
     def test_modelo_forte_publica(self):
-        assert pulse_score._sem_sinal_por_que("VALE3.SA", {"ic_oos": 0.69}) is None
+        assert pulse_score._sem_sinal_por_que("VALE3.SA", {"ic_oos": 0.68}) is None
 
     def test_modelo_fraco_nao_publica(self):
-        """RANI3: 0,119 — small cap com 28% de leilões sem negócio."""
-        motivo = pulse_score._sem_sinal_por_que("RANI3.SA", {"ic_oos": 0.119})
+        """RANI3: 0,120 — small cap com 28% de leilões sem negócio."""
+        motivo = pulse_score._sem_sinal_por_que("RANI3.SA", {"ic_oos": 0.120})
         assert motivo and "too weak" in motivo
         assert "+0.12" in motivo          # o número aparece: o cliente vê POR QUE
 
@@ -103,9 +103,9 @@ class TestGateDePublicacao:
         Se este teste falhar depois de um re-treino, a distribuição andou: recalibre o
         limiar olhando a lista nova, em vez de afrouxar o teste.
         """
-        medidos = sorted([0.760, 0.699, 0.680, 0.674, 0.640, 0.624, 0.580, 0.561, 0.501,
-                          0.472, 0.446, 0.446, 0.426, 0.415, 0.398, 0.377, 0.361, 0.354,
-                          0.319, 0.257, 0.235, 0.187, 0.119, 0.097])
+        medidos = sorted([0.810, 0.757, 0.732, 0.688, 0.680, 0.650, 0.617, 0.603, 0.515,
+                          0.465, 0.462, 0.451, 0.446, 0.422, 0.408, 0.408, 0.391,
+                          0.281, 0.252, 0.244, 0.232, 0.120, 0.036])
         limiar = pulse_snapshot.IC_MIN_PUBLICAR
 
         # 1) folga do valor mais próximo: a 0,01 de distância a empresa pisca a cada re-treino
@@ -351,3 +351,57 @@ class TestTravaPosAbertura:
     def test_repontuar_sem_capturar_continua_permitido(self):
         rc, capturou, pontuou = self._rodar(["--cut", "09", "--skip-capture"], hora_utc=13)
         assert not capturou and pontuou
+
+
+# ───────────────── curadoria de drivers (conserto de 2026-08-26) ─────────────────
+class TestDriversCurados:
+    """
+    O usuário pegou o painel dizendo que a KLBN11 (papel e celulose) era explicada pelo
+    COBRE, a USIM5 pelo ADR da Vale e a CSN pelo cobre. Matematicamente o número estava
+    certo — aqueles instrumentos contribuíram mais naquele dia — mas um analista perde a
+    confiança no produto na primeira linha absurda que lê. A causa era colinearidade entre
+    34 séries soltas; a correção é cada empresa só enxergar o que tem ligação econômica.
+    """
+    def test_papel_e_celulose_nao_ve_cobre_nem_ouro(self):
+        for emp in ("SUZB3.SA", "KLBN11.SA", "RANI3.SA"):
+            vistos = pulse_snapshot.instrumentos_de(emp)
+            assert "HG=F" not in vistos, f"{emp} enxerga cobre"
+            assert "GC=F" not in vistos, f"{emp} enxerga ouro"
+
+    def test_papel_e_celulose_ve_papel_e_celulose(self):
+        for emp in ("SUZB3.SA", "KLBN11.SA", "RANI3.SA"):
+            vistos = set(pulse_snapshot.instrumentos_de(emp))
+            assert vistos & {"UPM.HE", "STERV.HE", "2689.HK"}, f"{emp} sem par de P&P"
+
+    def test_ouro_nao_ve_minerio_nem_aco(self):
+        vistos = set(pulse_snapshot.instrumentos_de("AURA33.SA"))
+        assert "GC=F" in vistos
+        assert not (vistos & {"FMG.AX", "600019.SS", "HG=F"})
+
+    def test_cobre_ve_cobre(self):
+        for emp in ("SCCO", "GMEXICOB.MX"):
+            assert "HG=F" in pulse_snapshot.instrumentos_de(emp)
+
+    def test_o_gemeo_entra_sempre(self):
+        for emp, gemeo in pulse_snapshot.GEMEO.items():
+            assert gemeo in pulse_snapshot.instrumentos_de(emp), f"{emp} sem o gêmeo {gemeo}"
+
+    def test_todas_veem_o_macro(self):
+        """Câmbio, VIX e futuros americanos atingem todo mundo — são o piso comum."""
+        for emp in pulse_snapshot.COMPANIES:
+            vistos = set(pulse_snapshot.instrumentos_de(emp))
+            assert set(pulse_snapshot.MACRO) <= vistos, f"{emp} não vê todo o macro"
+
+    def test_a_parcimonia_e_respeitada(self):
+        """
+        O estudo mediu a curva: 5 drivers 0,222 · 12 → 0,214 · 20 → 0,208 — "mais atrapalha".
+        Nenhuma empresa deve voltar a enxergar as 34 séries.
+        """
+        for emp in pulse_snapshot.COMPANIES:
+            n = len(pulse_snapshot.instrumentos_de(emp))
+            assert n <= 16, f"{emp} vê {n} instrumentos — parcimônia perdida"
+
+    def test_toda_empresa_tem_curadoria(self):
+        """Empresa sem entrada no mapa cairia no comportamento antigo, sem ninguém notar."""
+        for emp in pulse_snapshot.COMPANIES:
+            assert emp in pulse_snapshot.DRIVERS_POR_EMPRESA, f"{emp} sem curadoria"

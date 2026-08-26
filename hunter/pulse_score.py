@@ -28,7 +28,7 @@ import requests
 
 from .prices import _supa_upsert
 from .pulse_snapshot import (COMPANIES, CUT_BASE, GRUPO_DE, IC_MIN_PUBLICAR,
-                             PANEL_KEY, SEM_SINAL)
+                             MACRO, PANEL_KEY, SEM_SINAL)
 
 log = logging.getLogger(__name__)
 
@@ -198,7 +198,16 @@ def pontuar_empresa(modelo: dict, x: dict[str, float],
 
     # 6 casas: o front mostra 2, e sobra precisão de sobra para a soma das atribuições
     # continuar batendo com o gap esperado em qualquer arredondamento de exibição.
-    drivers = sorted(contrib.items(), key=lambda kv: -abs(kv[1]))[:5]
+    # Os 5 maiores — mas garantindo que ao menos UM seja específico da empresa. O macro
+    # (câmbio, VIX, futuros) está no modelo de todas e costuma dominar em bloco; se os 5
+    # primeiros forem todos macro, o painel fica sem nada que explique ESTA empresa, e é
+    # justamente isso que o analista quer ler.
+    ordenados = sorted(contrib.items(), key=lambda kv: -abs(kv[1]))
+    drivers = ordenados[:5]
+    if not any(s not in MACRO for s, _ in drivers):
+        especifico = next(((s, c) for s, c in ordenados if s not in MACRO), None)
+        if especifico:
+            drivers = drivers[:4] + [especifico]
 
     # Banda e convicção viajam DENTRO do `attribution` (jsonb) de propósito: são campos de
     # apresentação, mudam com a calibração e não valem um ALTER TABLE — assim o painel os

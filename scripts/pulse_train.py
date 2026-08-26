@@ -49,7 +49,8 @@ except ImportError:
 from hunter.prices import HEADERS, _YAHOO_HOSTS, _supa_upsert          # noqa: E402
 from hunter.pulse_score import _supa_get                                # noqa: E402
 from hunter.pulse_snapshot import (COMPANIES, CUT_BASE, CUTS_SCORE,     # noqa: E402
-                                   GEMEO, PANEL_KEY, SNAPSHOT_SYMBOLS)
+                                   GEMEO, MACRO, PANEL_KEY,
+                                   SNAPSHOT_SYMBOLS, instrumentos_de)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pulse_train")
@@ -228,14 +229,19 @@ def walk_forward(X: pd.DataFrame, y: pd.Series, alpha: float) -> pd.DataFrame:
 
 
 def colunas_comuns(X: pd.DataFrame, G: pd.DataFrame) -> list[str]:
-    """Instrumentos que servem a TODAS as empresas — o painel precisa de um vetor único."""
-    comuns = None
-    for emp in COMPANIES:
-        if emp not in G.columns:
-            continue
-        c = set(_colunas_uteis(X, G[emp].reindex(X.index), emp))
-        comuns = c if comuns is None else (comuns & c)
-    return [c for c in X.columns if c in (comuns or set())]
+    """
+    O que o PAINEL enxerga: só o MACRO — câmbio, VIX, futuros americanos, EWZ.
+
+    Este é o conserto de 2026-08-26. Antes o painel via os 34 instrumentos, e como o vetor
+    de pesos dele é COMUM a todas as empresas, o cobre (que tinha o maior coeficiente do
+    painel) virava o "driver principal" de todo mundo num dia de cobre — inclusive da
+    Klabin. Agora o papel de cada peça é o que deveria ser desde o começo:
+        painel   = o fator COMUM (risco, câmbio, humor global) que atinge todas
+        per-name = os drivers ESPECÍFICOS da commodity de cada uma
+    Assim o pooling continua emprestando força estatística entre as empresas sem poder
+    empurrar uma commodity alheia para dentro da explicação de ninguém.
+    """
+    return [c for c in X.columns if c in set(MACRO)]
 
 
 def fit_painel(X: pd.DataFrame, G: pd.DataFrame, comuns: list[str], idx, alpha: float):
@@ -353,6 +359,14 @@ def _colunas_uteis(X: pd.DataFrame, y: pd.Series, empresa: str) -> list[str]:
     com_alvo = y.notna()
     if not com_alvo.any():
         return list(X.columns)
+
+    # 1º filtro: a CURADORIA. Só entram os instrumentos que têm ligação econômica com esta
+    # empresa (o bloco da commodity dela + o macro + o gêmeo). Sem isto o ridge distribui
+    # peso por colinearidade e explica a Klabin pelo cobre — ver o comentário grande em
+    # pulse_snapshot.DRIVERS_POR_EMPRESA.
+    permitidos = set(instrumentos_de(empresa))
+    X = X[[c for c in X.columns if c in permitidos]] if permitidos else X
+
     cobertura = X[com_alvo].notna().mean()
     gemeo = GEMEO.get(empresa)
     largos = [c for c in X.columns if cobertura.get(c, 0) >= MIN_COBERTURA]
