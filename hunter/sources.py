@@ -42,6 +42,17 @@ SOURCES = [
     # ══ BRASIL — Setoriais (RSS oficiais) ═════════════════════════════════════
     {"label": "Portal Celulose",       "url": "https://portalcelulose.com.br/feed/",             "filter": False},
     {"label": "Siderurgia Brasil",     "url": "https://siderurgiabrasil.com.br/feed/",           "filter": False},
+    # Brasil Mineral (revista/portal de mineração, desde 1982) — adicionada 2026-08-27
+    # a pedido do usuário. RSS oficial em /feed (40 itens, com pubDate e resumo).
+    # Cadência medida: ~6 matérias/dia — volume pequeno, não ameaça a cota das IAs grátis.
+    # filter=False (setorial, aceita-tudo): MEDIDO no feed ao vivo — a keyword derrubava
+    # 7 de 26 e logo as boas ("Lundin Mining investirá US$ 110 mi… produção de cobre",
+    # "AngloGold reativa Planta 2 do Queiroz", "Tungstênio quadruplica de preço"), porque
+    # "cobre"/"ouro" isolados NÃO estão em ALL_KEYWORDS — enquanto DEIXAVA passar o ruído
+    # (prêmio/evento/SST casam "setor mineral" no resumo). Mesmo diagnóstico do conserto
+    # dos feeds de commodity do Mining.com. O ruído de evento/prêmio (~2/dia) fica para o
+    # classificador/IA resolver, como nas demais setoriais.
+    {"label": "Brasil Mineral",        "url": "https://brasilmineral.com.br/feed",               "filter": False},
     {"label": "Ibá",                   "url": "https://iba.org/feed/",                           "filter": False},
     {"label": "ABTCP",                 "url": "https://newspulpaper.com/feed/",                  "filter": False},
     # Instituto Aço Brasil e IBRAM: RSS morto/congelado → movidos para

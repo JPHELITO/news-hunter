@@ -241,3 +241,22 @@ class TestBlockedDomains:
     def test_no_spoofing_bypass(self):
         """Domínio que só CONTÉM o bloqueado não pode ser confundido."""
         assert not _is_blocked_domain("elfinanciero.com.mx.evil.com")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Registro de fontes — trava as decisões de filtro que foram MEDIDAS
+# ─────────────────────────────────────────────────────────────────────────────
+from hunter.sources import SOURCES
+
+
+class TestSourceRegistry:
+    def test_brasil_mineral_registrada_como_tematica(self):
+        """Brasil Mineral é setorial (mineração) → filter=False.
+
+        Medido no feed ao vivo (2026-08-27): a keyword derrubava 7 de 26, e logo as
+        boas (Lundin/cobre, AngloGold/ouro, tungstênio) — "cobre"/"ouro" isolados não
+        estão em ALL_KEYWORDS. Mesmo diagnóstico dos feeds de commodity do Mining.com.
+        """
+        bm = [s for s in SOURCES if s["label"] == "Brasil Mineral"]
+        assert bm, "Brasil Mineral sumiu de sources.py"
+        assert all(s.get("filter") is False for s in bm)
