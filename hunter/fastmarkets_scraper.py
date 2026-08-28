@@ -1,7 +1,14 @@
-"""Scraper Fastmarkets PP News — Fase 1 apenas (headlines).
+"""Scraper Fastmarkets — headlines PP News (Fase 1) + preços PIX de celulose.
 
 Intercepta POST /search/v3/query no dashboard PP News.
 Retorna apenas título + snippet + link. Sem Fase 2 (sem corpo completo).
+
+PREÇOS (mesma sessão, sem navegação extra): a aba "PIX Pulp Prices" do workspace é
+alimentada pela API `physical/v2/prices/history`, que aceita o MESMO Bearer que o
+dashboard de notícias já manda em toda chamada a api.fastmarkets.com. Então
+capturamos o token do tráfego das notícias e fazemos UMA chamada à API — nada de
+abrir a aba de preços e raspar a grade (a API dá preço, variação e a série inteira,
+que o DOM não dá). Espelha o papel do get_platts_prices() no scraper do Platts.
 Sessão mantida viva via store remoto (roll-forward, hunter.playwright_session) + AUTO-LOGIN
 de recuperação: se a sessão morrer, navega pro dashboard e deixa o redirect OAuth levar à
 tela de login (auth.fastmarkets.com/?ReturnUrl=/connect/authorize/...), então preenche as
@@ -34,6 +41,30 @@ _DASHBOARD_URL = "https://dashboard.fastmarkets.com/w/rUks4Ah2y8TjDB8L8RtS9L/pp-
 _MAX_AGE_HOURS = 72
 _TIMEOUT = 180  # segundos máximos no thread
 
+# ── Preços PIX de celulose ────────────────────────────────────────────────────
+# Os símbolos são as LINHAS da aba "PIX Pulp Prices" do workspace do analista, que é
+# ordenada por `location` (China → East Coast US → Europe). Recorte pedido pelo usuário:
+#   linhas 1-2   → celulose China (net, CFR, US$)
+#   linhas 3-4   → RESALE doméstico China (exw, yuan)
+#   linhas 13-16 → Europa; ficam só as duas em US$ (as em EUR são as mesmas em outra moeda)
+# Para adicionar/remover um preço: editar aqui + FASTMARKETS_COMMODITIES em prices.py.
+_PRICE_SYMBOLS = (
+    "FP-PLP-0034",   # PIX Pulp China NBSK Net       — USD/t
+    "FP-PLP-0033",   # PIX Pulp China BHKP Net       — USD/t
+    "FP-PLP-0068",   # Pulp, eucalyptus  (dom, net), exw China — CNY/t  (resale)
+    "FP-PLP-0070",   # Pulp, radiata pine (dom, net), exw China — CNY/t  (resale)
+    "FP-PLP-0039",   # PIX Pulp NBSK USD (Europa)    — USD/t
+    "FP-PLP-0040",   # PIX Pulp BHKP USD (Europa)    — USD/t
+)
+_PRICES_API = "https://api.fastmarkets.com/physical/v2/prices/history?language=en"
+# A janela pedida à API. O carrossel desenha no máximo ~1 ano e o histórico privado
+# guarda ~500 pontos; 2015 dá folga de sobra sem trazer 30 anos à toa.
+_PRICES_FROM = "2015-1-1"
+
+# Cache preenchido pelo _scrape() como efeito colateral, lido pelo thread principal
+# após o join via get_fastmarkets_prices() — mesmo contrato do _platts_prices.
+_fm_prices: dict[str, dict] = {}
+
 # Health: True se não conseguiu estabelecer sessão nesta execução (lido por hunt.py).
 _login_failed = False
 
@@ -47,6 +78,19 @@ def get_fastmarkets_health() -> dict:
     """Saúde da última execução: {'login_failed': bool}. True = sessão não pôde ser
     estabelecida (expirada + autologin falhou, ou sem credenciais)."""
     return {"login_failed": _login_failed}
+
+
+def get_fastmarkets_prices() -> dict[str, dict]:
+    """Preços PIX de celulose capturados na última sessão. Chamar após collect_*().
+
+    Chaves: símbolo Fastmarkets (ex.: 'FP-PLP-0034'). Valores:
+    {'price': float,           # mid do último assessment
+     'change_pct': float|None, # variação vs. o assessment anterior, em %
+     'assessed_at': 'YYYY-MM-DD',
+     'series': [[epoch, valor], ...]}   # histórico crescente (semanal)
+    Vazio se a sessão caiu ou a API não respondeu — quem chama mantém o valor antigo.
+    """
+    return dict(_fm_prices)
 
 
 def _html_to_text(h: str) -> str:
@@ -125,10 +169,92 @@ def _fm_login(page, creds) -> bool:
         return False
 
 
+def _collect_prices(ctx, bearer: str) -> dict[str, dict]:
+    """UMA chamada à API de preços do FM com o Bearer que o dashboard já usa.
+
+    Feita pelo `ctx.request` do Playwright (não por fetch injetado na página): a API mora
+    em api.fastmarkets.com e o CORS recusa o fetch de dentro de dashboard.fastmarkets.com
+    quando não é o próprio app quem pede. O ctx.request sai do contexto do browser — mesmos
+    cookies, sem CORS.
+
+    A resposta traz, por símbolo, a lista `prices` do mais RECENTE para o mais antigo, com
+    low/mid/high, a data do assessment e `midChangeSincePreviousProportion` (proporção:
+    0.005779 = +0,58%). Devolve {} em qualquer falha — preço é acessório, nunca derruba
+    a coleta de manchetes.
+    """
+    if not bearer:
+        log.info("fastmarkets_prices: sem Bearer no tráfego do dashboard — preços pulados")
+        return {}
+    try:
+        r = ctx.request.post(
+            _PRICES_API,
+            headers={"Authorization": bearer,
+                     "Accept": "application/json, text/plain, */*",
+                     "Origin": "https://dashboard.fastmarkets.com",
+                     "Referer": "https://dashboard.fastmarkets.com/"},
+            multipart={"symbols": ",".join(_PRICE_SYMBOLS),
+                       "fields": "MidChangeSincePreviousProportion,AssessmentPeriod,PreliminaryPrice",
+                       "fromDate": _PRICES_FROM, "toDate": "2035-1-1"},
+            timeout=30_000)
+        if not r.ok:
+            log.warning("fastmarkets_prices: API %s: %s", r.status, r.text()[:200])
+            return {}
+        data = r.json()
+    except Exception as e:
+        log.warning("fastmarkets_prices: chamada falhou: %s", e)
+        return {}
+
+    for inv in (data.get("invalidInstruments") or []):
+        log.warning("fastmarkets_prices: símbolo recusado %s: %s",
+                    inv.get("symbol"), inv.get("message"))
+
+    out: dict[str, dict] = {}
+    for inst in (data.get("instruments") or []):
+        sym = inst.get("symbol")
+        prices = inst.get("prices") or []
+        if sym not in _PRICE_SYMBOLS or not prices:
+            continue
+        # Guarda (data, ponto) para achar o assessment mais RECENTE pela data, em vez de
+        # confiar na ordem da resposta — assim preço, variação e assessed_at saem sempre
+        # da MESMA linha, mesmo que a API mude a ordenação.
+        pontos = []
+        for pt in prices:
+            val, day = pt.get("mid"), pt.get("date")
+            if val is None or not day:
+                continue
+            try:
+                dia = str(day)[:10]
+                ep = int(datetime.fromisoformat(dia + "T00:00:00+00:00").timestamp())
+            except (TypeError, ValueError):
+                continue
+            try:
+                pontos.append((ep, dia, round(float(val), 4), pt))
+            except (TypeError, ValueError):
+                continue
+        if not pontos:
+            continue
+        pontos.sort(key=lambda x: x[0])
+        ep_ult, dia_ult, val_ult, bruto_ult = pontos[-1]
+        prop = bruto_ult.get("midChangeSincePreviousProportion")
+        out[sym] = {
+            "price":       val_ult,
+            "change_pct":  round(float(prop) * 100, 4) if prop is not None else None,
+            "assessed_at": dia_ult,
+            "series":      [[ep, val] for ep, _, val, _ in pontos],
+        }
+        log.info("fastmarkets_prices: %s = %s (%s, %d pontos)",
+                 sym, out[sym]["price"], out[sym]["assessed_at"], len(pontos))
+    if len(out) < len(_PRICE_SYMBOLS):
+        log.warning("fastmarkets_prices: %d de %d símbolos vieram",
+                    len(out), len(_PRICE_SYMBOLS))
+    return out
+
+
 def _scrape() -> list[RawArticle]:
     """Executa em thread. Fase 1 apenas — intercepta API, sem navegar artigos."""
     from playwright.sync_api import sync_playwright
 
+    _fm_prices.clear()                   # cache de preços é por execução
     pull_session("fastmarkets")          # puxa a sessão rolada-pra-frente do store remoto
     state_file = state_path("fastmarkets")
     creds = load_credentials("fastmarkets")
@@ -141,6 +267,15 @@ def _scrape() -> list[RawArticle]:
     results_meta: list[dict] = []
     seen_ids: set[str] = set()
     api_seen = {"v": False}  # True quando a API de notícias responde = sessão autenticada
+    auth = {"bearer": ""}    # Bearer do app, pescado do tráfego → serve p/ a API de preços
+
+    def on_request(request):
+        # Toda chamada do dashboard a api.fastmarkets.com leva o mesmo access token OAuth.
+        # Guardamos o primeiro que aparecer para reusar na API de preços (evita abrir a aba).
+        if not auth["bearer"] and "api.fastmarkets.com" in request.url:
+            h = request.headers.get("authorization", "")
+            if h.startswith("Bearer "):
+                auth["bearer"] = h
 
     def on_response(response):
         url = response.url
@@ -190,6 +325,7 @@ def _scrape() -> list[RawArticle]:
         browser = launch_browser(p)
         ctx = new_context(browser, "fastmarkets", on_response=on_response,
                           use_state=state_file.exists())
+        ctx.on("request", on_request)
         page = ctx.new_page()
 
         try:
@@ -220,6 +356,12 @@ def _scrape() -> list[RawArticle]:
             # Autenticado: rola a sessão pra frente (salva a versão renovada local + store).
             save_state(ctx, "fastmarkets")
             log.info("fastmarkets_scraper: %d headlines interceptados", len(results_meta))
+            # Preços PIX de celulose: UMA chamada de API reusando o token do dashboard.
+            # Isolado — se a API mudar/negar, as manchetes seguem normalmente.
+            try:
+                _fm_prices.update(_collect_prices(ctx, auth["bearer"]))
+            except Exception as e:
+                log.warning("fastmarkets_scraper: preços falharam (não-fatal): %s", e)
         except Exception as e:
             log.warning("fastmarkets_scraper: erro na navegacao: %s", e)
         finally:

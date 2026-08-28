@@ -19,7 +19,7 @@ import os
 import re
 import time
 import zlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 import requests
@@ -153,6 +153,26 @@ PLATTS_COMMODITIES = {
     "TSIPY01": ("TSIPY01",      "FW +1y",                  "USD/dmt"),
     # Coal
     "HCCAU00": ("HCCAU00",      "HCC Low Vol",             "USD/mt"),
+}
+
+# Commodities Fastmarkets — as linhas da aba "PIX Pulp Prices" do workspace do analista.
+# Recorte pedido pelo usuário (a grade é ordenada por location: China → US East → Europa):
+#   linhas 1-2   → celulose China (PIX net, CFR, US$)
+#   linhas 3-4   → RESALE doméstico China (exw) — a fonte publica em yuan; convertemos
+#                  para dólar (ver `resale_cny_para_usd`), que é como o analista compara
+#   linhas 13-16 → Europa; ficam só as duas em US$ (as em EUR são o mesmo preço noutra moeda)
+# Todas são SEMANAIS (frequency=Weekly na API) → entram em FREQ_WEEKLY no front.
+# Para ADICIONAR/REMOVER: editar aqui + _PRICE_SYMBOLS no fastmarkets_scraper.
+FASTMARKETS_COMMODITIES = {
+    # símbolo_fm: (code, name, unit)
+    "FP-PLP-0034": ("PULP_NBSK_CHINA",       "NBSK China Net",       "USD/t"),
+    "FP-PLP-0033": ("PULP_BHKP_CHINA",       "BHKP China Net",       "USD/t"),
+    # Resale: a Fastmarkets publica em YUAN com VAT; publicamos em DÓLAR, pela conta do
+    # analista (`resale_cny_para_usd`), para ficar comparável com o preço de importação.
+    "FP-PLP-0068": ("PULP_EUCA_RESALE_CN",   "Euca Resale China",    "USD/t"),
+    "FP-PLP-0070": ("PULP_RADIATA_RESALE_CN","Radiata Resale China", "USD/t"),
+    "FP-PLP-0039": ("PULP_NBSK_EUROPE",      "NBSK Europe",          "USD/t"),
+    "FP-PLP-0040": ("PULP_BHKP_EUROPE",      "BHKP Europe",          "USD/t"),
 }
 
 # Ordem de exibição no dashboard (códigos)
@@ -1006,6 +1026,126 @@ def update_platts_commodities(platts_prices: dict) -> int:
     return _supa_upsert("commodities", rows)
 
 
+
+
+# ── Resale doméstico da China: yuan COM imposto → dólar ──────────────────────
+# A Fastmarkets publica o resale (eucalipto e pinus radiata, exw China) em YUAN e COM o
+# VAT chinês embutido. O analista converte para dólar antes de comparar com o preço de
+# IMPORTAÇÃO (que é CFR em US$) — é assim que sai o spread "import vs resale", a leitura
+# que interessa. A conta é a da planilha `FOEX - Price Database.xlsm` (aba DATA, colunas
+# F e H), reproduzida aqui:
+#
+#     US$/t = (yuan/t ÷ 1,13 − 150) ÷ (yuan por dólar)
+#
+#   ÷ 1,13  tira o VAT de 13%
+#   − 150   desconto fixo, em YUAN e JÁ sem VAT (logística/manuseio até ficar comparável
+#           com o CFR) — por ser fixo, ele MUDA a variação percentual: 1% em yuan não é
+#           1% em dólar. É de propósito.
+#   ÷ FX    yuan por dólar (o mesmo `USD_CNY` que o robô já busca para o painel macro)
+#
+# ⚠️ Conferido contra a planilha do analista: 7.304 pontos (2016-2026), ZERO divergência.
+# Se um dia o VAT ou o desconto mudarem, muda AQUI e no `seed_foex_history.py`.
+_CN_VAT = 1.13
+_CN_RESALE_DEDUCAO_CNY = 150.0
+
+# Símbolos cujo assessment vem em yuan e é publicado por nós em dólar.
+_FM_RESALE_CNY = {"FP-PLP-0068", "FP-PLP-0070"}
+
+
+def resale_cny_para_usd(cny: float, cny_por_usd: float) -> float | None:
+    """(yuan/t, yuan por dólar) -> US$/t. None se algum insumo não servir."""
+    try:
+        cny, fx = float(cny), float(cny_por_usd)
+    except (TypeError, ValueError):
+        return None
+    if fx <= 0:
+        return None
+    return round((cny / _CN_VAT - _CN_RESALE_DEDUCAO_CNY) / fx, 4)
+
+
+def _cny_por_usd() -> float | None:
+    """Quantos yuans valem um dólar. Vem do `macro_indicators` (que o próprio robô
+    acabou de atualizar nesta mesma rodada, alguns passos antes); se a linha não
+    estiver lá, pergunta ao Yahoo. Sem câmbio não dá para publicar o resale."""
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if url and key:
+        try:
+            r = requests.get(f"{url}/rest/v1/macro_indicators?select=value&code=eq.USD_CNY",
+                             headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+            if r.ok and r.json():
+                v = float(r.json()[0]["value"])
+                if v > 0:
+                    return v
+        except Exception as e:
+            log.warning("fastmarkets: USD_CNY do macro falhou (%s) — tentando Yahoo", e)
+    try:
+        d = fetch_yahoo(["USDCNY=X"]).get("USDCNY=X") or {}
+        v = d.get("price")
+        return float(v) if v else None
+    except Exception as e:
+        log.warning("fastmarkets: USD_CNY do Yahoo falhou: %s", e)
+        return None
+
+
+def update_fastmarkets_commodities(fm_prices: dict) -> int:
+    """Grava os preços PIX de celulose na tabela `commodities` (molde do Platts).
+
+    Itera FASTMARKETS_COMMODITIES e grava cada símbolo que veio; os que faltarem são
+    pulados (mantêm o valor anterior). Os dois de RESALE são convertidos de yuan para
+    dólar aqui (ver `resale_cny_para_usd`) — o que vai para a tela é sempre US$/t.
+
+    ⚠️ NÃO grava a série histórica em `commodities.daily`. O `market.html` lê essa tabela
+    com `select=*`, então tudo que entra ali vai para o navegador do CLIENTE — e o
+    histórico da Fastmarkets é dado PAGO. O número fica na tabela privada
+    `commodity_history` (RLS sem policy), semeada por `seed_foex_history.py`; o cliente
+    recebe só a FORMA da curva (`commodities.spark`). É exatamente o arranjo do Platts.
+    O `daily` público segue acumulando um ponto por assessment, como o das demais.
+    """
+    if not fm_prices:
+        return 0
+    fx = _cny_por_usd() if any(s in fm_prices for s in _FM_RESALE_CNY) else None
+    rows = []
+    for symbol, (code, name, unit) in FASTMARKETS_COMMODITIES.items():
+        d = fm_prices.get(symbol)
+        if not d or d.get("price") is None:
+            log.info("fastmarkets: %s (%s) não capturado — mantém valor atual", symbol, name)
+            continue
+        preco, variacao = d["price"], d.get("change_pct")
+        if symbol in _FM_RESALE_CNY:
+            if not fx:
+                log.warning("fastmarkets: %s (%s) sem câmbio CNY/USD — mantém valor atual",
+                            symbol, name)
+                continue
+            cny = preco
+            preco = resale_cny_para_usd(cny, fx)
+            if preco is None:
+                continue
+            # A variação em dólar NÃO é a variação em yuan: o desconto fixo de 150 muda a
+            # base. Recalcula pelos dois últimos assessments, ambos no câmbio de HOJE —
+            # isola o movimento do PREÇO, sem misturar oscilação de moeda.
+            variacao = None
+            serie = d.get("series") or []
+            if len(serie) >= 2:
+                ant = resale_cny_para_usd(serie[-2][1], fx)
+                if ant:
+                    variacao = round((preco / ant - 1) * 100, 4)
+            log.info("fastmarkets: %s resale %.2f CNY / %.4f = %.2f USD", symbol, cny, fx, preco)
+        row = {
+            "code":       code,
+            "name":       name,
+            "unit":       unit,
+            "price":      preco,
+            "change_pct": variacao,
+            "updated_at": _now_iso(),
+        }
+        if d.get("assessed_at"):
+            row["assessed_at"] = d["assessed_at"]
+        rows.append(row)
+    if rows:
+        log.info("fastmarkets commodities (%d/%d): %s", len(rows), len(FASTMARKETS_COMMODITIES),
+                 {r["name"]: r["price"] for r in rows})
+    return _supa_upsert("commodities", rows)
 
 
 def update_macro() -> int:

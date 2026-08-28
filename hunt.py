@@ -39,10 +39,12 @@ def main() -> None:
 
     # Playwright: Platts + Fastmarkets (opcional)
     platts_prices: dict = {}
+    fm_prices: dict = {}
     if args.playwright:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from hunter.platts_scraper import collect_platts_headlines, get_platts_prices
-        from hunter.fastmarkets_scraper import collect_fastmarkets_headlines
+        from hunter.fastmarkets_scraper import (collect_fastmarkets_headlines,
+                                                get_fastmarkets_prices)
 
         pw_results = []
         with ThreadPoolExecutor(max_workers=2) as ex:
@@ -62,6 +64,9 @@ def main() -> None:
         # Captura preços IODEX coletados como side-effect da sessão Platts
         platts_prices = get_platts_prices()
         log.info("Platts prices capturados: %s", list(platts_prices.keys()))
+        # Idem para os preços PIX de celulose da sessão Fastmarkets
+        fm_prices = get_fastmarkets_prices()
+        log.info("Fastmarkets prices capturados: %s", list(fm_prices.keys()))
 
         articles_raw.extend(pw_results)
         log.info("Total com Playwright: %d artigos brutos", len(articles_raw))
@@ -106,7 +111,7 @@ def main() -> None:
         from hunter.prices import (update_quotes, update_commodities, update_macro,
                                     update_platts_commodities, update_quote_history,
                                     update_commodity_history, update_iron_ore_62_te,
-                                    update_commodity_spark)
+                                    update_commodity_spark, update_fastmarkets_commodities)
     except Exception as e:
         log.warning("Preços: import falhou: %s", e)
     else:
@@ -127,6 +132,8 @@ def main() -> None:
         m = _safe("macro", update_macro)
         if platts_prices:  # Iron Ore 61%, HRC China, Rebar Turkey, Met Coal
             _safe("platts_commodities", update_platts_commodities, platts_prices)
+        if fm_prices:      # celulose PIX: China net, resale em yuan e Europa
+            _safe("fastmarkets_commodities", update_fastmarkets_commodities, fm_prices)
         log.info("Preços: quotes=%s (hist=%s), commodities=%s, macro=%s", q, h, c, m)
 
     # Sinal de vida das fontes Playwright → o watchdog lê isto para alertar (email do
