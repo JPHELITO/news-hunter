@@ -169,8 +169,11 @@ FASTMARKETS_COMMODITIES = {
     "FP-PLP-0033": ("PULP_BHKP_CHINA",       "BHKP China Net",       "USD/t"),
     # Resale: a Fastmarkets publica em YUAN com VAT; publicamos em DÓLAR, pela conta do
     # analista (`resale_cny_para_usd`), para ficar comparável com o preço de importação.
-    "FP-PLP-0068": ("PULP_EUCA_RESALE_CN",   "Euca Resale China",    "USD/t"),
-    "FP-PLP-0070": ("PULP_RADIATA_RESALE_CN","Radiata Resale China", "USD/t"),
+    # ⚠️ O `code` guarda a espécie (a fonte chama de eucalipto e pinus radiata) e o NOME
+    # guarda a fibra, que é como o analista lê: eucalipto = BHKP (hardwood) e radiata =
+    # NBSK (softwood). Assim cada Resale fica ao lado do Net da MESMA fibra no carrossel.
+    "FP-PLP-0068": ("PULP_EUCA_RESALE_CN",   "BHKP China Resale",    "USD/t"),
+    "FP-PLP-0070": ("PULP_RADIATA_RESALE_CN","NBSK China Resale",    "USD/t"),
     "FP-PLP-0039": ("PULP_NBSK_EUROPE",      "NBSK Europe",          "USD/t"),
     "FP-PLP-0040": ("PULP_BHKP_EUROPE",      "BHKP Europe",          "USD/t"),
 }

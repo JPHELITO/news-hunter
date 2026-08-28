@@ -205,6 +205,8 @@ def test_resale_e_publicado_em_dolar(upserts):
     pr.update_fastmarkets_commodities({"FP-PLP-0068": _resale()})
     r = _por_code(upserts[0][1])["PULP_EUCA_RESALE_CN"]
     assert r["unit"] == "USD/t", "o cartão não pode dizer yuan"
+    # o nome carrega a FIBRA (eucalipto = BHKP), para parear com o Net da mesma fibra
+    assert r["name"] == "BHKP China Resale"
     assert r["price"] == pytest.approx(576.0943685903, abs=1e-4)
     assert r["price"] != 4544.0
 
@@ -253,6 +255,17 @@ def test_os_dois_de_resale_estao_registrados_como_tal():
     assert pr._FM_RESALE_CNY <= set(pr.FASTMARKETS_COMMODITIES)
     for sym in pr._FM_RESALE_CNY:
         assert pr.FASTMARKETS_COMMODITIES[sym][2] == "USD/t"
+
+
+def test_nome_do_resale_usa_a_fibra_nao_a_especie():
+    """A fonte fala em eucalipto/pinus radiata; o analista lê BHKP/NBSK. O `code` guarda
+    a espécie (não renomear: é chave no banco e no histórico), o NOME guarda a fibra."""
+    nomes = {c: n for c, n, _ in pr.FASTMARKETS_COMMODITIES.values()}
+    assert nomes["PULP_EUCA_RESALE_CN"] == "BHKP China Resale"
+    assert nomes["PULP_RADIATA_RESALE_CN"] == "NBSK China Resale"
+    # e cada Resale tem o Net da MESMA fibra publicado junto
+    assert nomes["PULP_BHKP_CHINA"] == "BHKP China Net"
+    assert nomes["PULP_NBSK_CHINA"] == "NBSK China Net"
 
 
 def test_codes_sao_unicos_e_nao_colidem_com_os_do_platts():
