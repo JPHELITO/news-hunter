@@ -186,3 +186,22 @@ def test_historico_do_yahoo_nunca_usa_range_max():
                    fonte.index("def serie_com_o_dia")]
     assert 'range_="max"' not in trecho, "range=max devolve barras MENSAIS (interval ignorado)"
     assert 'range_="10y"' in trecho
+
+
+def test_daily_keep_cobre_os_cinco_anos_publicados():
+    """O teto de `commodities.daily` tem de caber os 5 anos que o analista liberou.
+
+    Contexto: em 31/08/2026 o gráfico do driver de aço na aba Market mostrava 2 meses,
+    porque HRC China / Rebar Turkey / Met Coal só tinham o que o robô acumulou desde
+    23/jun. Não existe proxy livre (o "HRC Steel" do Trading Economics é o americano,
+    US$ 1.197 contra os 503 do HRC China), então o analista autorizou publicar 5 anos do
+    Platts — `publish_market_history.py` semeia, e o ROBÔ reescreve a coluna todo dia.
+    ⚠️ O teto do robô era `[-1000:]` e teria CORTADO 300 pregões da semente na primeira
+    execução, sem log nenhum: o gráfico voltaria para ~4 anos e ninguém saberia por quê.
+    """
+    assert prices.DAILY_KEEP >= 1300, "DAILY_KEEP menor que os 5 anos publicados"
+    fonte = Path(prices.__file__).read_text(encoding="utf-8")
+    trecho = fonte[fonte.index("def update_commodity_history"):
+                   fonte.index("def serie_com_o_dia")]
+    assert "[-1000:]" not in trecho, "teto fixo de 1.000 volta a cortar a semente de 5 anos"
+    assert trecho.count("[-DAILY_KEEP:]") == 2, "os dois ramos (Yahoo e acúmulo) usam o teto"

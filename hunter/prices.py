@@ -591,6 +591,14 @@ def _update_quotes_daily_legacy(stale: list[tuple[str, str]], url: str, key: str
 # As demais Platts (HRC China, rebar, met coal) não têm proxy bom no Yahoo → ACUMULAM pra frente.
 COMMODITY_HISTORY_YF = {"IRON_ORE": "TIO=F", "COPPER": "HG=F", "GOLD": "GC=F"}
 
+# Teto de pontos em `commodities.daily` — a série que a aba Market desenha.
+# 1.300 pregões = ~5 anos = o range mais longo do seletor de lá (o "Max" mostra o que houver).
+# ⚠️ Esta coluna é PÚBLICA (`market.html` faz select por código, mas quem tem login lê),
+# e para HRC China / Rebar Turkey / Met Coal ela carrega assessment PAGO do Platts:
+# publicar 5 anos foi decisão explícita do analista em 31/08/2026, para o gráfico do driver
+# de aço deixar de mostrar só 2 meses. Não aumentar sem falar com ele.
+DAILY_KEEP = 1300
+
 
 def update_commodity_history(max_age_hours: float = 18.0) -> int:
     """Mantém `commodities.daily` — a série diária p/ o SPREAD ação×commodity da aba Market.
@@ -655,7 +663,7 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
                 continue
             # teto de ~5 anos: é o range mais longo da aba Market, e `commodities` vai
             # inteira para o navegador do cliente (`select=*`) — série sem teto virava egress
-            merged = (([p for p in dm if p[0] < d1[0][0]] + d1) if d1 else dm)[-1300:]
+            merged = (([p for p in dm if p[0] < d1[0][0]] + d1) if d1 else dm)[-DAILY_KEEP:]
         else:
             # acumula: append do assessment do dia (Platts não tem histórico)
             price, assessed = row.get("price"), row.get("assessed_at")
@@ -668,7 +676,9 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
             daily = [p for p in (row.get("daily") or []) if p and p[0] != ep]
             daily.append([ep, round(float(price), 4)])
             daily.sort(key=lambda p: p[0])
-            merged = daily[-1000:]
+            # ⚠️ o teto era 1.000 e CORTAVA a semente de 5 anos: as três de aço são
+            # semeadas por `publish_market_history.py` e o robô as reescreve todo dia.
+            merged = daily[-DAILY_KEEP:]
         try:
             r = requests.patch(
                 f"{url}/rest/v1/commodities?code=eq.{code}",
