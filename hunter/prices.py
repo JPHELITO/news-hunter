@@ -589,15 +589,47 @@ def _update_quotes_daily_legacy(stale: list[tuple[str, str]], url: str, key: str
 #     ao vivo do tile segue Platts, mas a SÉRIE do spread usa o TSI, que casa quase 1:1 em variação %).
 #   COPPER/GOLD → HG=F/GC=F (o live delas também é Yahoo → série totalmente consistente).
 # As demais Platts (HRC China, rebar, met coal) não têm proxy bom no Yahoo → ACUMULAM pra frente.
-COMMODITY_HISTORY_YF = {"IRON_ORE": "TIO=F", "COPPER": "HG=F", "GOLD": "GC=F"}
+# ⚠️ IRON_ORE (Iodex 61% do Platts) SAIU daqui em 31/08/2026. Ele apontava para `TIO=F` e
+# a coluna `daily` estava congelada em 12/01/2026 — 185 pontos MENSAIS (gap mediano de 30
+# dias), últimos 108,25 contra os 99,70 do assessment real, e o robô reescrevia esse dado
+# morto todo dia sem uma linha de log. **O ticker não morreu: o FEED congelou** — responde
+# HTTP 200 com 161,91 (nada a ver com minério nenhum) e 245 das 250 barras são FANTASMA
+# (volume 0 e OHLC repetido), então o filtro de `quote_history` descartava quase tudo e
+# sobrava série velha. Sem proxy: o 62% da aba Market vem do Trading Economics (IRON_ORE_62)
+# e o 61% agora ACUMULA o assessment do dia, como as demais Platts.
+COMMODITY_HISTORY_YF = {"COPPER": "HG=F", "GOLD": "GC=F"}
+DAILY_MAX_ATRASO_D = 10   # série de fonte externa mais velha que isto = feed parado, avisa
 
-# Teto de pontos em `commodities.daily` — a série que a aba Market desenha.
-# 1.300 pregões = ~5 anos = o range mais longo do seletor de lá (o "Max" mostra o que houver).
-# ⚠️ Esta coluna é PÚBLICA (`market.html` faz select por código, mas quem tem login lê),
-# e para HRC China / Rebar Turkey / Met Coal ela carrega assessment PAGO do Platts:
-# publicar 5 anos foi decisão explícita do analista em 31/08/2026, para o gráfico do driver
-# de aço deixar de mostrar só 2 meses. Não aumentar sem falar com ele.
+# Teto de pontos em `commodities.daily` — a série que a aba Market desenha (~5 anos).
+# ⚠️ Esta coluna é PÚBLICA: quem tem login lê. Só entram nela números de fonte LIVRE
+# (cobre/ouro do Yahoo, minério 62% do Trading Economics); o assessment PAGO do Platts e da
+# Fastmarkets vai como FORMA em `commodities.spark`, e o `daily` das pagas só acumula um
+# ponto por dia. Em 31/08/2026 chegaram a ser publicados 5 anos do aço aqui e o analista
+# voltou atrás no mesmo dia — ver a seção dos drivers da Market no CLAUDE.md.
 DAILY_KEEP = 1300
+
+
+def avisar_se_feed_parado(code: str, ticker: str, serie: list[list],
+                          agora: datetime | None = None) -> int | None:
+    """Série de fonte externa que não anda = feed morto. Devolve o atraso em dias se avisou.
+
+    ⚠️ FEED PARADO NÃO PODE PASSAR CALADO — foi assim que o `IRON_ORE.daily` ficou SETE
+    MESES com série de janeiro. O `TIO=F` do Yahoo não morreu: ele CONGELOU. Respondia
+    HTTP 200 com 161,91 (nada a ver com minério), e 245 das 250 barras eram FANTASMA
+    (volume 0 e OHLC repetido), então o filtro de `quote_history` comia quase tudo e a
+    rotina regravava o resto todo dia — sem erro, sem log, sem ninguém notar. O ticker
+    saiu do mapa; este aviso existe para o PRÓXIMO feed que congelar não levar sete meses.
+    """
+    if not serie:
+        return None
+    agora = agora or datetime.now(timezone.utc)
+    ultimo = datetime.fromtimestamp(int(serie[-1][0]), timezone.utc)
+    atraso = (agora - ultimo).days
+    if atraso <= DAILY_MAX_ATRASO_D:
+        return None
+    log.warning("commodity_history %s (%s): série PARADA há %d dias (último ponto %s) — "
+                "feed provavelmente congelado", code, ticker, atraso, ultimo.date())
+    return atraso
 
 
 def update_commodity_history(max_age_hours: float = 18.0) -> int:
@@ -664,6 +696,7 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
             # teto de ~5 anos: é o range mais longo da aba Market, e `commodities` vai
             # inteira para o navegador do cliente (`select=*`) — série sem teto virava egress
             merged = (([p for p in dm if p[0] < d1[0][0]] + d1) if d1 else dm)[-DAILY_KEEP:]
+            avisar_se_feed_parado(code, yf, merged, now)
         else:
             # acumula: append do assessment do dia (Platts não tem histórico)
             price, assessed = row.get("price"), row.get("assessed_at")
@@ -676,8 +709,6 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
             daily = [p for p in (row.get("daily") or []) if p and p[0] != ep]
             daily.append([ep, round(float(price), 4)])
             daily.sort(key=lambda p: p[0])
-            # ⚠️ o teto era 1.000 e CORTAVA a semente de 5 anos: as três de aço são
-            # semeadas por `publish_market_history.py` e o robô as reescreve todo dia.
             merged = daily[-DAILY_KEEP:]
         try:
             r = requests.patch(

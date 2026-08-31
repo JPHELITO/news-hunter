@@ -188,6 +188,40 @@ def test_historico_do_yahoo_nunca_usa_range_max():
     assert 'range_="10y"' in trecho
 
 
+def test_iron_ore_saiu_do_yahoo_o_feed_tinha_congelado():
+    """O `TIO=F` não morreu — CONGELOU, e isso é pior porque não dá erro.
+
+    Ele respondia HTTP 200 com 161,91 (nada a ver com minério) e 245 das 250 barras eram
+    FANTASMA (volume 0 e OHLC repetido): o filtro de `quote_history` comia quase tudo e a
+    rotina regravava o resto TODO DIA. Resultado medido em 31/08/2026: `IRON_ORE.daily`
+    com 185 pontos MENSAIS parados em 12/01/2026, último 108,25 contra os 99,70 do
+    assessment real — sete meses, zero log. O 61% do Platts passou a acumular como as
+    outras pagas; quem desenha minério na aba Market é o 62% do Trading Economics.
+    """
+    assert "IRON_ORE" not in prices.COMMODITY_HISTORY_YF, "TIO=F é feed congelado, não fonte"
+    assert prices.COMMODITY_HISTORY_YF == {"COPPER": "HG=F", "GOLD": "GC=F"}
+
+
+def test_feed_parado_avisa_em_vez_de_passar_calado():
+    agora = dt.datetime(2026, 8, 31, tzinfo=dt.timezone.utc)
+    def serie(dias_atras):
+        d = (agora - dt.timedelta(days=dias_atras))
+        return [[int(d.timestamp()) - 86400, 1.0], [int(d.timestamp()), 2.0]]
+
+    assert prices.avisar_se_feed_parado("X", "X=F", serie(1), agora) is None
+    assert prices.avisar_se_feed_parado("X", "X=F", serie(10), agora) is None, "10 dias é feriado"
+    # o caso real: o IRON_ORE ficou 231 dias parado sem ninguém saber
+    assert prices.avisar_se_feed_parado("IRON_ORE", "TIO=F", serie(231), agora) == 231
+    assert prices.avisar_se_feed_parado("X", "X=F", [], agora) is None, "série vazia não é feed parado"
+
+
+def test_o_aviso_de_feed_parado_esta_ligado_na_rotina():
+    fonte = Path(prices.__file__).read_text(encoding="utf-8")
+    trecho = fonte[fonte.index("def update_commodity_history"):
+                   fonte.index("def serie_com_o_dia")]
+    assert "avisar_se_feed_parado(" in trecho, "a rotina voltou a engolir feed congelado"
+
+
 def test_daily_keep_cobre_os_cinco_anos_publicados():
     """O teto de `commodities.daily` tem de caber os 5 anos que o analista liberou.
 
