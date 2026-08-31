@@ -1,5 +1,5 @@
 """Testes dos coletores HTML/sitemap: título por slug (Reuters), chave canônica
-de dedup (SMM), e título via atributo title= (IBRAM).
+de dedup (SMM), URL canônica por id (SMM) e título via atributo title= (IBRAM).
 
 Rodar: python -m pytest tests/test_scrapers.py -v
 """
@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from hunter.reuters_scraper import _title_from_slug
 import hunter.html_scrapers as HS
-from hunter.html_scrapers import _canonical_key
+from hunter.html_scrapers import _canonical_key, _canonical_url
 from hunter.platts_scraper import _type_allowed, _is_headline_search_url
 
 
@@ -140,3 +140,74 @@ def test_ibram_usa_title_attr(monkeypatch):
     assert len(arts) == 1
     # usa o atributo title= (limpo), não o get_text run-on com data/LEIA MAIS
     assert arts[0].title == "Mineração será essencial para a transição energética"
+
+
+class TestSmmCanonicalUrl:
+    """A SMM troca o slug (inglês → português) ~15 min depois de publicar, e o dedup
+    do banco é por URL exata → a mesma matéria entrava 2-3×. A URL canônica por id
+    mata isso ENTRE runs (a _canonical_key só valia dentro de uma varredura)."""
+
+    _EN = ("https://news.metal.com/pt/newscontent/104088208-rio-tinto-reportedly-"
+           "seeks-to-sell-mt-cattlin-lithium-mine")
+    _PT = ("https://news.metal.com/pt/newscontent/104088208-rio-tinto-supostamente-"
+           "busca-vender-a-mina-de-l%C3%ADtio-mt-cattlin")
+
+    def test_traducao_en_pt_vira_a_mesma_url(self):
+        assert _canonical_url(self._EN) == _canonical_url(self._PT)
+        assert _canonical_url(self._EN) == "https://news.metal.com/pt/newscontent/104088208"
+
+    def test_acento_literal_e_percent_encoded_convergem(self):
+        literal = "https://news.metal.com/pt/newscontent/104088208-mina-de-lítio-mt-cattlin"
+        assert _canonical_url(literal) == _canonical_url(self._PT)
+
+    def test_home_em_ingles_converge_para_a_mesma_forma(self):
+        # se um run cair na home sem /pt, a URL gravada tem que ser a MESMA
+        en_root = "https://news.metal.com/newscontent/104088208-rio-tinto-reportedly-seeks"
+        assert _canonical_url(en_root) == _canonical_url(self._PT)
+
+    def test_url_sem_id_fica_intacta(self):
+        outra = "https://x.com/economia/vale-define-plano"
+        assert _canonical_url(outra) == outra
+
+
+class _FakeSmmResp:
+    """Home da SMM reduzida: um card normal (__title) + a caixa "mais lidas", que usa
+    __itemTitle (T maiúsculo) e põe o número do ranking numa <div> IRMÃ."""
+    status_code = 200
+    text = (
+        '<html><body>'
+        # card normal do feed
+        '<a class="card__item" href="/pt/newscontent/104089223-relatorio-diario-de-minerio-de-ferro-mmi">'
+        '<div class="card__title">Relatório Diário de Minério de Ferro MMi (31 de agosto)</div>'
+        '<div class="card__summary">há 12 min</div>'
+        '</a>'
+        # caixa lateral "mais lidas" — origem do "4Rio Tinto..."
+        '<aside><a class="rank__item" href="/pt/newscontent/104088208-rio-tinto-supostamente-busca-vender">'
+        '<div class="rank__index">4</div>'
+        '<div class="rank__itemTitle">Rio Tinto supostamente busca vender a mina de lítio Mt Cattlin</div>'
+        '</a></aside>'
+        '</body></html>'
+    )
+
+
+def _smm_src():
+    return next(s for s in HS.HTML_SOURCES if s["label"] == "SMM")
+
+
+def test_smm_ranking_nao_cola_o_numero_no_titulo(monkeypatch):
+    monkeypatch.setattr(HS.requests, "get", lambda *a, **k: _FakeSmmResp())
+    arts = HS._scrape_source(_smm_src())
+    titles = {a.title for a in arts}
+    assert "Rio Tinto supostamente busca vender a mina de lítio Mt Cattlin" in titles
+    assert not any(t[:1].isdigit() for t in titles), titles
+
+
+def test_smm_grava_url_canonica_por_id(monkeypatch):
+    monkeypatch.setattr(HS.requests, "get", lambda *a, **k: _FakeSmmResp())
+    arts = HS._scrape_source(_smm_src())
+    urls = sorted(a.url for a in arts)
+    assert urls == [
+        "https://news.metal.com/pt/newscontent/104088208",
+        "https://news.metal.com/pt/newscontent/104089223",
+    ]
+    assert all(a.domain == "news.metal.com" for a in arts)

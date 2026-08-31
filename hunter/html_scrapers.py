@@ -72,7 +72,14 @@ HTML_SOURCES = [
         "page_url": "https://news.metal.com/",
         "domain": "metal.com",
         "selector": "a[href*='/newscontent/']",
-        "title_selector": "[class*='__title']",  # o <a> embrulha titulo+resumo+'ha X min'; pega SO o titulo
+        "canonical_by_id": True,   # grava a URL curta /pt/newscontent/<id> — ver _canonical_url
+        # o <a> embrulha titulo+resumo+'ha X min' -> extrai SO o elemento do titulo.
+        # Flag 'i' (case-insensitive) e OBRIGATORIA: a caixa lateral "mais lidas"
+        # usa __itemTitle (T maiusculo) e poe o numero do ranking numa <div> IRMA.
+        # Com '__title' o seletor nao casava, caia no fallback get_text() e COLAVA
+        # o numero no titulo -> "4Rio Tinto supostamente busca vender..." (446 casos
+        # em 90d antes do conserto de 2026-08-31).
+        "title_selector": "[class*='title' i]",
         "needs_filter": True,
     },
     {
@@ -138,6 +145,31 @@ def _canonical_key(href: str) -> str:
     return urlparse(unquote(href)).path.rstrip("/") or href
 
 
+def _canonical_url(href: str) -> str:
+    """URL ESTÁVEL da matéria, sem o slug do título (fontes com canonical_by_id).
+
+    A SMM publica a matéria primeiro em INGLÊS e troca pela tradução em português
+    ~15 min depois; o slug — e portanto a URL inteira — muda junto. Como o dedup do
+    banco é por URL EXATA (push_articles usa resolution=ignore-duplicates), a MESMA
+    matéria era gravada 2-3× (medido em 90d: 1.892 linhas repetidas = 28% do volume
+    da fonte; 1.534 pela tradução EN→PT, 289 pela caixa "mais lidas", 11 por acento
+    percent-encoded vs literal).
+
+    O id em /newscontent/<id> é estável e a URL curta abre a matéria normalmente
+    (testado: redireciona para o slug corrente). Gravando sempre /pt/newscontent/<id>
+    o banco passa a barrar a repetição sozinho — inclusive entre runs, o que a chave
+    de dedup local (_canonical_key, válida só DENTRO de uma varredura) não fazia.
+
+    O prefixo /pt é fixo de propósito: é o que o Accept-Language pt-BR do scraper já
+    serve, e fixá-lo garante UMA forma canônica mesmo se um run cair na home em inglês.
+    """
+    m = re.search(r"/newscontent/(\d+)", href)
+    if not m:
+        return href
+    p = urlparse(href)
+    return f"{p.scheme}://{p.netloc}/pt/newscontent/{m.group(1)}"
+
+
 def _scrape_source(src: dict) -> list[RawArticle]:
     """Faz scraping de uma fonte HTML."""
     if not BS4_OK:
@@ -201,6 +233,11 @@ def _scrape_source(src: dict) -> list[RawArticle]:
         if key in seen_urls:
             continue
         seen_urls.add(key)
+
+        # URL canônica por id (SMM): estabiliza a URL gravada p/ o dedup do banco
+        # funcionar ENTRE runs, não só dentro de um. Ver _canonical_url.
+        if src.get("canonical_by_id"):
+            href = _canonical_url(href)
 
         domain = urlparse(href).netloc.replace("www.", "")
 
