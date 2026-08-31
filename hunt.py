@@ -127,7 +127,10 @@ def main() -> None:
         h = _safe("quote_history", update_quote_history)  # série diária (auto-throttle ~1x/dia)
         c = _safe("commodities", update_commodities)       # Copper + Gold (Yahoo)
         _safe("commodity_history", update_commodity_history)  # commodities.daily p/ o spread (auto-throttle ~1x/dia)
-        _safe("commodity_spark", update_commodity_spark)      # risquinho do carrossel: append do dia + forma (auto-throttle ~1x/dia)
+        # risquinho do carrossel: append do dia + as 5 janelas. O gatilho é o DADO, não
+        # o relógio (triagem de 2,5 KB) — antes a trava de 18h rodava ANTES de o Platts
+        # publicar e a curva ficava um dia atrás do preço, todo dia.
+        _safe("commodity_spark", update_commodity_spark)
         _safe("iron_ore_62_te", update_iron_ore_62_te)        # minério 62% (TE SCO:COM) p/ a aba Market (auto-throttle ~poucas vezes/dia)
         m = _safe("macro", update_macro)
         if platts_prices:  # Iron Ore 61%, HRC China, Rebar Turkey, Met Coal

@@ -19,7 +19,7 @@ import os
 import re
 import time
 import zlib
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
 import requests
@@ -632,9 +632,15 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
         return 0
 
     # backfill Yahoo das que têm ticker (cobre/ouro) — 1 par de chamadas
+    # ⚠️ range="10y", NUNCA range="max": com "max" o Yahoo IGNORA o interval e devolve barras
+    # MENSAIS (medido no HG=F: 267 pontos em 26 anos, com 44 deles caindo em sábado/domingo
+    # porque a barra do mês é carimbada no dia 1º). O resultado era uma série de frequência
+    # MISTA — mensal no começo, diária na ponta — e as janelas do risquinho, que contam
+    # pontos, passavam a medir períodos que não eram os anunciados. Com "10y"/"1d" vêm 2.513
+    # pregões limpos, zero fim de semana. (Mesma lição de hunter/quote_history.py.)
     yf_syms = [COMMODITY_HISTORY_YF[r["code"]] for r in stale if r.get("code") in COMMODITY_HISTORY_YF]
     daily_yf = fetch_yahoo(yf_syms, range_="1y",  interval="1d") if yf_syms else {}
-    hist_yf  = fetch_yahoo(yf_syms, range_="max", interval="1d") if yf_syms else {}
+    hist_yf  = fetch_yahoo(yf_syms, range_="10y", interval="1d") if yf_syms else {}
 
     h = {"apikey": key, "Authorization": f"Bearer {key}",
          "Content-Type": "application/json", "Prefer": "return=minimal"}
@@ -647,7 +653,9 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
             dm = (hist_yf.get(yf) or {}).get("series") or []
             if not d1 and not dm:
                 continue
-            merged = ([p for p in dm if p[0] < d1[0][0]] + d1) if d1 else dm
+            # teto de ~5 anos: é o range mais longo da aba Market, e `commodities` vai
+            # inteira para o navegador do cliente (`select=*`) — série sem teto virava egress
+            merged = (([p for p in dm if p[0] < d1[0][0]] + d1) if d1 else dm)[-1300:]
         else:
             # acumula: append do assessment do dia (Platts não tem histórico)
             price, assessed = row.get("price"), row.get("assessed_at")
@@ -691,36 +699,105 @@ SPARK_SCALE  = 1000   # resolução vertical da forma
 SPARK_KEEP   = 500    # pontos guardados na tabela privada (~2 anos, folga sobre a janela)
 
 
-# Janelas do seletor de período do carrossel: (chave, pontos DESENHADOS, pregões ATRÁS
-# para a variação). O desenho tem piso de ~1 mês mesmo em D/WoW — uma semana são 5 pontos
-# e viraria um risco reto sem informação.
-SPARK_PERIODS = (("d", 22, 1), ("w", 22, 5), ("m", 66, 22), ("ytd", None, None), ("y", 250, 250))
+# Janelas do seletor de período do carrossel. Para cada botão:
+#   dias_ancora = quantos dias de calendário atrás fica a ÂNCORA da VARIAÇÃO
+#   dias_janela = quanto tempo o DESENHO cobre (o contexto em volta do trecho medido)
+# ⚠️ Tudo por DATA, nunca por contagem de pontos. Contar pontos mentia em duas frentes:
+# numa série semanal "5 pontos atrás" não era uma semana, e num feriado/fim de semana
+# perdido a janela escorregava. Por data, WoW é WoW mesmo em série semanal.
+# Os cinco botões são cinco ZOOMS (14d, 30d, 92d, YTD, 365d): antes "D" e "WoW" pediam
+# os mesmos 22 pontos e desenhavam a MESMA curva nas 29 commodities. E o desenho é SEMPRE
+# ≥ o trecho medido — a linha dá contexto e o trecho medido sai destacado no cartão
+# (índice `b`), para "1 dia" não virar um risco reto de dois pontos.
+SPARK_PERIODS = (
+    ("d",     1,   14),
+    ("w",     7,   30),
+    ("m",    30,   92),
+    ("ytd", None, None),      # âncora e janela = último fechamento do ano anterior
+    ("y",   365,  365),
+)
+SPARK_MIN_PTS       = 10      # piso de pontos no desenho (série curta não vira 2 pontos)
+SPARK_MIN_DISTINTOS = 6       # piso de valores DIFERENTES: uma semanal em janela de 1 mês
+                              # tem 4 preços repetidos em degraus — feio e sem informação
+SPARK_MAX_ALARGAR   = 3.0     # ...e a janela pode no máximo triplicar para alcançar o piso
+SPARK_VER           = 2       # versão do formato; muda ⇒ o robô recalcula todas as curvas
 
 
-def _forma(vals: list[float]) -> list[int]:
-    """Lista de preços -> FORMA normalizada 0..SPARK_SCALE (sem escala, sem datas)."""
+def _forma(vals: list[float]) -> tuple[list[int], list[int]]:
+    """Lista de preços -> (FORMA normalizada 0..SPARK_SCALE, índices de origem).
+
+    A forma vai para o navegador sem escala e sem datas. Os índices dizem quais pontos
+    da lista original sobreviveram à reamostragem — é o que permite marcar no desenho
+    onde começa o trecho medido depois de reamostrar.
+    """
     if len(vals) < 3:
-        return []
+        return [], []
+    idx = list(range(len(vals)))
     if len(vals) > SPARK_POINTS:                 # reamostra por índice (a série já é diária)
         step = (len(vals) - 1) / (SPARK_POINTS - 1)
-        vals = [vals[round(i * step)] for i in range(SPARK_POINTS)]
+        idx = [round(i * step) for i in range(SPARK_POINTS)]
+        vals = [vals[i] for i in idx]
     lo, hi = min(vals), max(vals)
     if hi == lo:
-        return [SPARK_SCALE // 2] * len(vals)
-    return [round((v - lo) / (hi - lo) * SPARK_SCALE) for v in vals]
+        return [SPARK_SCALE // 2] * len(vals), idx
+    return [round((v - lo) / (hi - lo) * SPARK_SCALE) for v in vals], idx
 
 
 def commodity_shape(values: list[float]) -> list[int]:
     """Janela de ~12 meses, normalizada. Mantida para compatibilidade do formato antigo."""
-    return _forma(values[-SPARK_WINDOW:])
+    return _forma(values[-SPARK_WINDOW:])[0]
+
+
+def _idx_ate(datas: list[date], alvo: date) -> int | None:
+    """Índice do ÚLTIMO ponto com data <= alvo. None se a série começa depois do alvo.
+
+    None é resposta legítima e importante: significa "não tenho histórico que chegue
+    até aí". Quem chama devolve variação NULA em vez de inventar uma base.
+    """
+    achou = None
+    for i, d in enumerate(datas):
+        if d <= alvo:
+            achou = i
+        else:
+            break
+    return achou
+
+
+def _alargar(vals: list[float], ini: int, fim: int) -> int:
+    """Puxa o início do desenho para trás até ele ter pontos e variação suficientes.
+
+    Existe por causa das SEMANAIS (celulose, pellet premium): a série é preenchida dia a
+    dia, então uma janela de 1 mês são 4 preços repetidos — uma escadinha de 4 degraus.
+    Alargando até ~6 valores distintos a mesma janela vira uma linha de verdade. Teto de
+    3× a largura nominal para o "MoM" de uma commodity parada não virar um gráfico de anos.
+    """
+    largura = fim - ini
+    limite = max(0, fim - max(SPARK_MIN_PTS, int(round(largura * SPARK_MAX_ALARGAR))))
+    # o piso ACOMPANHA o tamanho da janela (~1 movimento visível a cada 3 pontos
+    # desenhados). Um piso fixo fazia janelas vizinhas se encontrarem: no Rebar Turkey,
+    # que anda em degraus de US$ 2,50, tanto o "D" quanto o "WoW" alargavam até 24 pontos
+    # atrás dos mesmos 6 valores distintos — e voltavam a ser o mesmo desenho.
+    alvo = max(3, min(SPARK_MIN_DISTINTOS, round(largura / 3)))
+    vistos = set(vals[ini:fim])
+    while ini > limite and (fim - ini < SPARK_MIN_PTS or len(vistos) < alvo):
+        ini -= 1
+        vistos.add(vals[ini])
+    return ini
 
 
 def commodity_periods(serie: list[list]) -> dict:
-    """[[epoch, valor], ...] -> {"d": {"c": var%, "s": [forma]}, "w": ..., "m", "ytd", "y"}.
+    """[[epoch, valor], ...] -> {"d": {"c": var%, "s": [forma], "b": i}, "w": ..., "asof", "v"}.
 
-    É o que alimenta o seletor D/WoW/MoM/YTD/YoY do carrossel: para cada período, a
-    VARIAÇÃO (contra o preço de hoje) e a FORMA da janela, normalizada de forma
-    independente.
+    É o que alimenta o seletor D/WoW/MoM/YTD/YoY do carrossel. Para cada período:
+      c = VARIAÇÃO contra o último preço — ou None quando a série não alcança a âncora
+          (ex.: HRC China só tem histórico desde 23/06/2026: YTD e YoY saem None, e o
+          cartão mostra "—". Antes o código caía no primeiro ponto da série e publicava
+          "YTD +1,83%" que na verdade era "desde 23 de junho" — um número inventado).
+      s = FORMA da janela desenhada, normalizada de forma independente.
+      b = índice, dentro de `s`, onde COMEÇA o trecho que a variação mede. O cartão
+          desenha o contexto esmaecido e esse trecho em cor cheia — é o que diferencia
+          D de WoW sem precisar desenhar um risco reto de dois pontos.
+    Há sempre uma forma, mesmo sem variação: o cartão nunca fica sem gráfico.
 
     ⚠️ NOTA DE PRIVACIDADE — decisão explícita do usuário (2026-08-25). Até aqui a forma
     terminava em D−1 justamente para que a curva não fosse reconstruível: com o preço de
@@ -734,24 +811,80 @@ def commodity_periods(serie: list[list]) -> dict:
     if len(pts) < 4:
         return {}
     vals = [float(p[1]) for p in pts]
-    anos = [datetime.fromtimestamp(int(p[0]), timezone.utc).year for p in pts]
-    ano = anos[-1]
-    ult = vals[-1]
-    out: dict = {}
-    for chave, janela, atras in SPARK_PERIODS:
+    datas = [datetime.fromtimestamp(int(p[0]), timezone.utc).date() for p in pts]
+    fim_i = len(vals) - 1
+    hoje = datas[fim_i]
+    ult = vals[fim_i]
+    out: dict = {"asof": hoje.isoformat(), "v": SPARK_VER}
+    for chave, dias_ancora, dias_janela in SPARK_PERIODS:
         if chave == "ytd":
-            antes = [i for i, a in enumerate(anos) if a < ano]
-            base_i = antes[-1] if antes else 0
-            sub = vals[base_i:]
+            anteriores = [i for i, d in enumerate(datas) if d.year < hoje.year]
+            base_i = anteriores[-1] if anteriores else None
+            ini_i = base_i
         else:
-            sub = vals[-janela:] if janela else vals
-            base_i = max(0, len(vals) - 1 - atras)
-        forma = _forma(sub)
+            # "D" é o pregão anterior, seja ele ontem ou a sexta-feira — não "1 dia atrás"
+            base_i = fim_i - 1 if chave == "d" else _idx_ate(datas, hoje - timedelta(days=dias_ancora))
+            ini_i = _idx_ate(datas, hoje - timedelta(days=dias_janela))
+        # o desenho tem de conter a âncora, senão não há trecho para destacar.
+        # E janela que pede mais fundo do que a série alcança mostra TUDO (ini=0) — não
+        # recua só até a âncora, senão o "MoM" de uma série curta encolhe para o tamanho
+        # do "WoW" e os dois voltam a desenhar a mesma coisa.
+        if ini_i is None:
+            ini = 0
+        elif base_i is not None:
+            ini = min(ini_i, base_i)
+        else:
+            ini = ini_i
+        ini = _alargar(vals, ini, fim_i + 1)
+        forma, idx = _forma(vals[ini:fim_i + 1])
         if not forma:
             continue
-        base = vals[base_i]
-        out[chave] = {"c": round((ult / base - 1) * 100, 2) if base else None, "s": forma}
+        base = vals[base_i] if base_i is not None else None
+        rel = (base_i - ini) if base_i is not None else 0
+        b = min(range(len(idx)), key=lambda k: abs(idx[k] - rel))
+        out[chave] = {"c": round((ult / base - 1) * 100, 2) if base else None,
+                      "s": forma, "b": b}
     return out
+
+
+def _dia_util(d: date) -> date:
+    """Sábado/domingo -> a sexta anterior. O mercado não anda no fim de semana.
+
+    Existe porque Copper/Gold vêm do Yahoo AO VIVO e gravavam `assessed_at = hoje`,
+    inclusive sábado e domingo: entravam dois pontos por semana repetindo (ou pior,
+    arrastando) a sexta. Além de o cartão do ouro mostrar o preço de hoje sob uma curva
+    que terminava no domingo, os pontos falsos encolhiam as janelas — em um ano os 250
+    pregões do YoY virariam ~8 meses. É a mesma armadilha que o semeador da celulose
+    já evitava de propósito.
+    """
+    return d - timedelta(days=d.weekday() - 4) if d.weekday() > 4 else d
+
+
+def serie_com_o_dia(serie: list[list], price, assessed) -> list[list]:
+    """Encaixa o assessment do dia na série e devolve a janela de trabalho, limpa.
+
+    Três regras, todas aprendidas apanhando:
+    • dedup por DATA (não por epoch): o mesmo dia reavaliado substitui, não duplica;
+    • sábado/domingo NÃO entram. Copper/Gold vêm do Yahoo ao vivo e gravavam `assessed_at
+      = hoje`, então todo fim de semana injetava 2 pontos repetindo a sexta — o cartão do
+      ouro mostrava o preço de hoje sob uma curva que terminava no domingo, e em um ano os
+      250 pregões da janela YoY virariam ~8 meses;
+    • varre o fim de semana HERDADO, que veio de duas fontes: esse append antigo e o
+      backfill do Yahoo com `range=max`, que devolve barras mensais carimbadas no dia 1º.
+    """
+    limpa = [p for p in serie
+             if datetime.fromtimestamp(int(p[0]), timezone.utc).weekday() < 5]
+    if price is not None and assessed:
+        try:
+            dia = date.fromisoformat(str(assessed)[:10])
+            if dia.weekday() < 5:
+                ep = int(datetime(dia.year, dia.month, dia.day, tzinfo=timezone.utc).timestamp())
+                limpa = [p for p in limpa if p[0] != ep]
+                limpa.append([ep, round(float(price), 4)])
+        except Exception:
+            pass
+    limpa.sort(key=lambda p: p[0])
+    return limpa[-SPARK_KEEP:]
 
 
 def update_commodity_spark(max_age_hours: float = 18.0) -> int:
@@ -759,8 +892,18 @@ def update_commodity_spark(max_age_hours: float = 18.0) -> int:
 
     A "fotografia" inicial vem de `seed_platts_history.py` (planilha do Platts, rodado na
     máquina do analista). Daqui pra frente esta função mantém a curva viva sozinha:
-    append do valor do dia (dedup por data) + recálculo da forma. Auto-throttled por
-    `commodity_history.updated_at` (~1×/dia). Retorna nº de commodities atualizadas.
+    append do valor do dia (dedup por data) + recálculo da forma.
+
+    ⚠️ O GATILHO É O DADO, NÃO O RELÓGIO. Havia uma trava de 18h aqui, e ela criava um
+    erro silencioso: a função rodava de manhã, ANTES de o Platts publicar o assessment do
+    dia, e só voltava a rodar no dia seguinte — nunca alcançava o preço. Resultado medido
+    em 31/08/2026: preço e variação-do-dia de 31/08 no cartão, curva e WoW/MoM/YTD/YoY
+    calculados sobre uma série que parava em 28/08. O frete Austrália-China anunciava
+    "+12,80% na semana" quando o certo com o preço do dia era +7,59%.
+    Agora uma consulta BARATA (2,5 KB: só `code`, `assessed_at` e dois campos do jsonb)
+    diz quais curvas já contêm o pregão vigente; só as atrasadas puxam a série inteira.
+    Assim ela acompanha o Platts dentro de um ciclo de hunt sem custo de egress.
+    `max_age_hours` continua aceito por compatibilidade, mas não é mais o gatilho.
 
     Se a tabela `commodity_history` ainda não existir (SQL não rodado), sai quieta.
     """
@@ -769,37 +912,57 @@ def update_commodity_spark(max_age_hours: float = 18.0) -> int:
     if not url or not key:
         return 0
     h = {"apikey": key, "Authorization": f"Bearer {key}"}
+
+    # 1) triagem barata: quem já está com o pregão vigente na curva nem é lido
     try:
-        r = requests.get(f"{url}/rest/v1/commodity_history?select=code,series,updated_at",
+        t = requests.get(f"{url}/rest/v1/commodities"
+                         "?select=code,assessed_at,asof:spark->>asof,ver:spark->>v",
                          headers=h, timeout=20)
+        t.raise_for_status()
+        triagem = t.json()
+    except Exception as e:
+        log.warning("commodity_spark: triagem falhou: %s", e)
+        return 0
+
+    atrasadas = []
+    for row in triagem:
+        a = row.get("assessed_at")
+        alvo = None
+        if a:
+            try:
+                alvo = _dia_util(date.fromisoformat(str(a)[:10])).isoformat()
+            except Exception:
+                alvo = None
+        if (str(row.get("ver")) != str(SPARK_VER) or not row.get("asof")
+                or (alvo and row["asof"] < alvo)):
+            atrasadas.append(row["code"])
+    if not atrasadas:
+        return 0
+
+    # 2) só as atrasadas puxam a série em números (o caro: ~50 KB por commodity)
+    lista = ",".join(atrasadas)
+    try:
+        r = requests.get(f"{url}/rest/v1/commodity_history?select=code,series,updated_at"
+                         f"&code=in.({lista})", headers=h, timeout=30)
         if r.status_code in (404, 406):
             log.info("commodity_spark: tabela commodity_history ainda não existe — pulando")
             return 0
         r.raise_for_status()
         hist = {row["code"]: row for row in r.json()}
-        c = requests.get(f"{url}/rest/v1/commodities?select=code,price,assessed_at,daily",
-                         headers=h, timeout=20)
+        c = requests.get(f"{url}/rest/v1/commodities?select=code,price,assessed_at,daily"
+                         f"&code=in.({lista})", headers=h, timeout=30)
         c.raise_for_status()
         rows = c.json()
     except Exception as e:
         log.warning("commodity_spark: leitura falhou: %s", e)
         return 0
 
-    now = datetime.now(timezone.utc)
     hw = {**h, "Content-Type": "application/json", "Prefer": "return=minimal"}
     n = 0
     for row in rows:
         code = row.get("code")
         cur = hist.get(code)
         if cur:
-            du = cur.get("updated_at")
-            if du:
-                try:
-                    age_h = (now - datetime.fromisoformat(du.replace("Z", "+00:00"))).total_seconds() / 3600
-                    if age_h <= max_age_hours:
-                        continue                  # já rodou hoje
-                except Exception:
-                    pass
             serie = [p for p in (cur.get("series") or []) if isinstance(p, list) and len(p) == 2]
             source = None
         else:
@@ -808,28 +971,20 @@ def update_commodity_spark(max_age_hours: float = 18.0) -> int:
             source = "daily"
             if not serie:
                 continue
-
-        price, assessed = row.get("price"), row.get("assessed_at")
-        if price is not None and assessed:
-            try:
-                ep = int(datetime.fromisoformat(str(assessed)[:10] + "T00:00:00+00:00").timestamp())
-                serie = [p for p in serie if p[0] != ep]          # dedup por data
-                serie.append([ep, round(float(price), 4)])
-            except Exception:
-                pass
-        serie.sort(key=lambda p: p[0])
-        serie = serie[-SPARK_KEEP:]
+        antes = [list(p) for p in serie]
+        serie = serie_com_o_dia(serie, row.get("price"), row.get("assessed_at"))
 
         sp = commodity_periods(serie)
         if not sp:
             continue
         try:
-            body = {"code": code, "series": serie, "updated_at": _now_iso()}
-            if source:
-                body["source"] = source
-            requests.post(f"{url}/rest/v1/commodity_history", json=body,
-                          headers={**hw, "Prefer": "resolution=merge-duplicates,return=minimal"},
-                          timeout=20).raise_for_status()
+            if serie != antes or source:
+                body = {"code": code, "series": serie, "updated_at": _now_iso()}
+                if source:
+                    body["source"] = source
+                requests.post(f"{url}/rest/v1/commodity_history", json=body,
+                              headers={**hw, "Prefer": "resolution=merge-duplicates,return=minimal"},
+                              timeout=20).raise_for_status()
             requests.patch(f"{url}/rest/v1/commodities?code=eq.{code}", json={"spark": sp},
                            headers=hw, timeout=20).raise_for_status()
             n += 1
@@ -838,6 +993,7 @@ def update_commodity_spark(max_age_hours: float = 18.0) -> int:
     if n:
         log.info("commodity_spark: %d curvas atualizadas (append do dia + forma recalculada)", n)
     return n
+
 
 # ───────────────────────────────────────────────────────────────────────────
 # Iron Ore 62% Fe CFR China (USD/t) — Trading Economics (SÓ para a aba Market)
