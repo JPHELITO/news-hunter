@@ -99,6 +99,14 @@ QUOTES_LIST = [
     ("ERO",         "Ero Copper",        "copper",      "NYSE",  "yahoo", "ERO"),
     ("CS.TO",       "Capstone Copper",   "copper",      "TSX",   "yahoo", "CS.TO"),
     ("HBM",         "Hudbay Minerals",   "copper",      "NYSE",  "yahoo", "HBM"),
+    # Glencore VOLTOU em 2026-09-01. Ela tinha saído no 24407e8 (16/jun), quando o universo
+    # virou grupos setoriais — decisão editorial, e o front continua sem exibi-la (ela não
+    # está em nenhum G_* do index.html, e o filtro KNOWN de lá descarta quem não está).
+    # Volta como INSUMO do blast matinal, que precisa da linha de Londres no bloco
+    # "Europe - Live" ao lado de RIO/AAL/MT. Setor `copper` porque, entre os sete setores
+    # que temos, é onde a Glencore mais pesa — a empresa é diversificada (cobre + carvão
+    # + trading), então o rótulo é o menos errado, não o certo.
+    ("GLEN.L",      "Glencore",          "copper",      "LSE",   "yahoo", "GLEN.L"),
     # ── Rare earths ──────────────────────────────────────────────────────
     ("MEI.AX",      "Meteoric Resources","rare_earths", "ASX",   "yahoo", "MEI.AX"),
     ("VMM.AX",      "Viridis Mining",    "rare_earths", "ASX",   "yahoo", "VMM.AX"),
@@ -115,12 +123,23 @@ QUOTES_LIST = [
     ("GDX",         "Gold Miners ETF",   "index",       "US",    "yahoo", "GDX"),
 ]
 
-# Commodities Yahoo — só Copper e Gold (benchmark global, atualiza a cada 5min).
-# As 4 de aço/minério vêm do Platts (PLATTS_COMMODITIES, hunt-playwright 30min).
+# Commodities Yahoo — benchmark global, atualiza a cada 5min (fonte LIVRE, ao contrário
+# do assessment PAGO do Platts/Fastmarkets). As 4 de aço/minério vêm do Platts
+# (PLATTS_COMMODITIES, hunt-playwright 30min).
+# ⚠️ Entrar aqui NÃO põe a commodity na dashboard: o carrossel da home desenha o que está
+# em COMM_GROUPS (index.html) e a aba Market filtra por COMM_USADAS. Brent e Aluminum
+# entram como DADO, não como tile — quem consome é o blast matinal.
 COMMODITIES_LIST = [
     # (code, name, unit, query_symbol)
-    ("COPPER",    "Copper",  "USD/lb",  "HG=F"),
-    ("GOLD",      "Gold",    "USD/oz",  "GC=F"),
+    ("COPPER",    "Copper",   "USD/lb",  "HG=F"),
+    ("GOLD",      "Gold",     "USD/oz",  "GC=F"),
+    # 2026-09-01 — os dois que faltavam ao blast e que o Yahoo entrega de graça:
+    #   BZ=F = Brent ICE, em USD/bbl (o CL=F que o Market Pulse já coleta é WTI, outro barril).
+    #   ALI=F = Alumínio COMEX, cotado em USD por tonelada MÉTRICA — casa com o "USD X/ton"
+    #     do blast sem conversão. Não é o LME (que o Yahoo não dá de graça), mas acompanha.
+    # Níquel NÃO entra: testados NICKEL, NID=F, SHNI=F, LN=F e ^LME, todos 404 no Yahoo.
+    ("BRENT",     "Brent",    "USD/bbl", "BZ=F"),
+    ("ALUMINUM",  "Aluminum", "USD/t",   "ALI=F"),
 ]
 
 # Commodities Platts — capturadas da watchlist do workspace (símbolo → meta).
