@@ -106,9 +106,58 @@ def patch_job(job_id: str, fields: dict) -> None:
         raise RuntimeError(f"patch {job_id} -> {r.status_code} {r.text[:200]}")
 
 
+def process_blast(job: dict) -> None:
+    """
+    Job de BLAST: só os 3 destaques, e nada mais.
+
+    O blast de WhatsApp é montado NO FRONT (preços do banco + manchetes que o analista já
+    selecionou, com o take e o setor dele). A única parte que precisa de julgamento — quais
+    notícias importam hoje — vem para cá, e é UMA chamada de IA. Sem Word, sem e-mail, sem
+    raspar corpo: a rodada leva segundos em vez de 1 a 3 minutos.
+
+    ⚠️ A resposta volta DENTRO do `config` (jsonb) do próprio job, em `config.blast`, e não
+    numa coluna nova. Motivo: `admin_get_clipping_job` é `returns setof clipping_jobs` com
+    `select *`, então o front recebe o `config` de graça — e a alternativa custaria mais uma
+    migração de SQL na fila de coisas que o usuário precisa rodar à mão. A gravação FUNDE o
+    que já estava no config (lê, mescla, escreve) para não apagar a configuração que veio do
+    front no mesmo job.
+    """
+    from clipping.blast import highlights
+
+    jid = job["id"]
+    payload = job.get("payload") or []
+    cfg = dict(job.get("config") or {})
+    quantos = int(((cfg.get("blast") or {}).get("n")) or 3)
+
+    noticias = [{"title": it.get("title"), "source_name": it.get("source_name"),
+                 "sector": it.get("sector"), "take": it.get("take"),
+                 "body": it.get("body")} for it in payload]
+    res = highlights(noticias, n=quantos)
+    log.info("job %s BLAST: %d destaque(s) por %s%s", jid, len(res["destaques"]),
+             res["provedor"] or "ninguem", f" (erro: {res['erro']})" if res["erro"] else "")
+
+    atual = read_job(jid) or {}
+    cfg = dict(atual.get("config") or cfg)
+    cfg["blast"] = {**(cfg.get("blast") or {}), **res, "at": _now()}
+    patch_job(jid, {"status": "done", "config": cfg, "error": None,
+                    "finished_at": _now(), "updated_at": _now()})
+
+
 def process(job: dict) -> None:
     jid = job["id"]
     payload = job.get("payload") or []
+    # Job de blast não gera documento — desvia antes de qualquer raspagem ou tradução.
+    if ((job.get("config") or {}).get("blast") or {}).get("only"):
+        try:
+            process_blast(job)
+        except Exception as e:
+            log.exception("job %s ERRO no blast", jid)
+            try:
+                patch_job(jid, {"status": "error", "error": str(e)[:500],
+                                "finished_at": _now(), "updated_at": _now()})
+            except Exception:
+                log.exception("falha ao marcar erro no job %s", jid)
+        return
     d = date.fromisoformat(job["ref_date"]) if job.get("ref_date") else date.today()
     try:
         res = build_from_payload(payload, d, fetch=True, config=job.get("config"))
