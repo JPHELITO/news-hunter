@@ -111,7 +111,8 @@ def main() -> None:
         from hunter.prices import (update_quotes, update_commodities, update_macro,
                                     update_platts_commodities, update_quote_history,
                                     update_commodity_history, update_iron_ore_62_te,
-                                    update_commodity_spark, update_fastmarkets_commodities)
+                                    update_commodity_spark, update_fastmarkets_commodities,
+                                    update_sina_commodities)
     except Exception as e:
         log.warning("Preços: import falhou: %s", e)
     else:
@@ -125,7 +126,10 @@ def main() -> None:
                 return None
         q = _safe("quotes", update_quotes)
         h = _safe("quote_history", update_quote_history)  # série diária (auto-throttle ~1x/dia)
-        c = _safe("commodities", update_commodities)       # Copper + Gold (Yahoo)
+        c = _safe("commodities", update_commodities)       # Copper + Gold + Brent + Alumínio (Yahoo)
+        # Minério 62% de Cingapura e níquel da LME: o Yahoo não tem nenhum dos dois, e são
+        # os únicos que ficam vivos às 06h BRT, hora do blast. Isolado como todos os outros.
+        _safe("sina_commodities", update_sina_commodities)
         _safe("commodity_history", update_commodity_history)  # commodities.daily p/ o spread (auto-throttle ~1x/dia)
         # risquinho do carrossel: append do dia + as 5 janelas. O gatilho é o DADO, não
         # o relógio (triagem de 2,5 KB) — antes a trava de 18h rodava ANTES de o Platts

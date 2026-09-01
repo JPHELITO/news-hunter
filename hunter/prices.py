@@ -76,6 +76,9 @@ QUOTES_LIST = [
     # duas vezes na cobertura. Mesmo tratamento de VALE (ADR) e AUGO.
     ("GGB",         "Gerdau (NYSE)",     "steel",       "NYSE",  "yahoo", "GGB"),
     ("MT",          "ArcelorMittal",     "steel",       "NYSE",  "yahoo", "MT"),
+    # A linha europeia da ArcelorMittal — viva às 06h BRT, ao contrário da de NY.
+    # Ver o bloco "LINHAS LOCAIS dos peers" mais abaixo.
+    ("MT.AS",       "ArcelorMittal (AMS)", "steel",     "AMS",   "yahoo", "MT.AS"),
     ("NUE",         "Nucor",             "steel",       "NYSE",  "yahoo", "NUE"),
     ("CMC",         "Commercial Metals", "steel",       "NYSE",  "yahoo", "CMC"),
     ("GOAU4.SA",    "Metalúrgica Gerdau","steel",       "B3",    "yahoo", "GOAU4.SA"),
@@ -86,6 +89,23 @@ QUOTES_LIST = [
     ("RIO",         "Rio Tinto",         "iron_ore",    "NYSE",  "yahoo", "RIO"),
     ("BHP",         "BHP Group",         "iron_ore",    "NYSE",  "yahoo", "BHP"),
     ("AAL.L",       "Anglo American",    "iron_ore",    "LSE",   "yahoo", "AAL.L"),
+    # ── As LINHAS LOCAIS dos peers, p/ o blast das 06h BRT (2026-09-01) ────────────
+    # O blast quer "Europe - Live" e "Australia - Overnight" às 06:00 BRT = 09:00 UTC.
+    # Medido nas barras de 5 min do dia 01/09, e o resultado condena os tickers de cima:
+    #
+    #   RIO / BHP / MT (NYSE)  -> 1ª barra do dia às 13:30 UTC. Às 09:00 UTC a NYSE está
+    #                             FECHADA e o Yahoo devolve o fechamento de ONTEM, com a
+    #                             variação de ontem. No blast isso sairia como se fosse o
+    #                             movimento da manhã — errado e sem ninguém notar.
+    #   RIO.L / AAL.L / GLEN.L -> 1ª barra 07:00 UTC (Londres abre antes do Brasil). VIVAS.
+    #   MT.AS (Amsterdã)       -> 1ª barra 07:00 UTC. VIVA.
+    #   BHP.AX / FMG.AX        -> pregão 00:00–06:12 UTC, JÁ FECHADO às 09:00 com o número
+    #                             do próprio dia. É exatamente o "overnight" que o blast quer.
+    #
+    # Entram como DADO: nenhuma delas está nos grupos setoriais do front (index.html), que
+    # filtra por KNOWN — a dashboard do cliente segue mostrando um listing por empresa.
+    ("RIO.L",       "Rio Tinto (LSE)",   "iron_ore",    "LSE",   "yahoo", "RIO.L"),
+    ("BHP.AX",      "BHP Group (ASX)",   "iron_ore",    "ASX",   "yahoo", "BHP.AX"),
     ("CAP.SN",      "CAP S.A.",          "iron_ore",    "BCS",   "yahoo", "CAP.SN"),
     ("BRAP3.SA",    "Bradespar",         "iron_ore",    "B3",    "yahoo", "BRAP3.SA"),
     # ── Gold ─────────────────────────────────────────────────────────────
@@ -118,6 +138,11 @@ QUOTES_LIST = [
     ("STERV.HE",    "Stora Enso",        "pp",          "HEL",   "yahoo", "STERV.HE"),
     # ── Índices ──────────────────────────────────────────────────────────
     ("SPX",         "S&P 500",           "index",       "US",    "yahoo", "^GSPC"),
+    # O FUTURO, não o índice: o ^GSPC só existe das 13:30 UTC em diante, e às 06h BRT
+    # (hora do blast) devolveria o fechamento de ontem. O ES=F negocia quase 24h e é o
+    # que responde "como o mercado americano está reagindo agora" — a pergunta que o
+    # bloco GLOBAL do blast faz. O Market Pulse já o coletava; agora ele fica gravado.
+    ("SP500_FUT",   "S&P 500 Futures",   "index",       "CME",   "yahoo", "ES=F"),
     ("NASDAQ",      "Nasdaq Composite",  "index",       "US",    "yahoo", "^IXIC"),
     ("MATB11.SA",   "IMAT Materiais (B3)","index",      "B3",    "yahoo", "MATB11.SA"),
     ("GDX",         "Gold Miners ETF",   "index",       "US",    "yahoo", "GDX"),
@@ -1209,6 +1234,58 @@ def update_commodities() -> int:
     # As 4 commodities Platts (Iron Ore 61%, HRC China, Rebar Turkey, Met Coal)
     # são geridas por update_platts_commodities (hunt-playwright 30min) — não
     # tocadas aqui. Se o Platts cair, o último valor persiste até renovar a sessão.
+    return _supa_upsert("commodities", rows)
+
+
+# Commodities que só a Sina serve — e que o blast das 06h BRT precisa.
+#   nome na Sina -> (code na tabela, nome exibido, unidade)
+SINA_COMMODITIES = {
+    "FEF.SGX": ("IRON_ORE_SGX", "Iron Ore 62% SGX", "USD/t"),
+    "NID.LME": ("NICKEL",       "Nickel (LME)",     "USD/t"),
+}
+
+
+def update_sina_commodities() -> int:
+    """
+    Minério 62% de Cingapura e níquel da LME na tabela `commodities`. Retorna rows escritas.
+
+    POR QUE NÃO VEM DO YAHOO (medido em 2026-09-01):
+      - níquel: NICKEL, NID=F, SHNI=F, LN=F e ^LME dão 404. Não existe de graça lá.
+      - minério: o TIO=F morreu congelado (ver COMMODITY_HISTORY_YF) e o assessment do
+        Platts sai UMA vez por dia — às 06h BRT o número dele ainda é o de ontem.
+    Os dois da Sina negociam praticamente 24h e estão vivos às 06h BRT, que é a hora do
+    blast. É a diferença entre o leitor ver o movimento da manhã dele e ver o de ontem.
+
+    A VARIAÇÃO é do dia, calculada contra o fechamento da sessão anterior que o próprio
+    payload traz (campo 7). Não dependemos de acumular série nossa para o número existir.
+
+    ⚠️ `daily` NÃO é escrito aqui. Aquela coluna é pública (todo login lê) e a política é
+    só entrar nela número de fonte livre COM série confiável; o histórico da Sina é diário
+    e inclui a sessão noturna chinesa, que fecha depois dos nossos cortes — usá-lo seria o
+    mesmo look-ahead que já custou caro na barra horária do Yahoo (ver pulse_sina).
+    """
+    from .pulse_sina import fetch_sina
+
+    dados = fetch_sina()
+    rows = []
+    for nome, (code, label, unidade) in SINA_COMMODITIES.items():
+        d = dados.get(nome)
+        if not d or d.get("price") is None:
+            log.warning("sina commodities: %s sem preço nesta rodada", nome)
+            continue
+        prev = d.get("prev")
+        chg = round((d["price"] - prev) / abs(prev) * 100, 3) if prev else None
+        if chg is None:
+            log.warning("sina commodities: %s veio sem fechamento anterior — grava preço "
+                        "sem variação (o blast mostra o campo vazio, nunca um número falso)",
+                        nome)
+        rows.append({"code": code, "name": label, "unit": unidade,
+                     "price": d["price"], "change_pct": chg,
+                     "updated_at": _now_iso()})
+    if not rows:
+        return 0
+    log.info("sina commodities: %s", ", ".join(
+        f"{r['code']}={r['price']:g} ({r['change_pct']}%)" for r in rows))
     return _supa_upsert("commodities", rows)
 
 

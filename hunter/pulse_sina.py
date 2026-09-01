@@ -57,6 +57,11 @@ SINA_HEADERS = {
 # ⚠️ nf_I0 é com "I" MAIÚSCULO — nf_i0 devolve string vazia, sem erro.
 SINA_SYMBOLS = {
     "FEF.SGX":  "hf_FEF",
+    # 伦镍 = níquel da LME, em USD/t (conferido no campo 13 do payload, 2026-09-01).
+    # É o ÚNICO níquel gratuito que achamos: no Yahoo, NICKEL / NID=F / SHNI=F / LN=F /
+    # ^LME dão 404, sem exceção. Entra pelo mesmo canal que já trazia o minério de
+    # Cingapura, negocia 24h e por isso está vivo às 06h BRT, que é a hora do blast.
+    "NID.LME":  "hf_NID",
     "SP.SHFE":  "nf_SP0",
     "RB.SHFE":  "nf_RB0",
     "HC.SHFE":  "nf_HC0",
@@ -86,12 +91,18 @@ def _parse(codigo: str, campos: list[str]) -> dict | None:
 
     Aceitar preço fora da faixa [mín, máx] do próprio dia seria aceitar que o layout mudou.
     """
+    prev = None
     if codigo.startswith("hf_"):
         if len(campos) < 13:
             return None
         preco, alta, baixa = _num(campos[0]), _num(campos[3]), _num(campos[5])
         hora = campos[6] if len(campos) > 6 else ""
         data = next((c for c in campos if _DATA_RE.match(c)), "")
+        # campo 7 = FECHAMENTO DA SESSÃO ANTERIOR. Identificado em 2026-09-01 e conferido
+        # por fora: o hf_FEF trazia 99,340 e o nosso minério 62% do Trading Economics tinha
+        # fechado o dia em 99,33 — mesmo número, fonte independente. É o que permite dar a
+        # VARIAÇÃO DO DIA sem esperar acumular série nossa.
+        prev = _num(campos[7]) if len(campos) > 7 else None
     else:
         if len(campos) < 12:
             return None
@@ -107,7 +118,7 @@ def _parse(codigo: str, campos: list[str]) -> dict | None:
         log.warning("  sina %s: preço %.3f fora da faixa do dia [%.3f, %.3f] — "
                     "layout mudou? descartado", codigo, preco, baixa, alta)
         return None
-    return {"price": preco, "stamp": f"{data} {hora}".strip()}
+    return {"price": preco, "stamp": f"{data} {hora}".strip(), "prev": prev}
 
 
 def fetch_sina() -> dict[str, dict]:
