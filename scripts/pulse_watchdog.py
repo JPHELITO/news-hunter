@@ -56,6 +56,14 @@ from hunter import pulse_snapshot as ps                              # noqa: E40
 # Fração mínima de instrumentos p/ a foto valer — mesma régua do pulse_daily.
 MIN_FRACAO = float(os.environ.get("PULSE_MIN_FRACAO", "0.75"))
 
+# ⚠️ SÓ AS SESSÕES RECENTES DISPARAM ALARME. As mais antigas continuam sendo AUDITADAS e
+# impressas no relatório, mas não fazem o job falhar. Sem isto, todo buraco histórico —
+# e ficaram cinco pregões de buracos permanentes entre 26/08 e 31/08, que ninguém vai
+# preencher — viraria um e-mail POR DIA, para sempre. Vigia que grita sempre é vigia que
+# ninguém lê, e aí ele não vale mais que o silêncio que veio substituir.
+# Duas sessões: a de hoje e a anterior (cuja âncora é pré-requisito da manhã de hoje).
+ALARME_SESSOES = int(os.environ.get("PULSE_ALARME_SESSOES", "2"))
+
 
 def _supa():
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -91,7 +99,12 @@ def main() -> int:
     agora = datetime.now(timezone.utc)
     hoje = ps.sessao_hoje()
     sessoes = _sessoes_uteis(hoje, args.dias)
+    recentes = set(sessoes[:ALARME_SESSOES])       # só estas fazem o job falhar
     problemas: list[str] = []
+    historicos: list[str] = []
+
+    def anotar(sessao: str, texto: str) -> None:
+        (problemas if sessao in recentes else historicos).append(texto)
 
     print(f"═══ Vigia do Market Pulse — {agora:%Y-%m-%d %H:%M} UTC "
           f"(últimos {args.dias} pregões) ═══\n")
@@ -122,7 +135,7 @@ def main() -> int:
             if not grupo:
                 if janela_fechou:
                     print(f"   {sessao} corte {cut}   ✗ SEM FOTO")
-                    problemas.append(f"{sessao}: corte {cut} sem foto (janela já fechou)")
+                    anotar(sessao, f"{sessao}: corte {cut} sem foto (janela já fechou)")
                 else:
                     print(f"   {sessao} corte {cut}   · janela ainda aberta")
                 continue
@@ -135,22 +148,28 @@ def main() -> int:
             print(f"   {sessao} corte {cut}   {marca} {n:>2}/{total_simbolos} "
                   f"instrumentos, capturada {quando:%H:%M} UTC")
             if motivo:
-                problemas.append(f"{sessao} corte {cut}: foto FORA DA JANELA — {motivo}")
+                anotar(sessao, f"{sessao} corte {cut}: foto FORA DA JANELA — {motivo}")
             elif n < minimo:
-                problemas.append(f"{sessao} corte {cut}: só {n} de "
-                                 f"{total_simbolos} instrumentos do modelo (mínimo {minimo})")
+                anotar(sessao, f"{sessao} corte {cut}: só {n} de "
+                       f"{total_simbolos} instrumentos do modelo (mínimo {minimo})")
 
     # ── 3: a âncora de ontem, pré-requisito da manhã de hoje ───────────────────
     anterior = sessoes[1] if len(sessoes) > 1 else None
     print(f"\n2) Âncora do fechamento (corte {ps.CUT_BASE}) da sessão anterior")
     if anterior and not fotos.get((anterior, ps.CUT_BASE)):
         print(f"   ✗ sessão {anterior} sem âncora — a manhã seguinte sai 'sem_dado'")
-        problemas.append(f"{anterior}: sem a âncora do corte {ps.CUT_BASE}; sem ela não há "
-                         f"janela overnight e a rodada da manhã seguinte sai 'sem_dado'")
+        anotar(anterior, f"{anterior}: sem a âncora do corte {ps.CUT_BASE}; sem ela não há "
+                          f"janela overnight e a rodada da manhã seguinte sai 'sem_dado'")
     elif anterior:
         print(f"   ✓ sessão {anterior} tem a âncora")
 
     print("\n" + "═" * 60)
+    if historicos:
+        print(f"i  {len(historicos)} buraco(s) em sessoes antigas - auditados, sem alarme "
+              f"(so as {ALARME_SESSOES} ultimas fazem o job falhar):")
+        for h in historicos:
+            print(f"   . {h}")
+        print()
     if problemas:
         print(f"🔴 {len(problemas)} problema(s):\n")
         for p in problemas:
