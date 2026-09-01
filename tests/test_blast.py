@@ -128,3 +128,49 @@ class TestDestaques:
 
     def test_no_take_aparece_como_sem_take_e_nao_some(self):
         assert "sem take" in blast._linha({"title": "x", "take": "no take"})
+
+
+class TestCorpoDasNoticias:
+    """
+    A partir de 01/09/2026 a IA LÊ as notícias, não só as manchetes. Medido no mesmo
+    conjunto de 10, o salto e o motivo dele:
+
+      antes:  "produção de cobre no Chile registrou queda de 9,4% em julho"
+      depois: "recuou 9,4% YoY em julho, atingindo 403.424 toneladas, impactada por
+               tempestades severas no norte do país e paradas para manutenção"
+
+    Numero e causa só existem no corpo. O texto vem do cache que o clipping ja encheu
+    (`clipping_bodies`), entao nao custa raspagem nenhuma — so tokens, e poucos: 3.411
+    num clipping tipico de 7 noticias, contra 7.586 de UMA manchete classificada.
+    """
+    def test_o_corpo_entra_no_que_a_ia_le(self):
+        linha = blast._linha({"title": "Cobre", "body": "<p>Producao caiu 9,4%</p>"})
+        assert "Producao caiu 9,4%" in linha and "<p>" not in linha
+
+    def test_corpo_muito_longo_e_cortado_em_palavra_inteira(self):
+        n = {"title": "x", "body": "palavra " * 3000}
+        linha = blast._linha(n, corpo_max=100)
+        assert len(linha) < 200 and linha.endswith("…")
+        assert "palavr…" not in linha, "cortou no meio de uma palavra"
+
+    def test_clipping_gordo_encolhe_o_corpo_de_TODAS_em_vez_de_perder_noticia(self):
+        """
+        Noticia que some do prompt nao pode ser escolhida. Quem decide o que e relevante
+        e a IA, nao a ordem em que o analista arrastou os itens — entao o teto aperta
+        todo mundo por igual.
+        """
+        muitas = [{"title": "n%d" % i, "body": "x" * 4000} for i in range(40)]
+        bloco = blast._montar_noticias(muitas)
+        assert len(bloco) <= blast.PROMPT_MAX_CHARS * 1.02
+        for i in range(40):
+            assert ("n%d" % i) in bloco, "a noticia %d sumiu do prompt" % i
+
+    def test_sem_corpo_ainda_manda_a_manchete(self):
+        """Corpo que o cache nao tem nao pode derrubar a notícia do prompt."""
+        bloco = blast._montar_noticias([{"title": "so manchete", "source_name": "Platts"}])
+        assert "so manchete" in bloco and "Platts" in bloco
+
+    def test_html_do_corpo_nao_vaza_para_o_prompt(self):
+        """Tag no prompt e token gasto a toa, e confunde o modelo."""
+        bloco = blast._montar_noticias([{"title": "x", "body": "<p>a</p><table><tr><td>b</td></tr></table>"}])
+        assert "<" not in bloco and "a" in bloco and "b" in bloco

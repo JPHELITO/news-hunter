@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -168,20 +169,34 @@ SYSTEM = (
     "Escreve para investidores institucionais."
 )
 
-INSTRUCAO = """Abaixo está a seleção de notícias do clipping de hoje, já classificada pelo analista
-(setor e take direcional). Escolha as que REALMENTE importam e escreva um destaque de uma linha
-para cada uma, em português.
+INSTRUCAO = """Abaixo está a seleção de notícias do clipping de hoje — as MESMAS que vão para o
+Word e o e-mail — com o setor e o take direcional que o analista carimbou, e o TEXTO de cada uma.
 
-Critérios:
+Sua tarefa: escrever até {n} destaques, em português, para o blast da manhã.
+
+O que faz um destaque BOM:
+- traz NÚMERO quando o texto tem (preço, tonelagem, variação %, prazo); é o que separa um destaque
+  de uma manchete reescrita;
+- pode JUNTAR duas ou três notícias que contam a mesma história (ex.: dois assessments na mesma
+  direção, ou um preço e a razão dele) — se elas se explicam, valem mais juntas que separadas;
+- escolhe pela RELEVÂNCIA para quem investe em Steel & Mining e Pulp & Paper, não pela ordem da
+  lista nem pelo tamanho do texto;
+- vale ler o conjunto: se três notícias apontam para o mesmo lado, isso é o destaque.
+
+Critérios de seleção:
 - no máximo {n} destaques; pode haver menos, e pode haver nenhum;
 - priorize China, Brasil, EUA, Europa, empresas relevantes, preços, regulação, logística, clima,
   geopolítica, oferta, demanda, custos e dinâmica competitiva;
 - notícia recorrente de preço ou utilização só entra se houver variação relevante, movimento forte,
   surpresa, aceleração ou desaceleração material;
 - movimento marginal ou rotineiro NÃO entra;
-- cada destaque é conciso, direto, idealmente uma linha;
+- notícia institucional (evento, nomeação, estudo, prêmio) NÃO entra.
+
+Como escrever:
+- uma frase por destaque, densa, do tamanho de uma linha e meia no máximo;
 - evite linguagem determinística: prefira "pode" a "deve";
-- cotações como USD XX, BRL XX, EUR XX; tonelada como USD XX/ton; comparações como YoY, QoQ;
+- NÃO invente número que não esteja no texto, e não arredonde a ponto de mudar o sentido;
+- cotações como USD XX, BRL XX, EUR XX; tonelada como USD XX/t; comparações como YoY, QoQ, WoW;
 - não explique seu raciocínio nem liste o que descartou;
 - NÃO coloque marcador, numeração, ponto e vírgula ou ponto final: só a frase.
 
@@ -241,15 +256,59 @@ def _chamar(cfg: dict, prompt: str):
     return destaques or None
 
 
-def _linha(n: dict) -> str:
-    """Uma notícia como a IA a enxerga: manchete, fonte, setor, take e corpo se houver."""
+# Quanto de cada notícia vai para a IA. Medido em 2026-09-01: os corpos guardados em
+# `clipping_bodies` têm 600 a 3.000 caracteres, então 2.500 pega a matéria quase inteira na
+# maioria e o começo (onde moram o lead e os números) no resto. O TETO TOTAL existe para um
+# clipping gordo não virar um prompt de 40 mil tokens sem ninguém perceber: 60 mil caracteres
+# são ~15 mil tokens, ou seja, o custo de duas manchetes classificadas. Barato continua barato.
+CORPO_MAX_CHARS  = int(os.environ.get("BLAST_CORPO_MAX", "2500"))
+PROMPT_MAX_CHARS = int(os.environ.get("BLAST_PROMPT_MAX", "60000"))
+
+
+def _limpar(txt: str) -> str:
+    """HTML do corpo -> texto corrido, sem tag e sem espaço duplicado."""
+    if not txt:
+        return ""
+    try:
+        from .html_utils import plain_text
+        txt = plain_text(txt)
+    except Exception:
+        txt = re.sub(r"<[^>]+>", " ", txt)
+    return re.sub(r"[ \t\r\n\f\v]+", " ", txt).strip()
+
+
+def _linha(n: dict, corpo_max: int = CORPO_MAX_CHARS) -> str:
+    """Uma notícia como a IA a enxerga: manchete, fonte, setor, take e o TEXTO dela."""
     take = {"+": "positivo", "-": "negativo", "=": "neutro"}.get(n.get("take"), "sem take")
-    partes = [f"[{n.get('sector') or 'NR'} | {take} | {n.get('source_name') or '?'}] "
-              f"{n.get('title') or ''}"]
-    corpo = (n.get("body") or "").strip()
-    if corpo:
-        partes.append(f"    resumo: {corpo[:600]}")
-    return "\n".join(partes)
+    cab = (f"[{n.get('sector') or 'NR'} | take {take} | {n.get('source_name') or '?'}] "
+           f"{n.get('title') or ''}")
+    corpo = _limpar(n.get("body") or "")
+    if not corpo:
+        return cab
+    if len(corpo) > corpo_max:
+        corpo = corpo[:corpo_max].rsplit(" ", 1)[0] + "…"
+    return cab + "\n    " + corpo
+
+
+def _montar_noticias(noticias: list) -> str:
+    """
+    O bloco de notícias do prompt, respeitando o teto total.
+
+    Encolhe o corpo de TODAS por igual em vez de cortar as últimas fora: uma notícia que
+    some do prompt não pode ser escolhida, e quem decide o que é relevante é a IA — não a
+    ordem em que o analista arrastou os itens.
+    """
+    corpo_max = CORPO_MAX_CHARS
+    while True:
+        bloco = "\n".join(_linha(x, corpo_max) for x in noticias)
+        if len(bloco) <= PROMPT_MAX_CHARS or corpo_max <= 300:
+            if len(bloco) > PROMPT_MAX_CHARS:
+                log.warning("blast: %d notícias estouram o teto mesmo com corpo curto — "
+                            "vou mandar %d caracteres", len(noticias), len(bloco))
+            return bloco
+        corpo_max = int(corpo_max * 0.7)
+        log.info("blast: prompt grande (%d chars) — encolhendo o corpo p/ %d por notícia",
+                 len(bloco), corpo_max)
 
 
 def highlights(noticias: list, n: int = 3) -> dict:
@@ -261,7 +320,7 @@ def highlights(noticias: list, n: int = 3) -> dict:
     """
     if not noticias:
         return {"destaques": [], "provedor": None, "erro": "nenhuma notícia selecionada"}
-    prompt = INSTRUCAO.format(n=n, noticias="\n".join(_linha(x) for x in noticias))
+    prompt = INSTRUCAO.format(n=n, noticias=_montar_noticias(noticias))
     erro = "nenhum provedor configurado"
     for cfg in escolher_provedores():
         log.info("blast: pedindo %d destaques a %s (folga %.0f%%)",

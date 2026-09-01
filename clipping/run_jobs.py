@@ -106,6 +106,34 @@ def patch_job(job_id: str, fields: dict) -> None:
         raise RuntimeError(f"patch {job_id} -> {r.status_code} {r.text[:200]}")
 
 
+def _bodies_por_url(urls: list) -> dict:
+    """{url: corpo} do cache do clipping. Falha aqui NUNCA derruba o blast — sem corpo ele
+    ainda sai, só com destaques mais pobres, então o erro vira aviso e a vida segue."""
+    urls = [u for u in urls if u]
+    if not urls:
+        return {}
+    url, key = _env()
+    out = {}
+    for i in range(0, len(urls), 40):           # a URL vai na query string; lote p/ não estourar
+        lote = urls[i:i + 40]
+        lista = ",".join('"' + u.replace('"', '') + '"' for u in lote)
+        # ⚠️ o escape fica FORA da f-string: em Python 3.11 barra invertida dentro da
+        # expressão de uma f-string é erro de sintaxe. `safe` preserva as aspas e a
+        # vírgula, que são a gramática do `in.()` do PostgREST.
+        cond = quote(lista, safe='",')
+        try:
+            r = requests.get(f"{url}/rest/v1/clipping_bodies?select=url,body,status"
+                             f"&url=in.({cond})",
+                             headers=_h(key), timeout=30)
+            r.raise_for_status()
+            for row in r.json():
+                if row.get("status") == "ok" and row.get("body"):
+                    out[row["url"]] = row["body"]
+        except Exception as e:
+            log.warning("blast: nao consegui ler os corpos guardados (%s) - sigo sem eles", e)
+    return out
+
+
 def process_blast(job: dict) -> None:
     """
     Job de BLAST: só os 3 destaques, e nada mais.
@@ -129,9 +157,17 @@ def process_blast(job: dict) -> None:
     cfg = dict(job.get("config") or {})
     quantos = int(((cfg.get("blast") or {}).get("n")) or 3)
 
+    # O TEXTO das notícias vem do cache que o clipping já encheu (`clipping_bodies`), e é
+    # de graça: o aquecedor e a geração do Word já rasparam esses corpos. Sem isso a IA
+    # escreveria destaque a partir de manchete, que é o que ela fazia até 01/09/2026 — sem
+    # número, sem conseguir juntar duas notícias que contam a mesma história.
+    # Corpo colado à mão pelo analista (payload) VENCE o cache: é a correção dele.
+    corpos = _bodies_por_url([it.get("url") for it in payload if it.get("url")])
     noticias = [{"title": it.get("title"), "source_name": it.get("source_name"),
                  "sector": it.get("sector"), "take": it.get("take"),
-                 "body": it.get("body")} for it in payload]
+                 "body": it.get("body") or corpos.get(it.get("url"), "")} for it in payload]
+    com_texto = sum(1 for n in noticias if n["body"])
+    log.info("job %s BLAST: %d de %d notícias com texto", jid, com_texto, len(noticias))
     res = highlights(noticias, n=quantos)
     log.info("job %s BLAST: %d destaque(s) por %s%s", jid, len(res["destaques"]),
              res["provedor"] or "ninguem", f" (erro: {res['erro']})" if res["erro"] else "")
