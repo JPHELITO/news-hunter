@@ -56,9 +56,15 @@ PROVIDERS = {
     # p/ dado público, mas é decisão do usuário ATIVAR (fica dormente sem o secret ZAI_API_KEY).
     # json_mode=True: teste ao vivo (2026-08-03) mostrou que em modo livre o GLM às vezes NÃO
     # devolve JSON limpo (falha de parse) → forçamos response_format (o GLM suporta). Modelo via ZAI_MODEL.
+    # timeout 150s (2026-09-01): o GLM é um modelo "pensante" e leva 55-66s por chamada — em cima
+    # dos 60s do timeout padrão, então às vezes entrava e às vezes dava ReadTimeout (foi o que fez o
+    # vigia declará-lo FORA em 01/set, com a chave e a cota perfeitas). Como a Z.AI é o ÚLTIMO degrau
+    # (só é alcançada se Gemini E Mistral falharem), resposta lenta é infinitamente melhor que take
+    # nenhum. O disjuntor por rodada e o TIME_BUDGET_S do llm_shadow seguem limitando o estrago.
     "zai": {"style": "openai", "url": "https://api.z.ai/api/paas/v4/chat/completions",
             "model": os.environ.get("ZAI_MODEL", "glm-4.5-flash"),
-            "key": os.environ.get("ZAI_API_KEY", ""), "throttle": 3.0, "json_mode": True},
+            "key": os.environ.get("ZAI_API_KEY", ""), "throttle": 3.0, "json_mode": True,
+            "timeout": 150},
 }
 # Ordem da cascata (2026-08-06 — REORDENADA por QUALIDADE MEDIDA; ver §"lição" abaixo).
 # PRINCÍPIO CORRETO: a cascata usa o primeiro provedor que RESPONDE, não o melhor — logo a
@@ -313,7 +319,7 @@ def _call_openai_style(p, user_text):
     if cfg.get("json_mode", True):        # alguns hosts (ex.: OpenRouter free) rejeitam response_format
         payload["response_format"] = {"type": "json_object"}
     h = {"Authorization": f"Bearer {cfg['key']}", "Content-Type": "application/json"}
-    r = requests.post(cfg["url"], json=payload, headers=h, timeout=60)
+    r = requests.post(cfg["url"], json=payload, headers=h, timeout=cfg.get("timeout", 60))
     return r, (lambda: r.json()["choices"][0]["message"]["content"])
 
 
@@ -334,7 +340,7 @@ def _call_gemini(p, user_text):
                                         "confidence": {"type": "NUMBER"}},
                                         "required": ["take", "reason", "confidence"]}}}
     h = {"x-goog-api-key": cfg["key"], "Content-Type": "application/json"}   # chave em HEADER
-    r = requests.post(url, json=payload, headers=h, timeout=60)
+    r = requests.post(url, json=payload, headers=h, timeout=cfg.get("timeout", 60))
     return r, (lambda: r.json()["candidates"][0]["content"]["parts"][0]["text"])
 
 

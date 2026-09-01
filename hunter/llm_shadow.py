@@ -29,7 +29,10 @@ TIME_BUDGET_S = int(os.environ.get("LLM_SHADOW_BUDGET_S", "180"))
 CATCHUP = int(os.environ.get("LLM_SHADOW_CATCHUP", "0"))   # 0 = OFF. Drenar o backlog >48h ESTOUROU a cota das IAs grátis
                                                            # (Mistral fora até 30/06 -> sobrou só Cerebras ~300-400/dia) e deixou
                                                            # as notícias NOVAS sem take. Religar (ex.: 4) SÓ com folga de cota.
-DAILY_BUDGET = int(os.environ.get("LLM_DAILY_BUDGET", "350"))   # teto diário de classificações (segurança < capacidade das IAs grátis). SUBIR quando a Mistral voltar (30/06).
+DAILY_BUDGET = int(os.environ.get("LLM_DAILY_BUDGET", "450"))   # teto diário de classificações (segurança < capacidade das IAs grátis).
+                                                                # 350 -> 450 em 2026-09-01: a Mistral VOLTOU a responder (2º degrau vivo de novo, ping OK) e
+                                                                # o pico orgânico medido em 30 dias foi 281/dia (28/ago) = 80% do teto antigo. 450 ainda cabe
+                                                                # na cota grátis do Gemini (RPD 500) com folga p/ as retentativas.
 MAX_ATTEMPTS = 8
 QUEUE_AGE_ALARM_H = 2
 WINDOW_H = 48

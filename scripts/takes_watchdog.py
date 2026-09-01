@@ -42,11 +42,11 @@ except ImportError:
 # ── Limiares (todos ajustáveis por env, p/ calibrar sem mexer em código) ────────
 # "no take" nas fontes CURADAS (Platts+Fastmarkets). Medido 2026-08-06 em 45 dias:
 # gemini 15,5% · gpt-oss 15,8% · mistral 23,5% · glm 35,0%.
-# ⚠️ CALIBRAR: a 1ª leitura (2026-08-07) deu 28,3% com o Gemini sozinho, bem acima dos 15,5%
-# históricos — mas a janela estava CONTAMINADA pelo backfill de 236 artigos do dia anterior,
-# cuja amostra era enviesada p/ "no take". Reconferir numa janela limpa e ajustar
-# TAKES_NO_TAKE_MAX; se o normal do Gemini for mesmo ~28%, este limiar de 35 é frouxo demais.
-NO_TAKE_MAX_PCT = float(os.environ.get("TAKES_NO_TAKE_MAX", "35"))
+# ✅ CALIBRADO 2026-09-01: a leitura de 28,3% em 07/ago era mesmo contaminação do backfill de 236
+# artigos. Em janela LIMPA de 30 dias (828 artigos curados, Gemini fazendo 100%): 15,1% — colado
+# nos 15,5% históricos. Com o normal em ~15%, o limiar de 35 só gritaria com a casa já em chamas
+# (o GLM, o pior modelo medido, dava 35,0%) -> apertado p/ 25, que ainda deixa margem de 10 pontos.
+NO_TAKE_MAX_PCT = float(os.environ.get("TAKES_NO_TAKE_MAX", "25"))
 NO_TAKE_MIN_N   = int(os.environ.get("TAKES_NO_TAKE_MIN_N", "20"))   # amostra mínima p/ julgar
 
 # Modelos por faixa de qualidade (erro efetivo de "no take" indevido, medido 2026-08-06).
