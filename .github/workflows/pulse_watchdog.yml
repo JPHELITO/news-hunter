@@ -1,0 +1,62 @@
+name: Vigia do Market Pulse — fotos presentes e no horário
+# Nasceu do apagão silencioso de 27/08 a 01/09 de 2026: o cron do GitHub passou a disparar
+# em horas arbitrárias (00:16, 02:55, 04:32, 17:14 UTC no lugar de 09:50 e 11:50) e o
+# Market Pulse degradou por CINCO pregões sem nenhum alarme. Duas falhas distintas:
+#   - cortes que não saíram — e silêncio, no Actions, é igual a sucesso;
+#   - fotos tiradas fora de hora e gravadas com o rótulo do corte, uma delas SOBRESCREVENDO
+#     por upsert uma foto boa que já estava no banco.
+# Quem percebeu foi o analista, cinco dias depois. Mesmo enredo do incidente das IAs de
+# agosto — e mesmo remédio: um número olhando todo dia.
+#
+# Alarme: o script sai com código 1 → o job FALHA de propósito → o GitHub manda e-mail ao
+# dono do repo. Sem SMTP, e SEM e-mail quando está tudo bem (anti-spam).
+# Somente leitura no banco; não escreve nada.
+#
+# ⚠️ Este vigia também depende de cron, que é o que quebrou. Ele lê ESTADO, não o instante,
+# então um disparo atrasado ainda conta a verdade — só conta mais tarde. A defesa de
+# primeira linha contra o cron é o scripts/pulse_tick.py, que pega carona na corrente
+# contínua do hunt-loop; este workflow é a segunda camada.
+
+on:
+  schedule:
+    # 13h40 UTC = 10h40 BRT: as duas janelas da manhã já fecharam (a B3 abre 13h UTC),
+    # então tudo o que devia existir já existe. Antes disso o vigia acusaria falta do que
+    # ainda está por vir.
+    - cron: "40 13 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: "Pregões a auditar"
+        required: false
+        default: "7"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pulse-watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Vigia do Market Pulse (falha = e-mail do GitHub)
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+        run: python -m scripts.pulse_watchdog --dias ${{ github.event.inputs.dias || '7' }}

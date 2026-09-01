@@ -240,6 +240,54 @@ def cut_agora() -> str:
     return min(CUTS, key=lambda c: (abs(CUTS[c] - h), -CUTS[c]))
 
 
+# ── Janela em que cada corte pode ser fotografado ─────────────────────────────
+# POR QUE ISTO EXISTE (2026-09-01). A trava anti-look-ahead do pulse_daily era de MÃO
+# ÚNICA: recusava foto tarde demais, e nada impedia foto CEDO demais. Entre 27/08 e
+# 01/09 o cron do GitHub passou a disparar em horas arbitrárias (00:16, 02:55, 17:14,
+# 04:32 UTC) e o estrago foi silencioso, porque `cut_agora()` sempre devolve ALGUM corte:
+# um run às 00:16 UTC mapeia para '07' — a foto sai às 21h BRT da véspera e é gravada com
+# o rótulo "07:00 BRT".
+#
+# E não foi só lixo entrando: como `sessao_hoje()` é UTC−3, o run das 00:16 do dia 27
+# carimbou sessão 26/08 e **sobrescreveu por upsert a foto boa** que tinha sido tirada às
+# 10:19 daquele mesmo dia. Dado certo virou dado errado, sem uma linha de log.
+#
+# Daí a janela ter as DUAS bordas. Antes: o cron dispara 10 min antes do alvo, então 60
+# min de tolerância cobre folgado qualquer adiantamento legítimo. Depois: para os cortes
+# que pontuam, o limite continua sendo a abertura da B3 (a borda que já existia); para a
+# âncora do fechamento, vale até o fim do dia — depois das 21h UTC o pregão acabou e o
+# preço não anda mais, então chegar tarde nela é inofensivo.
+TOLERANCIA_ANTES_MIN = 60
+
+
+def janela(cut: str, agora: datetime | None = None) -> tuple[datetime, datetime]:
+    """(início, fim) em UTC dentro dos quais a foto de `cut` é válida."""
+    if cut not in CUTS:
+        raise ValueError(f"corte inválido: {cut!r} (esperado {list(CUTS)})")
+    agora = agora or datetime.now(timezone.utc)
+    alvo = agora.replace(hour=CUTS[cut], minute=0, second=0, microsecond=0)
+    inicio = alvo - timedelta(minutes=TOLERANCIA_ANTES_MIN)
+    fim = (agora.replace(hour=B3_OPEN_UTC, minute=0, second=0, microsecond=0)
+           if cut in CUTS_SCORE else
+           agora.replace(hour=23, minute=59, second=59, microsecond=0))
+    return inicio, fim
+
+
+def fora_da_janela(cut: str, agora: datetime | None = None) -> str | None:
+    """Motivo pelo qual fotografar `cut` AGORA seria inválido — ou None se está na hora."""
+    agora = agora or datetime.now(timezone.utc)
+    inicio, fim = janela(cut, agora)
+    if agora < inicio:
+        falta = int((inicio - agora).total_seconds() // 60)
+        return (f"são {agora:%H:%M} UTC e a janela do corte {cut} só abre {inicio:%H:%M} "
+                f"(faltam {falta} min): a foto seria de outro momento do dia, e gravá-la "
+                f"com o rótulo {cut} sobrescreveria a foto boa se ela já existir")
+    if agora >= fim:
+        return (f"são {agora:%H:%M} UTC e a janela do corte {cut} fechou {fim:%H:%M}: "
+                f"a foto seria pós-abertura da B3 (look-ahead)")
+    return None
+
+
 def sessao_hoje() -> str:
     """Data do pregão em Brasília (YYYY-MM-DD)."""
     return (datetime.now(timezone.utc) - timedelta(hours=3)).date().isoformat()

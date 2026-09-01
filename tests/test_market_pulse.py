@@ -321,17 +321,31 @@ class TestPainelEApresentacao:
 
 
 # ───────────────────── trava anti-look-ahead (onda 4) ─────────────────────
-class TestTravaPosAbertura:
+class TestTravaDeHorario:
     """
-    Um corte de manhã só pode ser capturado ANTES de a B3 abrir. O Actions atrasa rodadas,
-    e `cut_agora()` devolveria '09' às 13h UTC — gravando com o rótulo das 09:00 uma foto
-    tirada DEPOIS da abertura. Essa linha entraria no treino como se fosse pré-abertura e
-    envenenaria o histórico em silêncio. Perder a rodada do dia é o mal menor.
+    Um corte só pode ser fotografado DENTRO da janela dele. A borda TARDE existe desde o
+    começo: `cut_agora()` devolveria '09' às 13h UTC e gravaria, com o rótulo das 09:00,
+    uma foto tirada depois da abertura da B3 — look-ahead entrando no treino em silêncio.
+
+    A borda CEDO entrou em 2026-09-01, depois de a falta dela custar cinco pregões. Com o
+    cron do GitHub disparando às 00:16 e 02:55 UTC, a foto saía da noite anterior e era
+    gravada como corte da manhã; e como o upsert é por (sessão, corte, símbolo), uma delas
+    APAGOU a foto boa de 26/08 que tinha sido tirada no horário. A âncora das 18h era
+    isenta da trava antiga — foi por essa brecha que, em 01/09 às 17:20 UTC, um run gravou
+    o "fechamento" com a B3 aberta havia quatro horas.
+
+    Perder a rodada do dia é o mal menor. Gravar dado de outro momento do dia não é.
     """
     def _rodar(self, argv, hora_utc):
+        from datetime import datetime, timezone
+
         from hunter import pulse_daily
-        with mock.patch.object(sys, "argv", ["pulse_daily"] + argv),              mock.patch("hunter.pulse_daily.datetime") as dt,              mock.patch("hunter.pulse_daily.pulse_snapshot.capture") as cap,              mock.patch("hunter.pulse_daily.pulse_score.score") as sc,              mock.patch("hunter.pulse_daily.pulse_sina.capture"):
-            dt.now.return_value = mock.Mock(hour=hora_utc, minute=20)
+        # A trava mora em pulse_snapshot.fora_da_janela, então é o relógio DELE que precisa
+        # ser controlado. `now()` devolve um datetime de verdade: a janela faz aritmética
+        # em cima dele (replace/comparação), e um Mock puro não serviria.
+        agora = datetime(2026, 9, 1, hora_utc, 20, tzinfo=timezone.utc)
+        with mock.patch.object(sys, "argv", ["pulse_daily"] + argv),              mock.patch("hunter.pulse_snapshot.datetime") as dt,              mock.patch("hunter.pulse_daily.pulse_snapshot.capture") as cap,              mock.patch("hunter.pulse_daily.pulse_score.score") as sc,              mock.patch("hunter.pulse_daily.pulse_sina.capture"):
+            dt.now.return_value = agora
             rc = pulse_daily.main()
         return rc, cap.called, sc.called
 
@@ -343,14 +357,29 @@ class TestTravaPosAbertura:
         rc, capturou, _ = self._rodar(["--cut", "09"], hora_utc=12)
         assert capturou
 
-    def test_a_ancora_das_18h_nao_e_afetada(self):
-        """A âncora é capturada às 21h UTC, muito depois da abertura — e tem de continuar."""
+    def test_recusa_capturar_de_madrugada(self):
+        """00:16 UTC de 27/08: foto da noite anterior rotulada como corte das 07h."""
+        rc, capturou, pontuou = self._rodar(["--cut", "07"], hora_utc=0)
+        assert rc == 1 and not capturou and not pontuou
+
+    def test_a_ancora_das_18h_captura_no_horario_dela(self):
+        """A âncora é às 21h UTC, muito depois da abertura — e tem de continuar podendo."""
         _, capturou, _ = self._rodar(["--cut", pulse_snapshot.CUT_BASE], hora_utc=21)
         assert capturou
+
+    def test_a_ancora_das_18h_tambem_tem_borda_cedo(self):
+        """01/09 às 17:20 UTC: 'fechamento' com a B3 aberta. Era a brecha da trava antiga."""
+        rc, capturou, _ = self._rodar(["--cut", pulse_snapshot.CUT_BASE], hora_utc=17)
+        assert rc == 1 and not capturou
 
     def test_repontuar_sem_capturar_continua_permitido(self):
         rc, capturou, pontuou = self._rodar(["--cut", "09", "--skip-capture"], hora_utc=13)
         assert not capturou and pontuou
+
+    def test_forcar_horario_e_a_valvula_de_escape_consciente(self):
+        """Existe saída manual — mas ela é explícita, não um efeito colateral."""
+        _, capturou, _ = self._rodar(["--cut", "07", "--forcar-horario"], hora_utc=0)
+        assert capturou
 
 
 # ───────────────── curadoria de drivers (conserto de 2026-08-26) ─────────────────
@@ -405,3 +434,127 @@ class TestDriversCurados:
         """Empresa sem entrada no mapa cairia no comportamento antigo, sem ninguém notar."""
         for emp in pulse_snapshot.COMPANIES:
             assert emp in pulse_snapshot.DRIVERS_POR_EMPRESA, f"{emp} sem curadoria"
+
+
+# ─────────────── janela de captura: as duas bordas (2026-09-01) ───────────────
+class TestJanelaDeCaptura:
+    """
+    Estes casos são HISTÓRIA, não hipótese: cada horário abaixo é um disparo real do
+    cron do GitHub entre 24/08 e 01/09 de 2026. Nesse período o Actions passou a soltar
+    os crons em horas arbitrárias, e a trava antiga — que só olhava o lado TARDE — deixou
+    passar foto tirada de madrugada com o rótulo do corte da manhã. Como a gravação é
+    upsert por (sessão, corte, símbolo), uma delas apagou uma foto boa.
+
+    Se um destes começar a falhar, não "conserte" o teste: a janela é o que impede o
+    histórico de treino de ser reescrito com dado de outro momento do dia.
+    """
+    @staticmethod
+    def _t(h, m=0):
+        from datetime import datetime, timezone
+        return datetime(2026, 9, 1, h, m, tzinfo=timezone.utc)
+
+    @pytest.mark.parametrize("hora,minuto,cut", [
+        (9, 50, "07"),    # o cron combinado, 10 min antes do alvo
+        (10, 19, "07"),   # 26/08, dia saudável
+        (12, 0, "09"),    # 25/08, dia saudável
+        (12, 47, "09"),   # 26/08, atraso benigno — ainda pré-abertura
+        (20, 50, "18"),   # cron da âncora
+        (23, 4, "18"),    # 28/08: tarde para a âncora é inofensivo, o pregão já fechou
+    ])
+    def test_aceita_o_que_e_legitimo(self, hora, minuto, cut):
+        assert pulse_snapshot.fora_da_janela(cut, self._t(hora, minuto)) is None
+
+    @pytest.mark.parametrize("hora,minuto,cut,porque", [
+        (0, 16, "07", "27/08: foto das 21h BRT da véspera gravada como corte das 07h"),
+        (2, 55, "07", "29/08: mesma coisa, madrugada"),
+        (0, 17, "07", "27/08: este SOBRESCREVEU a foto boa de 26/08 tirada às 10:19"),
+        (13, 0, "09", "a B3 abre exatamente aqui — daqui em diante é look-ahead"),
+        (14, 18, "09", "01/09: rodada que falhou (e fez bem em falhar)"),
+        (17, 14, "18", "31/08: 'fechamento' com a B3 aberta há 4h"),
+        (17, 20, "18", "01/09: aconteceu AO VIVO enquanto este teste era escrito"),
+    ])
+    def test_recusa_o_que_corrompe(self, hora, minuto, cut, porque):
+        assert pulse_snapshot.fora_da_janela(cut, self._t(hora, minuto)) is not None, porque
+
+    def test_a_janela_dos_cortes_que_pontuam_fecha_na_abertura_da_b3(self):
+        """A borda tarde é a abertura da B3, não uma folga arbitrária."""
+        for cut in pulse_snapshot.CUTS_SCORE:
+            _, fim = pulse_snapshot.janela(cut, self._t(10))
+            assert fim.hour == pulse_snapshot.B3_OPEN_UTC
+
+    def test_a_tolerancia_antes_cobre_o_adiantamento_do_cron(self):
+        """O cron dispara 10 min antes do alvo; a tolerância tem de comportar isso."""
+        assert pulse_snapshot.TOLERANCIA_ANTES_MIN >= 10
+        for cut in pulse_snapshot.CUTS:
+            inicio, _ = pulse_snapshot.janela(cut, self._t(12))
+            alvo_h = pulse_snapshot.CUTS[cut]
+            assert inicio.hour <= alvo_h and (alvo_h - inicio.hour) <= 2
+
+    def test_corte_invalido_explode_em_vez_de_passar_batido(self):
+        with pytest.raises(ValueError):
+            pulse_snapshot.janela("99", self._t(10))
+
+
+# ────────────── gatilho que não depende do cron (2026-09-01) ──────────────
+class TestPulseTick:
+    """
+    O tick é a resposta ao apagão de 27/08–01/09: o cron do GitHub deixou de ser um
+    relógio confiável, então quem passa a perguntar "está na hora e ninguém fotografou?"
+    é a corrente contínua do hunt-loop, de 5 em 5 minutos.
+
+    Duas propriedades importam mais que as outras:
+      - ele pergunta ao BANCO, não a um relógio interno -> é idempotente e recupera
+        janela perdida por atraso;
+      - foto FORA DA JANELA conta como ausente -> a âncora corrompida de 01/09 se conserta
+        sozinha, em vez de atravessar a noite e estragar a manhã seguinte.
+    """
+    @staticmethod
+    def _t(h, m=0):
+        from datetime import datetime, timezone
+        return datetime(2026, 9, 1, h, m, tzinfo=timezone.utc)
+
+    def _pendente(self, agora, ja_no_banco, sessao="2026-09-01"):
+        import scripts.pulse_tick as tick
+        with mock.patch.object(tick, "_ja_fotografado", return_value=ja_no_banco), \
+             mock.patch.object(pulse_snapshot, "sessao_hoje", return_value=sessao):
+            return tick.corte_pendente(agora)
+
+    def test_dispara_quando_a_janela_esta_aberta_e_falta_foto(self):
+        assert self._pendente(self._t(10, 5), False) == "07"
+        assert self._pendente(self._t(12, 30), False) == "09"
+        assert self._pendente(self._t(20, 55), False) == "18"
+
+    def test_nao_dispara_se_a_foto_ja_existe(self):
+        """Idempotência: o tick roda a cada 5 min e não pode disparar em duplicata."""
+        assert self._pendente(self._t(10, 5), True) is None
+
+    def test_nao_dispara_fora_de_janela_nenhuma(self):
+        """00:16 e 14:18 UTC são disparos reais que corromperam ou falharam."""
+        assert self._pendente(self._t(0, 16), False) is None
+        assert self._pendente(self._t(14, 18), False) is None
+
+    def test_nao_dispara_em_fim_de_semana(self):
+        assert self._pendente(self._t(10, 5), False, sessao="2026-08-29") is None
+
+    def test_banco_fora_do_ar_nao_dispara_no_escuro(self):
+        """Sem saber o estado, o silêncio é mais seguro que uma foto potencialmente dupla."""
+        assert self._pendente(self._t(10, 5), None) is None
+
+    def test_foto_fora_da_janela_conta_como_ausente(self):
+        """A âncora de 01/09 gravada às 17:21 com a B3 aberta tem de ser refeita."""
+        import scripts.pulse_tick as tick
+        resposta = {"captured_at": "2026-09-01T17:21:00+00:00"}
+        with mock.patch.object(tick.requests, "get") as g:
+            g.return_value = mock.Mock(json=lambda: [resposta], raise_for_status=lambda: None)
+            with mock.patch.dict("os.environ", {"SUPABASE_URL": "http://x",
+                                                "SUPABASE_SERVICE_KEY": "k"}):
+                assert tick._ja_fotografado("2026-09-01", "18") is False
+
+    def test_foto_dentro_da_janela_conta_como_presente(self):
+        import scripts.pulse_tick as tick
+        resposta = {"captured_at": "2026-09-01T21:00:00+00:00"}
+        with mock.patch.object(tick.requests, "get") as g:
+            g.return_value = mock.Mock(json=lambda: [resposta], raise_for_status=lambda: None)
+            with mock.patch.dict("os.environ", {"SUPABASE_URL": "http://x",
+                                                "SUPABASE_SERVICE_KEY": "k"}):
+                assert tick._ja_fotografado("2026-09-01", "18") is True

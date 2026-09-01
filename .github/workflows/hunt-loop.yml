@@ -68,11 +68,15 @@ jobs:
           # 2026-08-03: reforço grátis/sem-cartão que sucede a Cerebras (paga a partir de 17/ago).
           # Dormente até o secret ZAI_API_KEY existir (chave vazia = provedor pulado no CHAIN — nada quebra).
           ZAI_API_KEY:          ${{ secrets.ZAI_API_KEY }}
+          # Para disparar o pulse_daily.yml (ver o bloco "Market Pulse" dentro do loop).
+          GH_TOKEN:             ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e   # não aborta o loop se uma iteração falhar
           deadline=$(( $(date +%s) + 19800 ))   # 5h30min em segundos
           i=0
           last_sha=""
+          pulse_ultimo_corte=""      # anti-repique do gatilho do Market Pulse
+          pulse_ultimo_em=0
           while [ "$(date +%s)" -lt "$deadline" ]; do
             i=$((i + 1))
             echo "============================================================"
@@ -94,6 +98,33 @@ jobs:
 
             start=$(date +%s)
             python hunt.py || echo "⚠ hunt.py failed at iter $i — continuing"
+
+            # ── Market Pulse: gatilho que NÃO depende do cron do GitHub ──────────────
+            # Entre 27/08 e 01/09 de 2026 o `schedule:` do pulse_daily.yml disparou às
+            # 00:16, 02:55, 04:32 e 17:14 UTC em vez das 09:50/11:50 combinadas. Resultado:
+            # os cortes da manhã de 01/09 não saíram, e as rodadas de madrugada gravaram
+            # foto da noite anterior por cima das boas. Esta corrente aqui é a coisa mais
+            # confiável que roda no repo — então ela passou a ser o relógio do pulse.
+            # O tick só PERGUNTA (janela aberta? foto já existe?) e imprime o corte; quem
+            # executa continua sendo o pulse_daily.yml, na concurrency dele — de dentro
+            # daqui a foto ficaria presa atrás desta corrente de 5h55.
+            python -m scripts.pulse_tick >/tmp/pulse_cut.txt 2>/tmp/pulse_tick.log || true
+            pulse_cut="$(tr -d '[:space:]' < /tmp/pulse_cut.txt)"
+            agora_s=$(date +%s)
+            if [ -n "$pulse_cut" ]                && { [ "$pulse_cut" != "$pulse_ultimo_corte" ] || [ $((agora_s - pulse_ultimo_em)) -gt 900 ]; }; then
+              # O anti-repique existe porque o tick pergunta ao BANCO: entre o disparo e a
+              # foto ficar gravada passam ~1 min, e sem isto duas iterações seguidas
+              # dispariam o mesmo corte. 15 min = tempo de sobra para a rodada acontecer,
+              # e curto o bastante para uma tentativa que falhou ser refeita na janela.
+              cat /tmp/pulse_tick.log
+              echo "▶ Market Pulse: corte $pulse_cut na janela e sem foto — disparando pulse_daily.yml"
+              if gh workflow run pulse_daily.yml --ref ${{ github.ref_name }} -f cut="$pulse_cut"; then
+                pulse_ultimo_corte="$pulse_cut"; pulse_ultimo_em=$agora_s
+              else
+                echo "⚠ dispatch do pulse falhou — cron e próxima iteração seguem tentando"
+              fi
+            fi
+
             elapsed=$(( $(date +%s) - start ))
             sleep_for=$(( 300 - elapsed ))
             if [ "$sleep_for" -lt 30 ]; then sleep_for=30; fi
