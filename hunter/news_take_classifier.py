@@ -710,7 +710,9 @@ def _gate_is_tight(source: str) -> bool:
 # "Rationale" (metodologia de preço) fica de fora — regra do usuário, idêntica ao Platts.
 # (2026-08-03: Fastmarkets entrou a pedido do usuário — "não precisa ter filtro"; Platts
 # já seguia essa regra, mas o classificador ainda vazava algumas exclusões de conteúdo.)
-_ALWAYS_INCLUDE_SOURCES = frozenset({"s&p platts", "fastmarkets"})
+# 2026-09-02: "cvm" = comunicados oficiais das cobertas (fato relevante etc., via Market Watch) —
+# fonte PRIMÁRIA; entra sempre.
+_ALWAYS_INCLUDE_SOURCES = frozenset({"s&p platts", "fastmarkets", "cvm"})
 
 
 def _is_curated_source(source: str) -> bool:

@@ -26,6 +26,11 @@ SOURCE_FILTER_RULES: dict[str, dict] = {
         "pass_through": True,
         "title_exclude": ["rationale", "pricing rational"],
     },
+    # Comunicados oficiais das cobertas (mw_filings → hunter/cvm_filings.py): fonte primária,
+    # já filtrada por categoria lá na origem (só o newsworthy). Aceita tudo.
+    "CVM": {
+        "pass_through": True,
+    },
 }
 
 # ── Blocklist — títulos com essas palavras são descartados independente de keywords ──

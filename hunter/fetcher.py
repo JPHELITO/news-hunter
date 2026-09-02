@@ -216,6 +216,16 @@ def fetch_all() -> list[RawArticle]:
     except Exception as e:
         log.warning("Sitemap scrapers falharam: %s", e)
 
+    # 1d) Comunicados oficiais (fatos relevantes etc.) via mw_filings do Market Watch —
+    #     fonte primária, curada; [] se a tabela não existir. Nunca derruba o hunt.
+    try:
+        from .cvm_filings import collect_cvm_filings
+        cvm_items = collect_cvm_filings()
+        all_articles.extend(cvm_items)
+        log.info("CVM filings: %d artigos", len(cvm_items))
+    except Exception as e:
+        log.warning("CVM filings falhou: %s", e)
+
     # 2) Feeds RSS
     with ThreadPoolExecutor(max_workers=6) as ex:
         futures = {ex.submit(_fetch_one, src): src for src in SOURCES}
