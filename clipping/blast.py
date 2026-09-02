@@ -196,7 +196,7 @@ Como escrever:
 - uma frase por destaque, densa, do tamanho de uma linha e meia no máximo;
 - evite linguagem determinística: prefira "pode" a "deve";
 - NÃO invente número que não esteja no texto, e não arredonde a ponto de mudar o sentido;
-- cotações como USD XX, BRL XX, EUR XX; tonelada como USD XX/t; comparações como YoY, QoQ, WoW;
+- cotações como USD XX, BRL XX, EUR XX; tonelada SEMPRE como USD XX/ton (nunca /t); comparações como YoY, QoQ, WoW;
 - não explique seu raciocínio nem liste o que descartou;
 - NÃO coloque marcador, numeração, ponto e vírgula ou ponto final: só a frase.
 
