@@ -66,6 +66,44 @@ def _extract(html: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", b).strip()
 
 
+# ── documentos da CVM (comunicados oficiais) ─────────────────────────────────
+# O link que o Market Watch grava (frmExibirArquivoIPEExterno.aspx?ID=<protocolo>) é um
+# VISUALIZADOR: o HTML não tem o texto — o PDF chega por um WebMethod em JSON (base64), sem
+# captcha (medido em 2026-09-02). Trafilatura nesse HTML devolveria só boilerplate e a IA
+# leria o título seco. Aqui o PDF vira texto (PyMuPDF, 3 primeiras páginas).
+_CVM_EXIBIR_PDF = "https://www.rad.cvm.gov.br/ENETWEB/frmExibirArquivoIPEExterno.aspx/ExibirPDF"
+_CVM_PROTO_RE = re.compile(r"[?&]ID=(\d+)")
+
+
+def _fetch_cvm_body(url: str, timeout: int = 60):
+    m = _CVM_PROTO_RE.search(url or "")
+    if not m:
+        return None, {"ok": False, "method": None, "chars": 0, "reason": "cvm: sem protocolo na url"}
+    try:
+        import base64
+        import json
+        import fitz  # PyMuPDF
+        r = requests.post(_CVM_EXIBIR_PDF, headers={**UA, "Content-Type": "application/json; charset=utf-8",
+                                                    "Accept": "application/json"},
+                          data=json.dumps({"codigoInstituicao": "2", "numeroProtocolo": m.group(1),
+                                           "token": "", "versaoCaptcha": ""}), timeout=timeout)
+        d = (r.json() or {}).get("d") if r.ok else None
+        if not isinstance(d, str) or len(d) < 200:
+            return None, {"ok": False, "method": "cvm_pdf", "chars": 0, "reason": "cvm: sem pdf (captcha?)"}
+        pdf = base64.b64decode(d)
+        if not pdf.startswith(b"%PDF"):
+            return None, {"ok": False, "method": "cvm_pdf", "chars": 0, "reason": "cvm: resposta não é pdf"}
+        doc = fitz.open(stream=pdf, filetype="pdf")
+        text = "\n".join(doc[i].get_text() for i in range(min(3, doc.page_count)))
+        body = re.sub(r"[ \t]+", " ", text)
+        body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    except Exception as e:  # noqa: BLE001
+        return None, {"ok": False, "method": "cvm_pdf", "chars": 0, "reason": f"cvm: {e}"}
+    if len(body) < MIN_VALID:
+        return None, {"ok": False, "method": "cvm_pdf", "chars": len(body), "reason": "cvm: pdf sem texto (imagem?)"}
+    return body[:MAX_CHARS], {"ok": True, "method": "cvm_pdf", "chars": len(body), "reason": "ok"}
+
+
 def fetch_body(url: str, source: str | None = None, timeout: int = 12):
     """Retorna (body|None, meta). meta = {ok, method, chars, reason}.
 
@@ -74,6 +112,8 @@ def fetch_body(url: str, source: str | None = None, timeout: int = 12):
     """
     if not url:
         return None, {"ok": False, "method": None, "chars": 0, "reason": "sem url"}
+    if "rad.cvm.gov.br" in url:
+        return _fetch_cvm_body(url)
     if source in NO_BODY_SOURCES:
         return None, {"ok": False, "method": None, "chars": 0, "reason": "fonte sem corpo (compartilhada)"}
     if is_paywalled(url):

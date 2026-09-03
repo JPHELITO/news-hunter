@@ -79,6 +79,14 @@ def main() -> None:
     for art in articles_filtered:
         classify_article_dict(art)
     log.info("Classificação básica aplicada em %d artigos", len(articles_filtered))
+    # Comunicados da CVM: o setor é o da EMPRESA (a keyword não vê "Comitê de Auditoria").
+    try:
+        from hunter.cvm_filings import apply_cvm_sector
+        n_cvm = apply_cvm_sector(articles_filtered)
+        if n_cvm:
+            log.info("CVM filings: setor da empresa aplicado em %d comunicado(s)", n_cvm)
+    except Exception as e:
+        log.warning("CVM filings: setor não aplicado: %s", e)
 
     # Classifica take/region/topics/covered_companies (novo classificador de mercado)
     from hunter.news_take_classifier import classify_article_take
