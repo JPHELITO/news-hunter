@@ -25,7 +25,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from clipping import blast   # noqa: E402
+from clipping import blast          # noqa: E402
+from clipping import run_jobs       # noqa: E402
 
 
 CHAVES = {
@@ -130,6 +131,76 @@ class TestDestaques:
         assert "sem take" in blast._linha({"title": "x", "take": "no take"})
 
 
+class TestDestaquesMarcadosAMao:
+    """
+    2026-09-03 — o analista marca com ★ (na tela do clipping) as notícias que ele QUER nos
+    destaques, no máximo 3 e sem mínimo. O que ele marcou a IA é obrigada a escrever; ela
+    escolhe só as vagas que sobram. Marcar zero é o comportamento antigo, intacto.
+
+    O risco que estes testes travam é o silencioso: a ★ some no caminho (front → payload →
+    job → prompt) e o blast sai igualzinho ao de antes, sem erro nenhum, com o analista
+    achando que escolheu.
+    """
+    def _prompt(self, noticias, n=3):
+        capturado = {}
+
+        def falso(cfg, prompt):
+            capturado["p"] = prompt
+            return ["x"]
+
+        with mock.patch.dict("os.environ", CHAVES, clear=False),              mock.patch.object(blast, "_carga_hoje", return_value=ZERADO),              mock.patch.object(blast, "_chamar", side_effect=falso):
+            blast.highlights(noticias, n=n)
+        return capturado["p"]
+
+    def test_sem_marcacao_o_prompt_e_o_de_sempre(self):
+        p = self._prompt([{"title": "a"}, {"title": "b"}])
+        assert "★" not in p
+        assert "no máximo 3 destaques; pode haver menos" in p
+
+    def test_marcada_vira_obrigatoria_e_a_ia_escolhe_o_resto(self):
+        p = self._prompt([{"title": "a", "pin": 1}, {"title": "b"}, {"title": "c"}])
+        assert "★1 " in p and "OBRIGATÓRIAS" in p
+        assert "o outro destaque" not in p          # sobram 2, não 1
+        assert "os outros 2 destaques você escolhe" in p
+
+    def test_tres_marcadas_nao_deixam_vaga_livre(self):
+        p = self._prompt([{"title": "a", "pin": 1}, {"title": "b", "pin": 2},
+                          {"title": "c", "pin": 3}, {"title": "d"}])
+        assert "exatamente 3 destaques, um para cada ★" in p
+        assert "não escolha nenhuma outra notícia" in p
+
+    def test_a_ordem_do_analista_e_a_ordem_do_blast(self):
+        """Ele numera clicando; o número tem de chegar ao prompt como ele clicou."""
+        p = self._prompt([{"title": "primeira", "pin": 2}, {"title": "segunda", "pin": 1}])
+        assert "★2 [NR | take sem take | ?] primeira" in p
+        assert "★1 [NR | take sem take | ?] segunda" in p
+
+    def test_marcacao_torta_do_payload_e_renumerada_1_2_3(self):
+        """O payload vem do navegador. ★7 e ★9 viram ★1 e ★2 — não um pedido de 9 destaques."""
+        ns = [{"title": "a", "pin": 9}, {"title": "b", "pin": 7}]
+        p = self._prompt(ns)
+        assert "★1 [NR | take sem take | ?] b" in p and "★2 [NR | take sem take | ?] a" in p
+        assert "★7" not in p and "★9" not in p
+
+    def test_mais_marcadas_que_o_teto_nao_pedem_o_impossivel(self):
+        """5 ★ num teto de 3: as 2 últimas perdem a ★ em vez de a IA escolher qual ignorar."""
+        ns = [{"title": "n%d" % i, "pin": i + 1} for i in range(5)]
+        p = self._prompt(ns)
+        assert "★3" in p and "★4" not in p and "★5" not in p
+        assert "exatamente 3 destaques" in p
+        for i in range(5):
+            assert ("n%d" % i) in p, "notícia sumiu do prompt ao perder a ★"
+
+    def test_highlights_nao_mexe_no_dicionario_de_quem_chamou(self):
+        ns = [{"title": "a", "pin": 9}]
+        self._prompt(ns)
+        assert ns[0]["pin"] == 9
+
+    def test_pin_tolera_texto_e_booleano(self):
+        assert blast._pin({"pin": "2"}) == 2 and blast._pin({"pin": True}) == 1
+        assert blast._pin({"pin": None}) == 0 and blast._pin({"pin": "x"}) == 0
+
+
 class TestCorpoDasNoticias:
     """
     A partir de 01/09/2026 a IA LÊ as notícias, não só as manchetes. Medido no mesmo
@@ -174,3 +245,25 @@ class TestCorpoDasNoticias:
         """Tag no prompt e token gasto a toa, e confunde o modelo."""
         bloco = blast._montar_noticias([{"title": "x", "body": "<p>a</p><table><tr><td>b</td></tr></table>"}])
         assert "<" not in bloco and "a" in bloco and "b" in bloco
+
+
+class TestOPinChegaAoMotor:
+    """
+    O caminho todo da ★: navegador → payload do job → prompt. É aqui que ela sumia de
+    graça — `process_blast` monta um dicionário NOVO por notícia, e campo que não for
+    copiado à mão morre em silêncio, sem erro e sem log.
+    """
+    def test_process_blast_repassa_a_estrela_do_payload(self):
+        visto = {}
+
+        def falso(noticias, n=3):
+            visto["noticias"] = noticias
+            return {"destaques": ["d"], "provedor": "teste", "erro": None}
+
+        job = {"id": "j1", "config": {"blast": {"only": True, "n": 3}},
+               "payload": [{"url": "u1", "title": "a", "pin": 2},
+                           {"url": "u2", "title": "b"}]}
+        with mock.patch.object(blast, "highlights", side_effect=falso),              mock.patch.object(run_jobs, "_bodies_por_url", return_value={}),              mock.patch.object(run_jobs, "read_job", return_value=job),              mock.patch.object(run_jobs, "patch_job") as pj:
+            run_jobs.process_blast(job)
+        assert [n.get("pin") for n in visto["noticias"]] == [2, None]
+        assert pj.call_args[0][1]["config"]["blast"]["destaques"] == ["d"]
