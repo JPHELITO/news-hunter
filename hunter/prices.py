@@ -641,7 +641,11 @@ def _update_quotes_daily_legacy(stale: list[tuple[str, str]], url: str, key: str
 # (volume 0 e OHLC repetido), então o filtro de `quote_history` descartava quase tudo e
 # sobrava série velha. Sem proxy: o 62% da aba Market vem do Trading Economics (IRON_ORE_62)
 # e o 61% agora ACUMULA o assessment do dia, como as demais Platts.
-COMMODITY_HISTORY_YF = {"COPPER": "HG=F", "GOLD": "GC=F"}
+COMMODITY_HISTORY_YF = {"COPPER": "HG=F", "GOLD": "GC=F",
+                        # entraram no carrossel em 2026-09-03 (grupo Base & Precious Metals
+                        # e Freight + HCC); sem isto os cartoes ficariam sem grafico e sem as
+                        # quatro janelas. Medido: BZ=F 2.514 fechamentos, ALI=F 2.476.
+                        "BRENT": "BZ=F", "ALUMINUM": "ALI=F"}
 DAILY_MAX_ATRASO_D = 10   # série de fonte externa mais velha que isto = feed parado, avisa
 
 # Teto de pontos em `commodities.daily` — a série que a aba Market desenha (~5 anos).
@@ -1281,6 +1285,10 @@ def update_sina_commodities() -> int:
                         nome)
         rows.append({"code": code, "name": label, "unit": unidade,
                      "price": d["price"], "change_pct": chg,
+                     # sem data a linha nunca entrava na acumulacao diaria e a serie ficava
+                     # vazia p/ sempre; o niquel nao tem historico gratis em lugar nenhum,
+                     # entao a unica forma de ter grafico dele e acumular a partir de hoje
+                     "assessed_at": _now_iso()[:10],
                      "updated_at": _now_iso()})
     if not rows:
         return 0
