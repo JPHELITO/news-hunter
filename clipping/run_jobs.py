@@ -163,11 +163,15 @@ def process_blast(job: dict) -> None:
     # número, sem conseguir juntar duas notícias que contam a mesma história.
     # Corpo colado à mão pelo analista (payload) VENCE o cache: é a correção dele.
     corpos = _bodies_por_url([it.get("url") for it in payload if it.get("url")])
+    # `pin` = a ★ que o analista marcou na tela (1, 2 ou 3). Vem no payload como qualquer
+    # outro campo — jsonb aceita chave nova, então não houve migração de SQL. Sem ela a
+    # escolha do analista morreria aqui, no caminho entre o navegador e o prompt.
     noticias = [{"title": it.get("title"), "source_name": it.get("source_name"),
-                 "sector": it.get("sector"), "take": it.get("take"),
+                 "sector": it.get("sector"), "take": it.get("take"), "pin": it.get("pin"),
                  "body": it.get("body") or corpos.get(it.get("url"), "")} for it in payload]
     com_texto = sum(1 for n in noticias if n["body"])
-    log.info("job %s BLAST: %d de %d notícias com texto", jid, com_texto, len(noticias))
+    log.info("job %s BLAST: %d de %d notícias com texto, %d marcada(s) com ★",
+             jid, com_texto, len(noticias), sum(1 for n in noticias if n.get("pin")))
     res = highlights(noticias, n=quantos)
     log.info("job %s BLAST: %d destaque(s) por %s%s", jid, len(res["destaques"]),
              res["provedor"] or "ninguem", f" (erro: {res['erro']})" if res["erro"] else "")

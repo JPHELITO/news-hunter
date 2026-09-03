@@ -21,6 +21,14 @@ princípio é o oposto do que quebrou a cadeia dos takes em agosto: lá a cascat
 primeiro que RESPONDIA, e o melhor modelo ficava intocado no fim da fila. Aqui a ordem é
 recalculada a cada chamada, a partir do consumo do dia.
 
+QUEM ESCOLHE (2026-09-03)
+-------------------------
+O julgamento passou a ser DIVIDIDO. Na tela do clipping o analista marca com ★ até 3 notícias
+que ele quer ver nos destaques; essas a IA é obrigada a escrever, na ordem em que ele marcou,
+e ela escolhe apenas as vagas que sobrarem. Marcar zero é o comportamento antigo — ela escolhe
+as três. É o melhor dos dois: quando ele já sabe qual é a notícia do dia, não precisa torcer
+para o modelo concordar; quando não sabe, o modelo continua lendo tudo e decidindo.
+
 FORMATO
 -------
 A IA devolve JSON com as frases, e ponto. A pontuação do blast (o "-" na frente, o ";" no
@@ -169,11 +177,21 @@ SYSTEM = (
     "Escreve para investidores institucionais."
 )
 
+# Bloco que só existe quando o analista marcou alguma notícia (★) na tela do clipping.
+# A escolha dele NÃO é sugestão: a IA escreve aquela notícia e escolhe apenas o que sobrar.
+MARCADAS = """
+O analista JÁ ESCOLHEU {k} — são as marcadas com ★ na lista abaixo, e elas são OBRIGATÓRIAS:
+- escreva um destaque para cada ★, na ordem do número (★1 primeiro, depois ★2, depois ★3);
+- nenhuma ★ fica de fora, e duas ★ nunca viram o mesmo destaque (uma ★ pode, sim, incorporar
+  uma notícia SEM ★ que conte a mesma história);
+- {resto}
+"""
+
 INSTRUCAO = """Abaixo está a seleção de notícias do clipping de hoje — as MESMAS que vão para o
 Word e o e-mail — com o setor e o take direcional que o analista carimbou, e o TEXTO de cada uma.
 
 Sua tarefa: escrever até {n} destaques, em português, para o blast da manhã.
-
+{marcadas}
 O que faz um destaque BOM:
 - traz NÚMERO quando o texto tem (preço, tonelagem, variação %, prazo); é o que separa um destaque
   de uma manchete reescrita;
@@ -184,7 +202,7 @@ O que faz um destaque BOM:
 - vale ler o conjunto: se três notícias apontam para o mesmo lado, isso é o destaque.
 
 Critérios de seleção:
-- no máximo {n} destaques; pode haver menos, e pode haver nenhum;
+{limite}
 - priorize China, Brasil, EUA, Europa, empresas relevantes, preços, regulação, logística, clima,
   geopolítica, oferta, demanda, custos e dinâmica competitiva;
 - notícia recorrente de preço ou utilização só entra se houver variação relevante, movimento forte,
@@ -277,10 +295,20 @@ def _limpar(txt: str) -> str:
     return re.sub(r"[ \t\r\n\f\v]+", " ", txt).strip()
 
 
+def _pin(n: dict) -> int:
+    """A ordem que o analista deu a esta notícia no ★ (0 = não marcada). Tolera '2' e True."""
+    try:
+        return max(0, int(n.get("pin") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _linha(n: dict, corpo_max: int = CORPO_MAX_CHARS) -> str:
     """Uma notícia como a IA a enxerga: manchete, fonte, setor, take e o TEXTO dela."""
     take = {"+": "positivo", "-": "negativo", "=": "neutro"}.get(n.get("take"), "sem take")
-    cab = (f"[{n.get('sector') or 'NR'} | take {take} | {n.get('source_name') or '?'}] "
+    pin = _pin(n)
+    cab = ((f"★{pin} " if pin else "")
+           + f"[{n.get('sector') or 'NR'} | take {take} | {n.get('source_name') or '?'}] "
            f"{n.get('title') or ''}")
     corpo = _limpar(n.get("body") or "")
     if not corpo:
@@ -311,20 +339,61 @@ def _montar_noticias(noticias: list) -> str:
                  len(bloco), corpo_max)
 
 
+def _normalizar_pins(noticias: list, n: int) -> int:
+    """
+    Renumera as ★ para 1..k e joga fora o excedente. Devolve k.
+
+    A tela já limita a 3, mas o payload vem do navegador: se chegasse ★5 (rascunho antigo,
+    duas abas abertas, alguém mexendo no JSON), o prompt pediria à IA cinco destaques
+    obrigatórios num teto de três — e ela obedeceria a um, calada, sem ninguém saber qual.
+    """
+    marcadas = sorted((x for x in noticias if _pin(x)), key=_pin)
+    for i, x in enumerate(marcadas):
+        x["pin"] = i + 1 if i < n else 0
+    return min(len(marcadas), n)
+
+
+def _regras_da_escolha(k: int, n: int) -> tuple:
+    """(bloco das ★, linha do limite) — o combinado muda conforme quantas o analista marcou."""
+    if k <= 0:
+        return "", f"- no máximo {n} destaques; pode haver menos, e pode haver nenhum;"
+    if k >= n:
+        return (MARCADAS.format(k=(f"{k} delas" if k > 1 else "uma delas"),
+                                resto="não escolha nenhuma outra notícia: os destaques são "
+                                      "exatamente as ★."),
+                f"- exatamente {n} destaques, um para cada ★;")
+    r = n - k
+    resto = (f"o outro destaque você escolhe entre as notícias SEM ★, pelos critérios abaixo, "
+             f"e ele vem depois das ★;" if r == 1 else
+             f"os outros {r} destaques você escolhe entre as notícias SEM ★, pelos critérios "
+             f"abaixo, e eles vêm depois das ★;")
+    limite = (f"- {k} destaque{'s' if k > 1 else ''} obrigatório{'s' if k > 1 else ''} das ★ "
+              f"mais até {r} escolhido{'s' if r > 1 else ''} por você — no máximo {n} no total;")
+    return MARCADAS.format(k=(f"{k} delas" if k > 1 else "uma delas"), resto=resto), limite
+
+
 def highlights(noticias: list, n: int = 3) -> dict:
     """
     Escreve os destaques. Devolve {'destaques': [...], 'provedor': 'nome', 'erro': None}.
+
+    As notícias que o analista marcou com ★ na tela do clipping são OBRIGATÓRIAS: a IA escreve
+    uma frase para cada e só escolhe o que sobrar (nenhuma ★ = ela escolhe as três, como antes).
+    A ordem das ★ é a ordem em que ele clicou, e é a ordem no blast.
 
     Nunca levanta exceção: o blast tem de sair mesmo sem IA — sem destaque ele ainda entrega
     preços e manchetes, que é a maior parte do valor. Seção vazia é prevista no formato.
     """
     if not noticias:
         return {"destaques": [], "provedor": None, "erro": "nenhuma notícia selecionada"}
-    prompt = INSTRUCAO.format(n=n, noticias=_montar_noticias(noticias))
+    noticias = [dict(x) for x in noticias]          # não mexe no dicionário de quem chamou
+    k = _normalizar_pins(noticias, n)
+    marcadas, limite = _regras_da_escolha(k, n)
+    prompt = INSTRUCAO.format(n=n, marcadas=marcadas, limite=limite,
+                              noticias=_montar_noticias(noticias))
     erro = "nenhum provedor configurado"
     for cfg in escolher_provedores():
-        log.info("blast: pedindo %d destaques a %s (folga %.0f%%)",
-                 n, cfg["rotulo"], cfg["folga"] * 100)
+        log.info("blast: pedindo %d destaques a %s (folga %.0f%%, %d marcada(s) pelo analista)",
+                 n, cfg["rotulo"], cfg["folga"] * 100, k)
         try:
             got = _chamar(cfg, prompt)
         except Exception as e:
