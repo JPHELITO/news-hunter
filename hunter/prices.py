@@ -648,6 +648,17 @@ COMMODITY_HISTORY_YF = {"COPPER": "HG=F", "GOLD": "GC=F",
                         "BRENT": "BZ=F", "ALUMINUM": "ALI=F"}
 DAILY_MAX_ATRASO_D = 10   # série de fonte externa mais velha que isto = feed parado, avisa
 
+# Commodities cujo preço é TICK AO VIVO (não assessment publicado 1×/dia). Nelas o valor
+# muda o dia inteiro, então o ponto que a curva guarda para o dia tem de ser gravado DEPOIS
+# do fechamento — senão fica valendo o preço da madrugada, que é quando o primeiro ciclo do
+# hunt carimba `assessed_at = hoje`. Nas do Platts/Fastmarkets isso não existe: o assessment
+# é o número do dia, não oscila, e a primeira gravação já é a definitiva.
+LIVE_TICK_CODES = {"COPPER", "GOLD", "NICKEL", "BRENT", "ALUMINUM", "IRON_ORE_SGX"}
+# 21:00 UTC é depois do fechamento de TODOS eles: LME (~18:00 UTC), COMEX no pregão
+# (~18:30 UTC), ICE Brent (~18:30 UTC). Uma hora só, e folgada, em vez de uma tabela de
+# horários por bolsa que envelheceria com o horário de verão de cada praça.
+SPARK_CLOSE_UTC_H = 21
+
 # Teto de pontos em `commodities.daily` — a série que a aba Market desenha (~5 anos).
 # ⚠️ Esta coluna é PÚBLICA: quem tem login lê. Só entram nela números de fonte LIVRE
 # (cobre/ouro do Yahoo, minério 62% do Trading Economics); o assessment PAGO do Platts e da
@@ -1005,7 +1016,7 @@ def update_commodity_spark(max_age_hours: float = 18.0) -> int:
     # 1) triagem barata: quem já está com o pregão vigente na curva nem é lido
     try:
         t = requests.get(f"{url}/rest/v1/commodities"
-                         "?select=code,assessed_at,asof:spark->>asof,ver:spark->>v",
+                         "?select=code,assessed_at,asof:spark->>asof,ver:spark->>v,ph:spark->>ph",
                          headers=h, timeout=20)
         t.raise_for_status()
         triagem = t.json()
@@ -1024,6 +1035,12 @@ def update_commodity_spark(max_age_hours: float = 18.0) -> int:
                 alvo = None
         if (str(row.get("ver")) != str(SPARK_VER) or not row.get("asof")
                 or (alvo and row["asof"] < alvo)):
+            atrasadas.append(row["code"])
+        # 2ª passada do dia, só para as de tick vivo: depois do fechamento o ponto guardado
+        # ainda é o da madrugada (ph != "1"), então vale reescrever com o valor de agora.
+        elif (row["code"] in LIVE_TICK_CODES and str(row.get("ph")) != "1"
+              and datetime.now(timezone.utc).hour >= SPARK_CLOSE_UTC_H
+              and alvo and row["asof"] == alvo):
             atrasadas.append(row["code"])
     if not atrasadas:
         return 0
@@ -1066,6 +1083,10 @@ def update_commodity_spark(max_age_hours: float = 18.0) -> int:
         sp = commodity_periods(serie)
         if not sp:
             continue
+        # ph=1 marca "este ponto já é o de depois do fechamento" — é o que impede a 2ª
+        # passada de se repetir a cada ciclo pelo resto da noite.
+        if code in LIVE_TICK_CODES:
+            sp["ph"] = 1 if datetime.now(timezone.utc).hour >= SPARK_CLOSE_UTC_H else 0
         try:
             if serie != antes or source:
                 body = {"code": code, "series": serie, "updated_at": _now_iso()}
