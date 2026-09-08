@@ -862,6 +862,9 @@ def _platts_body_via_api(url: str) -> tuple[str, str]:
 # (o DOM junta os dois no .content-container → validado: texto IDÊNTICO, jaccard 1.000).
 # Imagens já vêm como <img src="https://…"> (mesma URL do DOM, baixadas depois) — sem
 # screenshot. Sem appkey (só Bearer). Cai no DOM se falhar/token vencido.
+# TABELAS (desde set/2026 vêm como <table> do CKEditor, não mais como PNG): viram PRINT aqui pelo
+# `table_shot`, com o CSS que a própria FM embute na matéria. No caminho do DOM (fallback de token
+# vencido) elas seguem como tabela de verdade — menos bonitas, mas presentes.
 def _fm_body_via_api(url: str) -> tuple[str, str]:
     """Corpo do artigo Fastmarkets pela API news/v3/articles (sem navegador). ('','') se não der
     → o chamador cai no fluxo Playwright (DOM)."""
@@ -901,6 +904,11 @@ def _fm_body_via_api(url: str) -> tuple[str, str]:
         return "", ""
     from .html_utils import article_to_safe_html
     raw  = (summary + "\n" + content).strip()
+    # Tabela de preço vira PRINT — renderizada aqui com o CSS que a própria Fastmarkets manda
+    # junto com a matéria, então sai idêntica ao site (e sem abrir o site). É o mesmo formato de
+    # quando eles publicavam a tabela em PNG. Falhou → segue como <table> de verdade.
+    from .table_shot import tables_to_images
+    raw  = tables_to_images(raw, source="Fastmarkets")
     safe = article_to_safe_html(raw)
     if len(safe) < 80 or not _sanitize_ok(raw, safe, url, "Fastmarkets"):
         return "", ""

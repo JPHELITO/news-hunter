@@ -610,10 +610,17 @@ _AD_IMG_RE = re.compile(
 )
 
 
+# Print de tabela embutido pelo `table_shot` (data-URI). É imagem NOSSA, gerada aqui
+# dentro — nunca vem do artigo bruto —, então passa pelo sanitizador junto com as https.
+_DATA_IMG_RE = re.compile(r"^data:image/(png|jpeg|gif);base64,[A-Za-z0-9+/=\s]+$", re.I)
+
+
 def _img_tag(node) -> str | None:
     """Retorna <img class='reader-img'> seguro, ou None se src inválido/anúncio."""
     src = (node.get("src") or "").strip()
     alt = _he.escape((node.get("alt") or "").strip())
+    if _DATA_IMG_RE.match(src):
+        return f'<img src="{src}" alt="{alt}" class="reader-img">'
     if src.startswith("//"):
         src = "https:" + src
     if not src.startswith("https://"):
