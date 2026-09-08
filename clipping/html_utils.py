@@ -6,6 +6,7 @@ Saída:   HTML seguro para inserção direta no leitor — apenas:
            <h3>, <h4>
            <ul>, <ol>, <li>
            <blockquote>
+           <table class="reader-table"> (com <tr>, <th>, <td>)
            <img src="https://..." alt="..." class="reader-img">
 
 Todos os textos são html-escaped. Atributos extras (class, id, style, data-*)
@@ -51,6 +52,8 @@ _RELATED_LABEL_RE = re.compile(
 # em início de linha (evita casar um <p> dentro de <blockquote> e cortar no meio).
 _BLOCK_RE = re.compile(r'<(p|h[1-6])\b[^>]*>(.*?)</\1\s*>', re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r'<[^>]+>')
+# <script>/<style> com o MIOLO: CSS/JS nunca é texto de artigo.
+_SCRIPT_STYLE_RE = re.compile(r'<(script|style)\b[^>]*>.*?</\1\s*>', re.IGNORECASE | re.DOTALL)
 
 # Perda máxima tolerada num corte. O bloco de relacionados é RODAPÉ: pequeno.
 # Se o corte levaria a maior parte do texto, é falso-positivo → não corta.
@@ -59,10 +62,17 @@ _MAX_STRIP_RATIO = 0.5
 
 
 def plain_text(html_fragment: str) -> str:
-    """Texto puro de um trecho de HTML (tags fora, entidades resolvidas)."""
+    """Texto puro de um trecho de HTML (tags fora, entidades resolvidas).
+
+    O MIOLO de <script>/<style> não é texto visível e sai junto com as tags. Sem isso a
+    folha de estilo que a Fastmarkets passou a embutir antes das tabelas (~1,4 mil chars
+    de CSS) entrava na conta de `_sanitize_ok` como se fosse corpo de matéria e derrubava
+    o artigo inteiro p/ o caminho do DOM.
+    """
     if not html_fragment:
         return ""
-    return re.sub(r"\s+", " ", _he.unescape(_TAG_RE.sub(" ", html_fragment))).strip()
+    without_noise = _SCRIPT_STYLE_RE.sub(" ", html_fragment)
+    return re.sub(r"\s+", " ", _he.unescape(_TAG_RE.sub(" ", without_noise))).strip()
 
 
 def _strip_related_html(s: str) -> str:
@@ -661,6 +671,78 @@ def _inline_html(node, NavigableString) -> str:
     return raw.strip()
 
 
+# ── Tabelas de dados ──────────────────────────────────────────────────────────
+# A Fastmarkets publicava as tabelas de preço como IMAGEM; desde ~set/2026 elas vêm como
+# <figure class="table"><table class="ck-table-resized"> … </table></figure> (CKEditor),
+# precedidas de um <style> com o CSS do CMS. O sanitizador antigo não conhecia <table>:
+# caía no ramo genérico "desce nos filhos", e como cada célula é um número curto (< 12
+# chars) NADA sobrava — a tabela sumia do clipping. Aqui ela vira uma <table> limpa.
+_ALIGN_RE = re.compile(r"text-align\s*:\s*(left|right|center)", re.I)
+
+# Borda cinza clara (mesma pegada do Word) + números à direita: o objetivo é a tabela
+# chegar legível no .docx, no e-mail do Outlook e na prévia sem CSS externo.
+_TBL_STYLE  = ("border-collapse:collapse;margin:10px 0;font-size:10pt;"
+               "font-family:Arial,Helvetica,sans-serif")
+_CELL_STYLE = "border:1px solid #d9d9d9;padding:4px 8px;vertical-align:top"
+
+
+def _cell_align(node) -> str:  # noqa: ANN001
+    """Alinhamento declarado no style da célula ('left'/'right'/'center'), ou ''."""
+    m = _ALIGN_RE.search(node.get("style") or "")
+    return m.group(1).lower() if m else ""
+
+
+def parse_table_rows(node, NavigableString) -> list[list[dict]]:  # noqa: ANN001
+    """Linhas/células de um <table>, ignorando tabelas aninhadas.
+
+    Cada célula: {"text": html_inline, "header": bool, "colspan": int, "align": str}.
+    Usada tanto pelo sanitizador (→ HTML) quanto pelo build do Word (→ tabela do .docx).
+    """
+    rows: list[list[dict]] = []
+    for tr in node.find_all("tr"):
+        if tr.find_parent("table") is not node:      # linha de tabela aninhada
+            continue
+        cells: list[dict] = []
+        for cell in tr.find_all(["th", "td"], recursive=False):
+            txt = _inline_html(cell, NavigableString)
+            txt = txt.replace("\xa0", " ").strip()
+            try:
+                span = max(1, min(20, int(cell.get("colspan") or 1)))
+            except (TypeError, ValueError):
+                span = 1
+            cells.append({
+                "text": txt,
+                "header": cell.name == "th" or cell.find_parent("thead") is not None,
+                "colspan": span,
+                "align": _cell_align(cell),
+            })
+        if cells and any(c["text"] for c in cells):
+            rows.append(cells)
+    return rows
+
+
+def _table_html(node, NavigableString) -> str | None:  # noqa: ANN001
+    """<table> limpa (só tr/th/td + colspan + alinhamento), ou None se não houver dados."""
+    rows = parse_table_rows(node, NavigableString)
+    if not rows:
+        return None
+    out = [f'<table class="reader-table" cellspacing="0" cellpadding="0" style="{_TBL_STYLE}">']
+    for cells in rows:
+        out.append("<tr>")
+        for c in cells:
+            tag   = "th" if c["header"] else "td"
+            style = _CELL_STYLE
+            if c["align"]:
+                style += f';text-align:{c["align"]}'
+            elif c["header"]:
+                style += ";text-align:left"
+            span = f' colspan="{c["colspan"]}"' if c["colspan"] > 1 else ""
+            out.append(f'<{tag}{span} style="{style}">{c["text"] or "&nbsp;"}</{tag}>')
+        out.append("</tr>")
+    out.append("</table>")
+    return "".join(out)
+
+
 def _bs4_extract(raw_html: str) -> str:
     from bs4 import BeautifulSoup, NavigableString  # type: ignore
 
@@ -707,8 +789,27 @@ def _bs4_extract(raw_html: str) -> str:
             if it:
                 out.append(it)
 
+        elif name == "table":
+            t = _table_html(node, NavigableString)
+            if t:
+                out.append(t)
+
         elif name == "figure":
-            # Figura: imagem + legenda opcional
+            # Figura: imagem + legenda opcional — ou uma TABELA (CKEditor põe a tabela
+            # dentro de <figure class="table">; sem este ramo ela era descartada aqui).
+            tbl_el = node.find("table")
+            if tbl_el is not None:
+                t = _table_html(tbl_el, NavigableString)
+                if t:
+                    out.append(t)
+                cap_el = node.find("figcaption")
+                if cap_el:
+                    cap = cap_el.get_text(" ", strip=True)
+                    if cap:
+                        out.append(
+                            f'<p class="reader-caption"><em>{_he.escape(cap)}</em></p>'
+                        )
+                return
             img_el = node.find("img")
             cap_el = node.find("figcaption")
             if img_el:

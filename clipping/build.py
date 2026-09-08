@@ -376,6 +376,7 @@ def _html_to_blocks(html_body: str) -> list[dict]:
       {"type": "blockquote", "text": str}          ← citação recuada
       {"type": "list_item",  "text": str}
       {"type": "image",      "src": str}
+      {"type": "table",      "rows": [[{"text","header","colspan","align"}, ...], ...]}
     """
     if not html_body:
         return []
@@ -440,6 +441,14 @@ def _html_to_blocks(html_body: str) -> list[dict]:
             if text:
                 blocks.append({"type": "blockquote", "text": text})
 
+        elif name == "table":
+            # Tabela de dados (Fastmarkets voltou a publicá-las como <table> de verdade,
+            # não mais como imagem) — vira tabela do Word em _render_blocks.
+            from .html_utils import parse_table_rows
+            rows = parse_table_rows(el, NavigableString)
+            if rows:
+                blocks.append({"type": "table", "rows": rows})
+
         elif name in ("p", "div", "section", "article"):
             # Extrair imagens internas antes de pegar o texto
             for img in el.find_all("img"):
@@ -477,7 +486,7 @@ def _html_to_blocks(html_body: str) -> list[dict]:
 
     # Se nenhum bloco foi encontrado, usa fallback plano
     if not blocks:
-        for el in soup.find_all(["p", "h2", "h3", "img", "li"]):
+        for el in soup.find_all(["p", "h2", "h3", "img", "li", "table"]):
             _process(el)
 
     return blocks
@@ -1224,6 +1233,52 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
         except Exception as e:
             log.debug("clipping: imagem não inserida (%s): %s", src[:80], e)
 
+    def _add_table_block(rows: list[list[dict]]) -> None:
+        """Insere uma tabela de dados do artigo (ex.: as tabelas de preço da Fastmarkets,
+        que voltaram a ser <table> em vez de imagem). Grade cinza clara, Arial 9,
+        cabeçalho em negrito, colspan respeitado. Falhou → não quebra o clipping."""
+        from .html_utils import plain_text
+        if not rows:
+            return
+        n_cols = max(sum(int(c.get("colspan", 1)) for c in r) for r in rows)
+        if n_cols < 1:
+            return
+        try:
+            table = doc.add_table(rows=len(rows), cols=n_cols)
+            table.autofit = True
+            # Grade própria (não depende do estilo 'Table Grid' existir no template.docx)
+            tblPr   = table._tbl.tblPr
+            borders = OxmlElement("w:tblBorders")
+            for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+                b = OxmlElement(f"w:{edge}")
+                b.set(qn("w:val"), "single")
+                b.set(qn("w:sz"), "4")            # 0,5pt
+                b.set(qn("w:color"), "D9D9D9")
+                borders.append(b)
+            tblPr.append(borders)
+
+            for r_i, cells in enumerate(rows):
+                col = 0
+                for cell in cells:
+                    span = max(1, int(cell.get("colspan", 1)))
+                    if col >= n_cols:
+                        break
+                    span = min(span, n_cols - col)
+                    wcell = table.cell(r_i, col)
+                    if span > 1:
+                        wcell = wcell.merge(table.cell(r_i, col + span - 1))
+                    para = wcell.paragraphs[0]
+                    _zero_spacing(para)
+                    align = cell.get("align") or ""
+                    if align in ("right", "center"):
+                        para.paragraph_format.alignment = 2 if align == "right" else 1
+                    txt = plain_text(cell.get("text") or "")
+                    if txt:
+                        _run(para, txt, bold=bool(cell.get("header")), size_pt=9)
+                    col += span
+        except Exception as e:                    # pragma: no cover — tabela exótica
+            log.warning("clipping: tabela não inserida no Word (%s)", e)
+
     # ── Ordem dos setores ─────────────────────────────────────────────────────
     # Ordem dos setores no clipping = ordem CANÔNICA NR → SM → PP (SECTOR_ORDER), NUNCA a
     # ordem do payload → S&M SEMPRE antes de P&P (exigência do usuário). Só entra setor presente.
@@ -1470,6 +1525,8 @@ def _build_word(items: list[ClippingItem], d: date, config: dict | None = None) 
                             _run(p, block["text"], size_pt=9)
                     elif btype == "image":
                         _add_image_para(block["src"], item.url)
+                    elif btype == "table":
+                        _add_table_block(block.get("rows") or [])
 
             # Renderiza corpo original
             _render_blocks(blocks, item.domain)

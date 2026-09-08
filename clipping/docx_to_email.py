@@ -398,6 +398,38 @@ class _DocxEmail:
             body = "&nbsp;"
         return f'<p style="{";".join(css)}">{body}</p>', bullet
 
+    def _tbl(self, tbl) -> str:
+        """Tabela do Word → <table> de e-mail (Outlook ignora CSS de <head>: tudo inline).
+
+        Sem isto o `html()` pulava o `w:tbl` em silêncio e as tabelas de preço da
+        Fastmarkets — que voltaram a ser tabela de verdade, não imagem — saíam do .docx
+        mas sumiam do e-mail.
+        """
+        cell_css = "border:1px solid #d9d9d9;padding:4px 8px;vertical-align:top"
+        trs: list[str] = []
+        for tr in tbl.findall(f"{_W}tr"):
+            tds: list[str] = []
+            for tc in tr.findall(f"{_W}tc"):
+                tcPr = tc.find(f"{_W}tcPr")
+                span = 1
+                if tcPr is not None:
+                    gs = tcPr.find(f"{_W}gridSpan")
+                    if gs is not None and gs.get(f"{_W}val"):
+                        try:
+                            span = max(1, int(gs.get(f"{_W}val")))
+                        except ValueError:
+                            span = 1
+                inner = "".join(self._para(cp)[0] for cp in tc.findall(f"{_W}p"))
+                colspan = f' colspan="{span}"' if span > 1 else ""
+                tds.append(f'<td{colspan} style="{cell_css}">{inner or "&nbsp;"}</td>')
+            if tds:
+                trs.append(f'<tr>{"".join(tds)}</tr>')
+        if not trs:
+            return ""
+        return ('<table cellspacing="0" cellpadding="0" '
+                f'style="border-collapse:collapse;margin:10px 0;'
+                f'font-family:{self.default_font}">{"".join(trs)}</table>')
+
     # ── documento ─────────────────────────────────────────────────────────────
     def html(self, *, logo_do_cabecalho: bool = False) -> str:
         from lxml import etree
@@ -416,6 +448,10 @@ class _DocxEmail:
         # mesma imagem (media/image1.png, inline) — injetar duplicava a logo no e-mail.
         logo_pendente = self._logo_html() if logo_do_cabecalho else ""
         for el in body:
+            if el.tag == f"{_W}tbl":
+                flush()
+                out.append(self._tbl(el))
+                continue
             if el.tag != f"{_W}p":
                 continue
             html_p, bullet = self._para(el)
