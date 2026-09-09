@@ -199,7 +199,12 @@ def test_iron_ore_saiu_do_yahoo_o_feed_tinha_congelado():
     outras pagas; quem desenha minério na aba Market é o 62% do Trading Economics.
     """
     assert "IRON_ORE" not in prices.COMMODITY_HISTORY_YF, "TIO=F é feed congelado, não fonte"
-    assert prices.COMMODITY_HISTORY_YF == {"COPPER": "HG=F", "GOLD": "GC=F"}
+    # Lista fechada de propósito: quem acrescentar uma commodity aqui tem de PASSAR POR ESTE
+    # TESTE e conferir que o feed do Yahoo é vivo (não congelado como o TIO=F era).
+    # BRENT/ALUMINUM entraram em 2026-09-03 (`3738b18`, carrossel Base & Precious + Freight),
+    # e o teste ficou 6 dias vermelho porque ninguém o atualizou junto.
+    assert prices.COMMODITY_HISTORY_YF == {"COPPER": "HG=F", "GOLD": "GC=F",
+                                           "BRENT": "BZ=F", "ALUMINUM": "ALI=F"}
 
 
 def test_feed_parado_avisa_em_vez_de_passar_calado():

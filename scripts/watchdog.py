@@ -111,6 +111,94 @@ def check_coverage(url: str, headers: dict, now: datetime) -> tuple[list[str], l
     return problems, report, skipped
 
 
+# ── Crachá da Platts/Fastmarkets no store (anti-"corpo em silêncio") ─────────
+# Em 2026-09-09 o corpo de TODA notícia da Platts falhou por uma semana sem ninguém
+# saber: o roll-forward gravava o access token JÁ VENCIDO no store, o caminho por API
+# do clipping levava 401 e caía no navegador (que também estava quebrado). O
+# source_health continuava VERDE o tempo todo — ele mede se a sessão logou, não se o
+# crachá que ficou guardado presta. Isto fecha esse buraco, e é de graça: lê o token do
+# próprio store e olha o campo de validade, sem falar com a Platts.
+TOKEN_GRACE_MIN = 90       # mesma tolerância das outras checagens (loop roda a cada 30 min)
+
+
+def _jwt_exp(tok: str):
+    """Epoch de expiração do JWT (claim exp), sem verificar assinatura. None se não der."""
+    import base64
+    import json as _json
+    try:
+        payload = tok.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return float(_json.loads(base64.urlsafe_b64decode(payload))["exp"])
+    except Exception:
+        return None
+
+
+def _token_from_state(state: dict, provider: str):
+    """Access token guardado no storage_state (Okta p/ Platts, OIDC p/ Fastmarkets)."""
+    import json as _json
+    for origin in (state or {}).get("origins", []):
+        for kv in origin.get("localStorage", []):
+            name = kv.get("name") or ""
+            try:
+                val = _json.loads(kv.get("value") or "{}")
+            except Exception:
+                continue
+            if provider == "platts" and name == "okta-token-storage":
+                at = (val.get("accessToken") or {}).get("accessToken")
+                if isinstance(at, str) and at.startswith("eyJ"):
+                    return at
+            if provider == "fastmarkets" and name.startswith("oidc.user:"):
+                at = val.get("access_token")
+                if isinstance(at, str) and at.startswith("eyJ"):
+                    return at
+    return None
+
+
+def check_tokens(url: str, headers: dict, now: datetime) -> tuple[list[str], list[str]]:
+    """(problemas, relatório) — crachá vencido há muito no store = clipping sem corpo."""
+    import gzip
+    import base64
+    import json as _json
+    problems: list[str] = []
+    report: list[str] = []
+    try:
+        r = requests.get(f"{url}/rest/v1/source_sessions?select=source,state", headers=headers, timeout=20)
+        r.raise_for_status()
+        rows = {x["source"]: x.get("state") for x in r.json()}
+    except Exception as e:
+        return [f"tokens: erro lendo source_sessions: {e}"], []
+
+    for prov in ("platts", "fastmarkets"):
+        raw = rows.get(prov)
+        if not raw:
+            report.append(f"  {prov:12} sem sessão no store")
+            continue
+        try:                                    # o store guarda o state como JSON ou gzip+base64
+            state = _json.loads(raw) if isinstance(raw, (dict, str)) and str(raw).lstrip().startswith("{") \
+                else _json.loads(gzip.decompress(base64.b64decode(raw)).decode("utf-8"))
+            if isinstance(state, str):
+                state = _json.loads(state)
+        except Exception as e:
+            report.append(f"  {prov:12} state ilegível ({e})")
+            continue
+        tok = _token_from_state(state, prov)
+        if not tok:
+            problems.append(f"{prov}: sessão no store SEM access token — o clipping vai ficar sem corpo")
+            continue
+        exp = _jwt_exp(tok)
+        if not exp:
+            report.append(f"  {prov:12} token sem validade legível (ignorado)")
+            continue
+        atraso = (now.timestamp() - exp) / 60.0
+        if atraso > TOKEN_GRACE_MIN:
+            problems.append(f"{prov}: crachá guardado venceu há {atraso:.0f} min "
+                            f"(limite {TOKEN_GRACE_MIN}) — o roll-forward está gravando token velho")
+        else:
+            estado = "válido" if atraso < 0 else f"venceu há {atraso:.0f} min"
+            report.append(f"  {prov:12} {estado}")
+    return problems, report
+
+
 def main() -> int:
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("SUPABASE_SERVICE_KEY", "")
@@ -176,6 +264,13 @@ def main() -> int:
         print("\n[info] Cobertura — fontes silenciosas (apenas monitoramento, NÃO dispara e-mail):")
         for p in cov_problems:
             print("  · " + p)
+
+    # ── Crachá guardado no store (o que o clipping usa p/ buscar o corpo) ────
+    tok_problems, tok_report = check_tokens(url, headers, now)
+    print("\n[Crachá das sessões no store]")
+    for line in tok_report:
+        print(line)
+    problems.extend(tok_problems)
 
     # ── Só Platts/Fastmarkets (sessões críticas, SEM fallback) fazem o job FALHAR/emailar ──
     if problems:
