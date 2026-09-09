@@ -797,10 +797,26 @@ def _cached_access_token(provider: str, state_filename: str, extract_fn) -> str 
     except Exception:
         return None
     tok = extract_fn(state)
+    exp = _jwt_exp(tok) if tok else None
+
+    # Vencido (ou quase): RENOVA na hora, por HTTP, sem navegador e sem login — o mesmo
+    # caminho que o app usa por dentro (hunter/oauth_refresh). Antes daqui a função
+    # simplesmente devolvia None e o clipping caía no fluxo do navegador, que é 10× mais
+    # lento e depende de um login que a nuvem não consegue fazer. Se a renovação falhar
+    # (refresh token consumido/expirado), aí sim devolve None e o DOM assume.
+    if not tok or (exp and now >= exp - 60):
+        try:
+            from hunter.oauth_refresh import refresh
+            if refresh(provider, force=True):
+                state = json.loads(sp.read_text(encoding="utf-8"))
+                tok = extract_fn(state)
+                exp = _jwt_exp(tok) if tok else None
+        except Exception as e:
+            log.debug("reader: refresh(%s) falhou: %s", provider, e)
+
     if not tok:
         return None
-    exp = _jwt_exp(tok)
-    if exp and now >= exp - 60:                  # expirado/quase → força fallback DOM
+    if exp and now >= exp - 60:
         return None
     cache["tok"] = tok
     cache["exp"] = exp or (now + 300.0)          # sem exp legível → cacheia 5min

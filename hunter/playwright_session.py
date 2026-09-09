@@ -68,9 +68,32 @@ def state_path(provider: str) -> Path:
     return get_cookies_dir() / f"{provider}_state.json"
 
 
+def _validade_do_state(provider: str, state_json: str) -> float | None:
+    """Prazo do access token dentro de um storage_state serializado (epoch), ou None."""
+    try:
+        from . import oauth_refresh as _or
+        d = json.loads(state_json)
+        cfg = _or._PROV.get(provider)
+        if not cfg:
+            return None
+        par = cfg["blob"](d)
+        return cfg["exp"](par[1]) if par else None
+    except Exception:
+        return None
+
+
 def save_state(ctx, provider: str) -> None:
     """Salva o storage_state (cookies + localStorage) localmente E no store remoto
-    (Supabase), rolando a sessão pra frente. Best-effort: falha no remoto não quebra o run."""
+    (Supabase), rolando a sessão pra frente. Best-effort: falha no remoto não quebra o run.
+
+    ⚠️ NUNCA regrava por cima de uma sessão MAIS NOVA (trava anti-corrida). O loop da
+    nuvem convive com o cron horário de backup, então dois processos leem e escrevem a
+    mesma sessão. Como o servidor de identidade **rotaciona o refresh token a cada uso**,
+    o processo atrasado devolveria ao store um refresh token JÁ CONSUMIDO — e a sessão
+    morreria sem que ninguém tivesse errado nada. Foi exatamente o que o log de
+    2026-09-03 mostrou: o tamanho da sessão gravada passou a noite alternando entre dois
+    valores, indo e voltando, sem nunca progredir. Aqui a gravação virou MONOTÔNICA: só
+    avança."""
     try:
         state_json = json.dumps(ctx.storage_state())
     except Exception as e:
@@ -80,6 +103,26 @@ def save_state(ctx, provider: str) -> None:
         state_path(provider).write_text(state_json, encoding="utf-8")
     except Exception as e:
         log.warning("%s: falha ao salvar storage_state local: %s", provider, e)
+
+    nova = _validade_do_state(provider, state_json)
+    if nova is not None:
+        try:
+            import requests
+            url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+            key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+            if url and key:
+                r = requests.get(
+                    f"{url}/rest/v1/{SESSIONS_TABLE}?source=eq.{provider}&select=state",
+                    headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+                if r.ok and r.json():
+                    atual = _validade_do_state(provider, r.json()[0].get("state") or "")
+                    if atual is not None and atual > nova + 1:
+                        log.info("%s: store tem sessão MAIS NOVA (%d min de diferença) — "
+                                 "não regravo por cima", provider, int((atual - nova) / 60))
+                        return
+        except Exception as e:
+            log.debug("%s: não deu p/ comparar validade com o store: %s", provider, e)
+
     _push_session_to_store(provider, state_json)
 
 

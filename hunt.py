@@ -33,6 +33,19 @@ def main() -> None:
 
     log.info("=== News Hunter start (playwright=%s) ===", args.playwright)
 
+    # Sessões de Platts/Fastmarkets vivas — SEMPRE, inclusive no modo só-RSS.
+    #
+    # O auto-login das duas NÃO funciona da nuvem (o Okta da S&P recusa o IP de
+    # datacenter do GitHub), então a sessão só se sustenta se alguém a renovar antes de
+    # ela vencer. Isto faz isso em UMA chamada HTTP, sem navegador — e roda no loop de 5
+    # min, não no de 30, de propósito: assim a sessão continua viva mesmo que o loop do
+    # Playwright caia inteiro. É best-effort e nunca derruba o run.
+    try:
+        from hunter.oauth_refresh import keep_alive
+        keep_alive()
+    except Exception as e:
+        log.warning("keep-alive de sessão indisponível: %s", e)
+
     # RSS + requests (sempre)
     articles_raw = fetch_all()
     log.info("RSS: %d artigos brutos", len(articles_raw))
