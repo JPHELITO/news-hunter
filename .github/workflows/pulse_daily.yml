@@ -94,3 +94,16 @@ jobs:
           else
             python -m hunter.pulse_daily
           fi
+
+      # A régua do termômetro de notícias: recalcula as últimas 5 sessões (pregão, setor,
+      # corte) por cima e grava em news_pulse_daily. Roda em TODA rodada: a das 10:20 BRT
+      # assenta o corte das 07h, a das 17:50 assenta o das 09h, a da manhã seguinte fecha o
+      # 'close' de ontem. Sem a tabela (SQL não rodado) sai 0 com aviso — não pode derrubar
+      # a foto. Independe do passo acima, por isso o `!cancelled()`.
+      - name: Régua do termômetro (agregado diário de notícias)
+        if: ${{ !cancelled() }}
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+        run: python -m hunter.news_pulse
