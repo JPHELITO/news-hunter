@@ -236,26 +236,66 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
 
         try:
             if cfg.get("use_platts_flow"):
-                # Platts Angular SPA: navegar direto para o artigo não funciona
-                # porque o Angular router redireciona enquanto ainda inicializa.
-                # Solução: carrega a homepage primeiro (Angular inicializa),
-                # depois navega para o hash do artigo.
-                page.goto("https://core.spglobal.com/", wait_until="domcontentloaded", timeout=40_000)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=12_000)
-                except Exception:
-                    page.wait_for_timeout(5_000)
-                # Verifica se caiu na página de login (antes ou depois de carregar)
-                if "login" in page.url.lower():
-                    log.warning("playwright_reader: Platts sessão expirada (login page)")
+                # Platts Angular SPA. Três defeitos do fluxo antigo faziam TODA notícia
+                # da Platts voltar sem corpo, cada uma custando ~70s de espera à toa
+                # (diagnosticado ao vivo em 2026-09-09):
+                #
+                #  1) NÃO LOGAVA. O access token da Platts vive ~1h e a sessão do store
+                #     passa boa parte do tempo vencida. Sem token válido o app carrega
+                #     só a casca (menu) e TODA chamada dele volta 401 — o artigo nunca
+                #     renderiza. O scraper de headlines sempre soube disso e chama
+                #     navigate_with_login; o leitor não chamava. Agora chama.
+                #  2) page.goto(url) COM O FRAGMENTO. O router do Angular engole o hash
+                #     durante o boot e cai em #platts/allInsights (medido: a URL final
+                #     vira 'core.spglobal.com/#'). Navegar por window.location.hash com
+                #     o app já de pé preserva o artigo.
+                #  3) NÃO AQUECIA o feed: o hash do artigo chegava antes de o módulo
+                #     platts existir. É preciso passar por #platts/allInsights e
+                #     ESPERAR ELE RENDERIZAR — é nesse intervalo que o app renova o
+                #     token; com o token velho todas as chamadas dele voltam 401 e o
+                #     artigo fica em branco. Medido: o mesmo artigo que volta vazio
+                #     na navegação seca abre normalmente vindo do feed.
+                #
+                # ⚠️ NÃO salvar a sessão aqui. O save_state tem que vir DEPOIS de o
+                # app renovar o token (ver _roll_forward no fim). Salvar logo após o
+                # login regrava o token VELHO por cima do bom no store — foi
+                # exatamente esse o bug que derrubou o caminho por API.
+                from hunter.platts_scraper import _LOGIN_HOSTS, _platts_login
+                from hunter.playwright_session import navigate_with_login
+
+                ok = navigate_with_login(
+                    page, ctx, "platts",
+                    target_url="https://core.spglobal.com/",
+                    login_fn=_platts_login,
+                    login_hosts=_LOGIN_HOSTS,
+                    max_attempts=2,
+                    goto_timeout=40_000,
+                    pre_check_wait_ms=6_000,   # o SPA só redireciona p/ /login alguns s depois
+                )
+                if not ok:
+                    log.warning("playwright_reader: Platts sem sessão válida (auto-login falhou)")
                     return "", ""
-                # Agora navega para o artigo específico via hash
-                page.goto(url, wait_until="domcontentloaded", timeout=25_000)
+
+                # Aquece o feed e espera ele aparecer de fato (não só um sleep fixo).
+                page.evaluate("window.location.hash = '#platts/allInsights'")
+                try:
+                    page.wait_for_function(
+                        "() => (document.body.innerText || '').trim().length > 800",
+                        timeout=25_000,
+                    )
+                except Exception:
+                    log.debug("playwright_reader: feed Platts demorou a renderizar")
+                    page.wait_for_timeout(6_000)
+
+                frag = url.split("#", 1)[1] if "#" in url else ""
+                if not frag:
+                    log.warning("playwright_reader: URL Platts sem fragmento: %s", url[-60:])
+                    return "", ""
+                page.evaluate("(h) => { window.location.hash = h; }", frag)
                 try:
                     page.wait_for_load_state("networkidle", timeout=12_000)
                 except Exception:
-                    page.wait_for_timeout(5_000)
-                # Verifica login novamente (o artigo pode redirecionar para auth)
+                    page.wait_for_timeout(4_000)
                 if "login" in page.url.lower():
                     log.warning("playwright_reader: Platts redirecionou para login no artigo")
                     return "", ""

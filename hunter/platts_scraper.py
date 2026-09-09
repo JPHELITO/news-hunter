@@ -536,12 +536,20 @@ def _scrape() -> list[RawArticle]:
             if not ok:
                 log.warning("platts_scraper: sem sessão válida (auto-login falhou/sem credenciais)")
                 return []
-            # Autenticado: rola a sessão pra frente (salva versão renovada local + store).
-            save_state(ctx, "platts")
-
             # allInsights — feed geral (Enhanced dispara content-bff/v4/search, base) → News/Feature/…
             page.evaluate("window.location.hash = '#platts/allInsights'")
             page.wait_for_timeout(14_000)
+
+            # Autenticado: rola a sessão pra frente (salva versão renovada local + store).
+            #
+            # ⚠️ ISTO FICAVA LOGO APÓS O navigate_with_login, E ERA CEDO DEMAIS. O app só
+            # renova o access token do Okta alguns segundos depois de subir, já dentro do
+            # feed. Salvando antes disso, o store recebia o token VELHO — e como ele vive
+            # ~1h, o caminho rápido por API do clipping (reader._platts_body_via_api) caía
+            # em 401 quase sempre e TODA notícia da Platts ia parar no fluxo do navegador,
+            # 70s cada uma, para voltar vazia. Medido em 2026-09-09: salvando aqui o token
+            # gravado vale ~1h; salvando antes, já nascia vencido.
+            save_state(ctx, "platts")
 
             # insightsResult SEM filtro — TODOS os tipos via blendedsearch (50 itens; robusto p/
             # News/Feature/Analysis, já que o base-search do allInsights vem parcial/flaky). ⚠️ Sem
