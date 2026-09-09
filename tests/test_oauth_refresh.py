@@ -225,3 +225,17 @@ def test_save_state_avanca_quando_a_sessao_e_mais_nova(tmp_path, monkeypatch):
 
     ps.save_state(_Ctx(), "platts")
     assert empurrados and "RT-NOVO" in empurrados[-1]
+
+
+def test_readonly_NAO_renova(bancada, monkeypatch):
+    """hunt-once.yml roda com SESSION_STORE_READONLY=1 (é o workflow do botão "Buscar
+    novas agora"). Ali a gravação no store é ignorada de propósito — e renovar CONSOME o
+    refresh token. Renovar sem poder gravar deixaria um token queimado no store e mataria
+    a sessão: um clique do analista derrubaria a Platts."""
+    bancada["escrever"]("platts", _state_platts(time.time() + 60))
+    monkeypatch.setenv("SESSION_STORE_READONLY", "1")
+    monkeypatch.setattr(orf.requests, "post",
+                        lambda *a, **k: pytest.fail("não pode nem falar com o servidor"))
+    assert orf.refresh("platts") is None
+    assert orf.refresh("platts", force=True) is None
+    assert not bancada["push"]

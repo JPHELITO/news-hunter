@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 
 import requests
@@ -169,6 +170,17 @@ def refresh(provider: str, *, force: bool = False) -> float | None:
     if not cfg:
         return None
     from . import playwright_session as ps
+
+    # 🔴 NUNCA renovar quando não se pode gravar. Renovar CONSOME o refresh token e o
+    # servidor devolve outro; se o novo não puder ir para o store, o que fica lá é um
+    # token queimado e a sessão MORRE — exatamente o defeito que este módulo conserta.
+    # É o caso do hunt-once.yml (SESSION_STORE_READONLY=1), que é o workflow por trás do
+    # botão "Buscar novas agora" da dashboard: sem esta guarda, um clique do analista
+    # derrubaria a sessão da Platts. O one-shot usa a sessão que a corrente mantém viva.
+    if os.environ.get("SESSION_STORE_READONLY") == "1":
+        log.info("oauth_refresh: %s — SESSION_STORE_READONLY=1, não renovo "
+                 "(rotacionar sem poder gravar mataria a sessão)", provider)
+        return None
 
     try:
         ps.pull_session(provider)                  # sempre parte da versão mais nova do store
