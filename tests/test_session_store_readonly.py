@@ -50,3 +50,20 @@ def test_save_state_grava_local_mesmo_em_readonly(spy_post, monkeypatch, tmp_pat
     ps.save_state(ctx, "platts")
     assert (tmp_path / "platts_state.json").exists()
     assert spy_post == []
+
+
+def test_o_one_shot_NAO_liga_mais_a_flag():
+    """A trava saiu do hunt-once.yml em 2026-09-09 e não pode voltar sem pensar.
+
+    Com ela ligada, o app renova o token dentro do navegador durante o run, o servidor
+    QUEIMA o token guardado (rotação) e o novo é descartado por não poder ser gravado —
+    o store fica com um token morto. Ou seja: um clique do analista em "Buscar novas
+    agora" podia derrubar a sessão da Platts. O que a trava protegia (one-shot atrasado
+    sobrescrevendo a sessão da corrente) hoje é resolvido pelo save_state MONOTÔNICO.
+    """
+    from pathlib import Path
+    yml = (Path(__file__).resolve().parent.parent
+           / ".github" / "workflows" / "hunt-once.yml").read_text(encoding="utf-8")
+    ligada = [l for l in yml.splitlines()
+              if "SESSION_STORE_READONLY" in l and not l.lstrip().startswith("#")]
+    assert not ligada, f"o one-shot voltou a ligar a trava: {ligada}"

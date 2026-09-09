@@ -117,9 +117,21 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           COOKIES_DIR:          /tmp/cookies
           PYTHONIOENCODING:     utf-8
-          # Este run PODE acontecer junto com a corrente do hunt-playwright (grupos
-          # diferentes, de propósito). Ele USA a sessão rolada-pra-frente, mas NÃO a
-          # regrava no store — assim um one-shot nunca sobrescreve a sessão que a
-          # corrente acabou de renovar. Ver playwright_session.save_state.
-          SESSION_STORE_READONLY: "1"
+          # ⚠️ AQUI TINHA `SESSION_STORE_READONLY: "1"`, E ELE FICOU PERIGOSO (2026-09-09).
+          #
+          # A trava existia porque este run pode acontecer junto com a corrente do
+          # hunt-playwright (grupos de concurrency diferentes, de propósito), e sem ela um
+          # one-shot atrasado sobrescreveria a sessão que a corrente acabou de renovar.
+          #
+          # Só que o servidor de identidade **rotaciona o refresh token a cada uso**: o app,
+          # dentro do navegador, renova sozinho durante o run e QUEIMA o token que estava
+          # guardado. Com a trava ligada, o token novo morria no runner e o store ficava com
+          # o queimado — ou seja, um clique do analista em "Buscar novas agora" podia derrubar
+          # a sessão da Platts. Intermitente (só quando o token estivesse perto de vencer),
+          # que é o pior tipo de defeito.
+          #
+          # O problema que a trava resolvia agora é resolvido melhor: `save_state` virou
+          # MONOTÔNICO e compara a validade real antes de gravar, então o one-shot nunca
+          # regride a sessão — e, quando ele tem a mais nova, ela é aproveitada em vez de
+          # descartada. A flag continua existindo no código para quem precisar dela.
         run: python hunt.py --playwright
