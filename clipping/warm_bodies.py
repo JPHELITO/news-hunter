@@ -45,11 +45,18 @@ def _env() -> tuple[str, str]:
 
 def _candidates(url: str, key: str, limit: int) -> list[dict]:
     """Candidatos recentes das 6 fontes — SÓ LEITURA do news_articles (não interfere no hunter)."""
+    # ⚠️ O filtro VAI EM params, não colado na URL: "S&P Platts" tem um & no meio, e
+    # colado ele virava separador de query — o PostgREST via um source_name truncado e
+    # devolvia 400 em TODA rodada (o aquecedor nunca aquecia nada). Deixar o requests
+    # codificar é o que garante o & escapado.
     src_in = ",".join(f'"{s}"' for s in _SOURCES)
     r = requests.get(
-        f"{url}/rest/v1/news_articles"
-        f"?select=url,title,source_name&source_name=in.({src_in})"
-        f"&include_in_report=not.is.false&order=found_at.desc&limit={limit}",
+        f"{url}/rest/v1/news_articles",
+        params={"select": "url,title,source_name",
+                "source_name": f"in.({src_in})",
+                "include_in_report": "not.is.false",
+                "order": "found_at.desc",
+                "limit": str(limit)},
         headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=30)
     r.raise_for_status()
     return r.json()
