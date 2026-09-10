@@ -151,17 +151,25 @@ def main() -> None:
         # Minério 62% de Cingapura e níquel da LME: o Yahoo não tem nenhum dos dois, e são
         # os únicos que ficam vivos às 06h BRT, hora do blast. Isolado como todos os outros.
         _safe("sina_commodities", update_sina_commodities)
+        m = _safe("macro", update_macro)   # antes da Fastmarkets: o resale precisa do USD_CNY
+        # ⚠️ O ASSESSMENT SOBE ANTES DAS SÉRIES QUE O COPIAM. As duas rotinas abaixo
+        # (commodities.daily e o risquinho) leem a LINHA da commodity e carimbam o valor
+        # dela na data do assessment. Rodando antes do Platts, elas gravavam sempre o
+        # estado da rodada ANTERIOR — foi assim que o ponto de 09/09/2026 do IODEX 61%
+        # ficou com um preço de dois dias antes mesmo depois de o preço certo entrar
+        # sete minutos depois. Publicar primeiro, copiar depois.
+        if platts_prices:  # Iron Ore 61%, HRC China, Rebar Turkey, Met Coal
+            _safe("platts_commodities", update_platts_commodities, platts_prices)
+        if fm_prices:      # celulose PIX: China net, resale em yuan e Europa
+            _safe("fastmarkets_commodities", update_fastmarkets_commodities, fm_prices)
         _safe("commodity_history", update_commodity_history)  # commodities.daily p/ o spread (auto-throttle ~1x/dia)
         # risquinho do carrossel: append do dia + as 5 janelas. O gatilho é o DADO, não
         # o relógio (triagem de 2,5 KB) — antes a trava de 18h rodava ANTES de o Platts
         # publicar e a curva ficava um dia atrás do preço, todo dia.
         _safe("commodity_spark", update_commodity_spark)
+        # depois do commodity_history de propósito: esta reescreve a série INTEIRA do
+        # IRON_ORE_62; na ordem inversa a acumulação penduraria um ponto repetido nela.
         _safe("iron_ore_62_te", update_iron_ore_62_te)        # minério 62% (TE SCO:COM) p/ a aba Market (auto-throttle ~poucas vezes/dia)
-        m = _safe("macro", update_macro)
-        if platts_prices:  # Iron Ore 61%, HRC China, Rebar Turkey, Met Coal
-            _safe("platts_commodities", update_platts_commodities, platts_prices)
-        if fm_prices:      # celulose PIX: China net, resale em yuan e Europa
-            _safe("fastmarkets_commodities", update_fastmarkets_commodities, fm_prices)
         log.info("Preços: quotes=%s (hist=%s), commodities=%s, macro=%s", q, h, c, m)
 
     # Sinal de vida das fontes Playwright → o watchdog lê isto para alertar (email do
@@ -176,10 +184,18 @@ def main() -> None:
                 "fastmarkets": get_fastmarkets_health(),
             }
             for src, hh in healths.items():
-                record_source_health(src, login_failed=bool(hh.get("login_failed")))
+                record_source_health(src, login_failed=bool(hh.get("login_failed")), detail=hh)
             failed = [s for s, hh in healths.items() if hh.get("login_failed")]
             if failed:
                 log.warning("SESSAO FORA DO AR (login falhou): %s", ", ".join(failed))
+            # Sessão viva e MESMO ASSIM zero preço = a grid não renderizou. Some da tela
+            # sem barulho nenhum (o preço velho continua lá parecendo do dia), então
+            # o barulho tem de ser feito aqui.
+            mudos = [s for s, hh in healths.items()
+                     if not hh.get("login_failed") and hh.get("prices") == 0]
+            if mudos:
+                log.warning("SESSAO VIVA MAS SEM PRECO (grid nao renderizou): %s",
+                            ", ".join(mudos))
         except Exception as e:
             log.warning("source_health: falha ao registrar: %s", e)
 

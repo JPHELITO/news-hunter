@@ -1318,33 +1318,75 @@ def update_sina_commodities() -> int:
     return _supa_upsert("commodities", rows)
 
 
+def _assessed_at_guardado(codes: list[str]) -> dict[str, str]:
+    """`{code: assessed_at}` do que já está na tabela. {} se a leitura falhar."""
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key or not codes:
+        return {}
+    try:
+        r = requests.get(f"{url}/rest/v1/commodities?select=code,assessed_at"
+                         f"&code=in.({','.join(codes)})",
+                         headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+        if not r.ok:
+            return {}
+        return {x["code"]: str(x["assessed_at"])[:10] for x in r.json() if x.get("assessed_at")}
+    except Exception as e:
+        log.warning("platts: não deu para ler o assessed_at guardado (%s) — "
+                    "seguindo sem a trava de data", e)
+        return {}
+
+
 def update_platts_commodities(platts_prices: dict) -> int:
     """Grava as commodities Platts na tabela — a watchlist 'Dashboard' CURADA.
 
     Chamado quando --playwright capturou preços (hunt-playwright, 30 min). Itera
     PLATTS_COMMODITIES (os símbolos registrados = a watchlist do analista) e grava
-    cada um que foi capturado (preço via feed de rede e/ou DOM). Escopo curado evita
-    puxar ruído de outras abas do workspace. Símbolos não capturados são pulados
-    (mantém o valor anterior). Para ADICIONAR/REMOVER um indicador: editar
-    PLATTS_COMMODITIES aqui + _PRICE_SYMBOLS no platts_scraper.
+    cada um que foi capturado NA GRID. Escopo curado evita puxar ruído de outras abas
+    do workspace. Símbolos não capturados são pulados (mantém o valor anterior). Para
+    ADICIONAR/REMOVER um indicador: editar PLATTS_COMMODITIES aqui + _PRICE_SYMBOLS no
+    platts_scraper.
+
+    ⚠️ DUAS TRAVAS, e as duas nasceram do mesmo estrago (09/09/2026, IODEX 61%):
+
+    1. **Sem data, não grava.** O preço, a variação e a data têm de vir da mesma leitura.
+       Gravar só o preço deixava a data ANTERIOR de pé, e a tela passava a jurar que um
+       número de anteontem era o de ontem — com a variação em branco, porque também não
+       veio. Um preço órfão de data é indistinguível de um número achado por aí.
+    2. **Data não anda para trás.** Se o que chega for de um dia ANTERIOR ao que já está
+       gravado, o preço guardado é mais novo e fica. Assessment não retrocede; só é
+       reescrito no mesmo dia (revisão da Platts, que existe e é legítima).
+
+    Esta é a rede embaixo do scraper: mesmo que a captura volte a trazer lixo um dia,
+    lixo sem data ou com data velha não chega à tela do analista.
     """
-    rows = []
+    guardado = _assessed_at_guardado([c for c, _, _ in PLATTS_COMMODITIES.values()])
+    rows, recusados = [], []
     for symbol, (code, name, unit) in PLATTS_COMMODITIES.items():
         d = platts_prices.get(symbol)
         if not d or d.get("price") is None:
             log.info("platts: %s (%s) não capturado — mantém valor atual", symbol, name)
             continue
-        row = {
-            "code":       code,
-            "name":       name,
-            "unit":       unit,
-            "price":      d["price"],
-            "change_pct": d.get("change_pct"),
-            "updated_at": _now_iso(),
-        }
-        if d.get("assessed_at"):           # data real do assessment (coluna Assessed Date)
-            row["assessed_at"] = d["assessed_at"]
-        rows.append(row)
+        assessed = str(d.get("assessed_at") or "")[:10]
+        if not assessed:
+            recusados.append(f"{symbol} sem data (preço {d['price']})")
+            continue
+        anterior = guardado.get(code)
+        if anterior and assessed < anterior:
+            recusados.append(f"{symbol} data {assessed} < guardada {anterior}")
+            continue
+        rows.append({
+            "code":        code,
+            "name":        name,
+            "unit":        unit,
+            "price":       d["price"],
+            "change_pct":  d.get("change_pct"),
+            "assessed_at": assessed,       # data real do assessment (coluna Assessed Date)
+            "updated_at":  _now_iso(),
+        })
+    if recusados:
+        log.warning("platts: %d leitura(s) RECUSADA(S) — mantêm o valor anterior: %s",
+                    len(recusados), "; ".join(recusados))
     if rows:
         log.info("platts commodities (%d/%d): %s", len(rows), len(PLATTS_COMMODITIES),
                  {r["name"]: r["price"] for r in rows})

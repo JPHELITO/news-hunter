@@ -33,9 +33,20 @@ log = logging.getLogger(__name__)
 # Símbolos de preço que queremos capturar do workspace Platts:
 #   IODBZ00 = Iron Ore 61% (IODEX CFR China) | STHRZ02 = HRC China
 #   STCBM00 = Rebar Turkey                    | PLVHA00 = Asian Met Coal
+#
+# ⚠️ ESTA LISTA JÁ SERVIU PARA VASCULHAR A REDE — E ERA POR AÍ QUE ENTRAVA PREÇO VELHO.
+# Até 10/09/2026 toda resposta JSON da página era varrida atrás destes símbolos. Só que
+# as MATÉRIAS da Platts também carregam preço: uma análise escrita em 08/09 traz dentro
+# dela o assessment de 08/09. Como o último achado vencia, o buffer terminava a fase de
+# notícias com números de dias anteriores — sem data e sem variação, que a varredura não
+# tinha como saber. Enquanto a leitura do DOM funcionava, ela sobrescrevia tudo e ninguém
+# via. Quando a grid não renderizava (medido: 1 de 2 execuções seguidas), o lixo ficava e
+# era publicado. Foi assim que o IODEX 61% apareceu a 100,6 (o valor de 08/09) com a data
+# de 09/09 e a variação em branco. Reproduzido ao vivo em 10/09/2026.
+# Preço agora vem SÓ da grid, onde preço, variação e data saem da mesma linha.
 _PRICE_SYMBOLS = {
-    # Watchlist 'Dashboard' do Platts — capturados via feed de rede (_extract_prices)
-    # e/ou DOM. Mantido em sincronia com PLATTS_COMMODITIES em prices.py.
+    # Watchlist 'Dashboard' do Platts — lidos do DOM da grid.
+    # Mantido em sincronia com PLATTS_COMMODITIES em prices.py.
     "IODBZ00", "STHRZ02", "STCBM00", "PLVHA00",          # core
     "IOPRM00", "IODFE00", "IOMGD00",                     # IO grades/diff
     "IOPBQ00", "IOBBA00", "IONHA00", "IOMAA00", "IOJBA00",  # IO marcas/blends
@@ -59,9 +70,14 @@ def _set_login_failed(v: bool) -> None:
 
 
 def get_platts_health() -> dict:
-    """Saúde da última execução: {'login_failed': bool}. True = sessão não pôde ser
-    estabelecida (expirada + autologin falhou, ou sem credenciais)."""
-    return {"login_failed": _login_failed}
+    """Saúde da última execução: login + quantos preços a grid entregou.
+
+    `login_failed=True` = sessão não pôde ser estabelecida (expirada + autologin falhou,
+    ou sem credenciais). `prices` = símbolos lidos da watchlist; ZERO com a sessão viva é
+    o sinal de que a grid não renderizou — a falha que ficava calada, porque o preço
+    velho continuava na tela como se fosse do dia.
+    """
+    return {"login_failed": _login_failed, "prices": len(_platts_prices)}
 
 # Regra de negócio (usuário): TODA notícia da Platts entra no news hunter/clipinator,
 # EXCETO "Rationale" (metodologia de preço — "NÃO usar notícias Rationale"). Barrado
@@ -192,6 +208,44 @@ def _parse_assessed_date(text: str | None) -> str | None:
     return None
 
 
+def _entradas_da_grid(dom_rows: dict) -> tuple[dict[str, dict], list[str]]:
+    """Linhas cruas da grid → `{símbolo: {price, assessed_at, change_pct?, ...}}`.
+
+    Devolve também a lista do que foi descartado, para o log.
+
+    ⚠️ REGRA DA CASA: PREÇO SEM DATA NÃO É PREÇO. A linha só entra se a célula da data
+    existir e for legível — preço, variação e data têm de sair da MESMA leitura da MESMA
+    linha. Publicar o preço sozinho deixava a data anterior de pé, e a tela dizia "ontem"
+    sobre um número de anteontem, com a variação em branco. Foi exatamente o que
+    aconteceu com o IODEX 61% em 09/09/2026.
+    """
+    out: dict[str, dict] = {}
+    descartadas: list[str] = []
+    for sym, raw in (dom_rows or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        val = _parse_price(raw.get("price"))
+        if val is None:
+            continue
+        assessed_raw = (raw.get("assessed") or "").strip()
+        iso = _parse_assessed_date(assessed_raw) if assessed_raw else None
+        if not iso:
+            descartadas.append(f"{sym}({assessed_raw or 'vazia'})")
+            continue
+        entry = {"price": val, "assessed_at": iso}
+        chg = _parse_price(raw.get("change") or "")
+        if chg is not None:
+            entry["change_pct"] = chg
+        desc = (raw.get("desc") or "").strip()
+        if desc:
+            entry["desc"] = desc
+        freq = (raw.get("freq") or "").strip()
+        if freq:
+            entry["freq"] = freq
+        out[sym] = entry
+    return out, descartadas
+
+
 # JS para ler preços direto da tabela AG-Grid renderizada (DOM).
 # Mais robusto que interceptar rede — lê exatamente o que está na tela.
 _DOM_PRICE_JS = """
@@ -253,33 +307,6 @@ _DOM_PRICE_JS = """
                  date: !!dateCol, freq: !!freqCol}};
 }
 """
-
-
-def _extract_prices(data, out: dict) -> None:
-    """Busca recursivamente preços dos símbolos _PRICE_SYMBOLS em qualquer resposta JSON."""
-    if isinstance(data, dict):
-        sym = (data.get("symbol") or data.get("Symbol") or
-               data.get("code")   or data.get("Code")   or
-               data.get("ticker") or data.get("Ticker") or "")
-        if sym in _PRICE_SYMBOLS:
-            price_val = (
-                data.get("price")          or data.get("Price")          or
-                data.get("value")          or data.get("Value")          or
-                data.get("latestValue")    or data.get("assessedPrice")  or
-                data.get("closePrice")     or data.get("settlementPrice") or
-                data.get("lastPrice")      or data.get("midPrice")
-            )
-            if price_val is not None:
-                try:
-                    out[sym] = {"price": float(price_val)}
-                    log.info("platts_prices: %s = %s", sym, price_val)
-                except (TypeError, ValueError):
-                    pass
-        for v in data.values():
-            _extract_prices(v, out)
-    elif isinstance(data, list):
-        for item in data:
-            _extract_prices(item, out)
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -502,17 +529,11 @@ def _scrape() -> list[RawArticle]:
                 log.debug("platts_scraper headlines parse error: %s", e)
             return
 
-        # Preços — inspeciona toda resposta JSON em busca dos símbolos IODEX
-        if response.status != 200:
-            return
-        ct = response.headers.get("content-type", "")
-        if "json" not in ct:
-            return
-        try:
-            data = json.loads(response.body().decode("utf-8", errors="replace"))
-            _extract_prices(data, price_buf)
-        except Exception:
-            pass
+        # ⚠️ NÃO EXISTE MAIS CAPTURA DE PREÇO POR AQUI — ver o comentário grande em
+        # _PRICE_SYMBOLS. Preço só entra pelo DOM da watchlist, junto com a data e a
+        # variação da MESMA linha. Toda resposta JSON da página era vasculhada atrás dos
+        # símbolos, e as matérias trazem o assessment do dia em que foram escritas: era
+        # daí que vinha o número velho.
 
     with sync_playwright() as p:
         browser = launch_browser(p)
@@ -601,17 +622,30 @@ def _scrape() -> list[RawArticle]:
                 except Exception as e:
                     log.debug("platts_scraper: aba Dashboard não clicada: %s", e)
 
-                # Tenta ler do DOM até 3x (a grid pode demorar a popular)
+                # Espera a grid EXISTIR em vez de dormir um tempo fixo: ela é assíncrona e
+                # a troca de aba a reconstrói. Medido em 10/09/2026: em duas execuções
+                # seguidas, uma leu 20 símbolos e a outra leu ZERO (rowCount=0, nenhum
+                # cabeçalho) — a grid simplesmente ainda não estava lá. Sair mais cedo
+                # quando ela vem rápido, e insistir até 30s quando demora.
+                try:
+                    page.wait_for_selector(".ag-row", timeout=30_000)
+                except Exception:
+                    log.warning("platts_scraper: a grid do workspace não renderizou em 30s")
+
+                # Tenta ler do DOM (a grid existe, mas as células podem chegar depois)
                 dom_rows = {}
                 row_count = 0
                 cols_found = {}
-                for attempt in range(3):
+                for attempt in range(4):
                     try:
                         res = page.evaluate(_DOM_PRICE_JS)
                         dom_rows = res.get("rows", {}) if isinstance(res, dict) else {}
                         row_count = res.get("rowCount", 0) if isinstance(res, dict) else 0
                         cols_found = res.get("cols", {}) if isinstance(res, dict) else {}
-                        if dom_rows:
+                        # exige a coluna da DATA: sem ela nenhuma linha é publicável
+                        # (preço sem data não é preço — ver o merge abaixo), então ler
+                        # de novo é melhor que sair com uma safra inteira que será jogada fora.
+                        if dom_rows and cols_found.get("date"):
                             break
                         page.wait_for_timeout(4_000)
                     except Exception as e:
@@ -621,35 +655,17 @@ def _scrape() -> list[RawArticle]:
                 log.info("platts_scraper: DOM grid rows=%d, cols=%s, símbolos (%d)=%s",
                          row_count, cols_found, len(dom_rows), list(dom_rows.keys()))
 
-                # Parseia e mescla no price_buf (DOM tem prioridade sobre rede).
-                # Watchlist INTEIRA: cada linha = {price, change%, desc}.
-                for sym, raw in dom_rows.items():
-                    if not isinstance(raw, dict):
-                        continue
-                    val = _parse_price(raw.get("price"))
-                    if val is None:
-                        continue
-                    entry = {"price": val}
-                    chg = _parse_price(raw.get("change") or "")
-                    if chg is not None:
-                        entry["change_pct"] = chg
-                    desc = (raw.get("desc") or "").strip()
-                    if desc:
-                        entry["desc"] = desc
-                    assessed_raw = (raw.get("assessed") or "").strip()
-                    if assessed_raw:
-                        iso = _parse_assessed_date(assessed_raw)
-                        if iso:
-                            entry["assessed_at"] = iso
-                        else:
-                            log.info("platts_scraper: assessed date não parseada p/ %s: %r",
-                                     sym, assessed_raw)
-                    freq = (raw.get("freq") or "").strip()
-                    if freq:
-                        entry["freq"] = freq
-                    price_buf[sym] = entry
+                lidas, sem_data = _entradas_da_grid(dom_rows)
+                price_buf.update(lidas)
+                if sem_data:
+                    log.warning("platts_scraper: %d linha(s) sem data de assessment legível — "
+                                "descartadas: %s", len(sem_data), ", ".join(sem_data))
                 log.info("platts_scraper: %d símbolos capturados via DOM (watchlist inteira)", len(price_buf))
 
+                faltando = sorted(_PRICE_SYMBOLS - set(price_buf))
+                if faltando:
+                    log.warning("platts_scraper: %d símbolo(s) registrados NÃO vieram da grid "
+                                "(mantêm o valor anterior): %s", len(faltando), ", ".join(faltando))
                 log.info("platts_scraper: preços finais capturados: %s", list(price_buf.keys()))
             except Exception as e:
                 log.warning("platts_scraper: workspace navigation error: %s", e)
