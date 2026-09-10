@@ -273,3 +273,21 @@ def test_codes_sao_unicos_e_nao_colidem_com_os_do_platts():
     assert len(codes) == len(set(codes))
     platts = {c for c, _, _ in pr.PLATTS_COMMODITIES.values()}
     assert not (set(codes) & platts)
+
+
+def test_preco_sem_data_nao_e_publicado(upserts):
+    """Mesma regra do Platts (incidente de 09/09/2026): preço sem data não é preço.
+
+    Gravar o preço sozinho deixaria o `assessed_at` anterior de pé, e o cartão passaria a
+    jurar que um número velho é do dia — foi assim que o IODEX 61% mentiu a idade.
+    A API da FM casa preço e data na mesma linha, então isto é a trava para o dia em que
+    ela mudar de formato.
+    """
+    pr.update_fastmarkets_commodities({"FP-PLP-0034": {"price": 638.72, "change_pct": 0.5}})
+    assert upserts == [] or _por_code(upserts[0][1]) == {}
+
+
+def test_data_do_assessment_vai_junto_com_o_preco(upserts):
+    pr.update_fastmarkets_commodities({"FP-PLP-0034": _import("2026-09-04")})
+    r = _por_code(upserts[0][1])["PULP_NBSK_CHINA"]
+    assert r["assessed_at"] == "2026-09-04" and r["price"] == 638.72

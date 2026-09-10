@@ -1478,6 +1478,14 @@ def update_fastmarkets_commodities(fm_prices: dict) -> int:
         if not d or d.get("price") is None:
             log.info("fastmarkets: %s (%s) não capturado — mantém valor atual", symbol, name)
             continue
+        # Mesma regra do Platts: PREÇO SEM DATA NÃO É PREÇO (ver update_platts_commodities).
+        # Aqui `_collect_prices` já casa preço e data na mesma linha, então isto nunca deve
+        # disparar — é a trava para o dia em que a API mudar de formato. Gravar o preço
+        # sozinho deixaria a data anterior de pé, e a tela mentiria a idade do assessment.
+        if not str(d.get("assessed_at") or "")[:10]:
+            log.warning("fastmarkets: %s (%s) veio sem data de assessment — mantém valor atual",
+                        symbol, name)
+            continue
         preco, variacao = d["price"], d.get("change_pct")
         if symbol in _FM_RESALE_CNY:
             if not fx:
@@ -1498,17 +1506,15 @@ def update_fastmarkets_commodities(fm_prices: dict) -> int:
                 if ant:
                     variacao = round((preco / ant - 1) * 100, 4)
             log.info("fastmarkets: %s resale %.2f CNY / %.4f = %.2f USD", symbol, cny, fx, preco)
-        row = {
-            "code":       code,
-            "name":       name,
-            "unit":       unit,
-            "price":      preco,
-            "change_pct": variacao,
-            "updated_at": _now_iso(),
-        }
-        if d.get("assessed_at"):
-            row["assessed_at"] = d["assessed_at"]
-        rows.append(row)
+        rows.append({
+            "code":        code,
+            "name":        name,
+            "unit":        unit,
+            "price":       preco,
+            "change_pct":  variacao,
+            "assessed_at": str(d["assessed_at"])[:10],
+            "updated_at":  _now_iso(),
+        })
     if rows:
         log.info("fastmarkets commodities (%d/%d): %s", len(rows), len(FASTMARKETS_COMMODITIES),
                  {r["name"]: r["price"] for r in rows})
