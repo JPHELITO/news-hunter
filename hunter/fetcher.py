@@ -45,6 +45,34 @@ def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", " ", text or "").strip()
 
 
+# Aviso que o Valor põe no lugar do resumo da matéria de ASSINANTE. Não diz nada sobre o
+# conteúdo: só ocupava o snippet (e aparecia assim na aba News).
+_PAYWALL_TEASER_RE = re.compile(
+    r"Mat[ée]ria exclusiva para assinantes\.?(?:\s*Para ter acesso completo[^.]*\.)?",
+    re.IGNORECASE,
+)
+
+
+def _entry_snippet(entry) -> str:
+    """Resumo do item: linha fina (subtítulo) + descrição, sem o aviso de paywall.
+
+    O Valor manda a linha fina em <atom:subtitle> (feedparser → entry.subtitle), e só
+    líamos a <description>. Na matéria de ASSINANTE (43 de 100 itens do feed medido em
+    30/09/2026) a description é SÓ o aviso de paywall → o filtro de keyword via apenas o
+    título, e manchete de jornal nem sempre traz a palavra do setor. Caso real
+    (30/09/2026): "Frete e preço baixo levam a corte de produção em mineradoras" foi
+    descartada; a linha fina dizia "CSN Mineração reduziu produção do minério…".
+    A linha fina vem PRIMEIRO para não ser cortada pelo limite de 400 caracteres.
+    """
+    subtitle = _strip_html(entry.get("subtitle", ""))
+    desc = _PAYWALL_TEASER_RE.sub(" ", _strip_html(
+        entry.get("summary", "") or entry.get("description", "")
+    )).strip()
+    if subtitle and subtitle not in desc:
+        desc = f"{subtitle} {desc}".strip()
+    return desc[:400]
+
+
 def _parse_date(entry) -> Optional[datetime]:
     for attr in ("published_parsed", "updated_parsed"):
         val = getattr(entry, attr, None)
@@ -145,9 +173,7 @@ def _fetch_one(source: dict) -> list[RawArticle]:
         if published_at and published_at < cutoff:
             continue
 
-        snippet = _strip_html(
-            entry.get("summary", "") or entry.get("description", "")
-        )[:400]
+        snippet = _entry_snippet(entry)
 
         articles.append(RawArticle(
             url=raw_url,

@@ -244,6 +244,83 @@ class TestBlockedDomains:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Linha fina do Valor — regressão de 2026-09-30
+# ─────────────────────────────────────────────────────────────────────────────
+import feedparser
+
+from hunter.fetcher import _entry_snippet
+
+# Item copiado do feed real (pox.globo.com/rss/valor/empresas, 30/09/2026). Matéria de
+# ASSINANTE: a <description> é só o aviso de paywall; a linha fina vem em <atom:subtitle>.
+_VALOR_RSS = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+<channel><title>valor &gt; Empresas</title>
+<item> <title>Frete e preço baixo levam a corte de produção em mineradoras</title>
+ <atom:subtitle>CSN Mineração reduziu produção do minério, aumentando lista de empresas que já vinham reagindo ao cenário; papéis tiveram a segunda maior queda do Ibovespa</atom:subtitle>
+ <link>https://valor.globo.com/empresas/noticia/2026/09/30/frete-e-preco-baixo-levam-a-corte-de-producao-em-mineradoras.ghtml</link>
+ <description> <![CDATA[ <img src="https://s2-valor.glbimg.com/x/arte30emp-201-minerio-b1.jpg" /><br /> ]]>    Matéria exclusiva para assinantes. Para ter acesso completo, acesse o link da matéria e faça o seu cadastro.  </description>
+ <pubDate>Wed, 30 Sep 2026 08:00:00 -0000</pubDate>
+</item>
+<item> <title>Tenda aprova recompra de até 5 milhões de ações</title>
+ <atom:subtitle>Programa terá a duração de até 12 meses</atom:subtitle>
+ <link>https://valor.globo.com/empresas/noticia/2026/09/30/tenda.ghtml</link>
+ <description>A Tenda aprovou um programa de recompra de até 5 milhões de ações ordinárias.</description>
+ <pubDate>Wed, 30 Sep 2026 11:24:38 -0000</pubDate>
+</item>
+</channel></rss>"""
+
+
+class TestValorLinhaFina:
+    """O Valor manda a linha fina em <atom:subtitle> e, na matéria de assinante, só o aviso
+    de paywall na <description>. Lendo só a description, o filtro via apenas o título."""
+
+    def _entries(self):
+        return feedparser.parse(_VALOR_RSS).entries
+
+    def test_snippet_da_assinante_traz_a_linha_fina(self):
+        snip = _entry_snippet(self._entries()[0])
+        assert snip.startswith("CSN Mineração reduziu produção do minério")
+
+    def test_aviso_de_paywall_sai_do_snippet(self):
+        snip = _entry_snippet(self._entries()[0])
+        assert "assinantes" not in snip.lower()
+        assert "cadastro" not in snip.lower()
+
+    def test_materia_aberta_mantem_a_descricao(self):
+        snip = _entry_snippet(self._entries()[1])
+        assert snip == ("Programa terá a duração de até 12 meses "
+                        "A Tenda aprovou um programa de recompra de até 5 milhões de ações ordinárias.")
+
+    def test_sem_subtitulo_nada_muda(self):
+        """As outras fontes não mandam subtítulo: o snippet segue sendo a description."""
+        e = feedparser.parse(_VALOR_RSS.replace("atom:subtitle", "atom:ignorar")).entries[1]
+        assert _entry_snippet(e) == "A Tenda aprovou um programa de recompra de até 5 milhões de ações ordinárias."
+
+    def test_linha_fina_nao_duplica_quando_ja_esta_na_descricao(self):
+        rss = _VALOR_RSS.replace("A Tenda aprovou um programa",
+                                 "Programa terá a duração de até 12 meses. A Tenda aprovou um programa")
+        snip = _entry_snippet(feedparser.parse(rss).entries[1])
+        assert snip.count("Programa terá a duração") == 1
+
+    def test_linha_fina_sobrevive_ao_corte_de_400(self):
+        rss = _VALOR_RSS.replace("A Tenda aprovou", "A Tenda aprovou " + "texto longo " * 60)
+        snip = _entry_snippet(feedparser.parse(rss).entries[1])
+        assert len(snip) == 400 and snip.startswith("Programa terá a duração")
+
+    def test_a_materia_da_csn_mineracao_passa_no_filtro(self):
+        e = self._entries()[0]
+        art = _mk(e.title, _entry_snippet(e), "Valor Econômico")
+        got = filter_articles([art])
+        assert len(got) == 1
+        assert {"csn", "mineração"} <= set(got[0]["matched_keywords"])
+
+    def test_mineradoras_no_titulo_basta(self):
+        """Mesmo sem linha fina (8 de 100 assinantes do feed não têm), a manchete entra."""
+        assert _passes("Frete e preço baixo levam a corte de produção em mineradoras", "", "Valor Econômico")
+        assert _passes("Mineradora canadense compra projeto de minério no Pará", "", "Folha de S.Paulo")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Registro de fontes — trava as decisões de filtro que foram MEDIDAS
 # ─────────────────────────────────────────────────────────────────────────────
 from hunter.sources import SOURCES

@@ -55,7 +55,7 @@ SECTOR_KEYWORDS = {
         "rare earth", "terras raras", "critical minerals",
         "gold", "ouro", "silver", "prata",
         # mercado mineração
-        "mineração", "mining", "minerais", "setor mineral",
+        "mineração", "mineradora", "mining", "minerais", "setor mineral",
         "IODEX", "TSI 62%", "iron ore price",
         # regulatório
         "CFEM", "barragem de rejeitos", "tailings dam",

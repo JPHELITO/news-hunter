@@ -113,6 +113,10 @@ STEEL_MARKET = [
     "iron ore prices", "pellet prices",
     "siderurgia", "siderúrgica", "indústria siderúrgica",
     "mineração", "setor mineral",
+    # "mineradora" = a palavra do jornal para a EMPRESA de mineração, e faltava (2026-09-30):
+    # "Frete e preço baixo levam a corte de produção em mineradoras" (Valor, sobre a CSN
+    # Mineração) foi descartada. O filtro casa palavra INTEIRA → o plural vai escrito.
+    "mineradora", "mineradoras",
     "IODEX", "TSI 62%",
     "China stimulus", "Chinese steel demand", "China steel output",
     "property sector China", "setor imobiliário China",
