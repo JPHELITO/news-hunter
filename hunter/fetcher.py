@@ -63,8 +63,8 @@ _COVERED_HEAD_RE = re.compile(
 )
 
 
-def _covered_digest_sections(desc: str) -> list[str]:
-    """Seções de um RESUMO de várias empresas cujo título é uma coberta ("Nome: texto").
+def _covered_digest_sections(desc: str) -> list[tuple[str, str]]:
+    """Seções de um RESUMO de várias empresas cujo título é uma coberta: (nome, texto).
 
     A "Agenda de empresas" do Valor vem na <description> em blocos separados por linha
     em branco: o nome da empresa sozinho na 1ª linha, o texto embaixo. O título da matéria
@@ -83,8 +83,25 @@ def _covered_digest_sections(desc: str) -> list[str]:
             sections.append((lines[0], " ".join(lines[1:])))
     if len(sections) < 3:
         return []
-    return [f"{head}: {body}" for head, body in sections
+    return [(head, body) for head, body in sections
             if _COVERED_HEAD_RE.match(normalize_text(head))]
+
+
+def _entry_title(entry) -> str:
+    """Título do item; num resumo de várias empresas, com o nome das cobertas na frente.
+
+    O título da "Agenda de empresas" só cita as primeiras empresas ("Agenda de empresas:
+    BNDES financia Azul; …") e a home corta o título em 2 linhas → o cliente não via por
+    que a matéria estava ali. Mesmo padrão dos comunicados da CVM (cvm_filings: o nome vai
+    na frente só se o título ainda não o cita): "Usiminas — Agenda de empresas: …".
+    """
+    title = _strip_html(entry.get("title", "")).strip()
+    if not title:
+        return ""
+    in_title = normalize_text(title)
+    heads = [head for head, _ in _covered_digest_sections(entry.get("summary", "") or entry.get("description", ""))
+             if not re.search(r"(?<!\w)" + re.escape(normalize_text(head)) + r"(?!\w)", in_title)]
+    return f"{', '.join(heads)} — {title}" if heads else title
 
 
 def _entry_snippet(entry) -> str:
@@ -105,7 +122,7 @@ def _entry_snippet(entry) -> str:
     raw_desc = entry.get("summary", "") or entry.get("description", "")
     covered = _covered_digest_sections(raw_desc)
     if covered:
-        desc, limit = " · ".join(covered), 400 * len(covered)
+        desc, limit = " · ".join(f"{head}: {body}" for head, body in covered), 400 * len(covered)
     else:
         desc, limit = _PAYWALL_TEASER_RE.sub(" ", _strip_html(raw_desc)).strip(), 400
     if subtitle and subtitle not in desc:
@@ -202,7 +219,7 @@ def _fetch_one(source: dict) -> list[RawArticle]:
     # Folha/G1 devolvem ~100, todos dentro de 72h → metade era descartada).
     articles: list[RawArticle] = []
     for entry in feed.entries:
-        title = _strip_html(entry.get("title", "")).strip()
+        title = _entry_title(entry)
         if not title:
             continue
         raw_url = entry.get("link", "").strip()

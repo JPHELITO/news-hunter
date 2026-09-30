@@ -248,7 +248,7 @@ class TestBlockedDomains:
 # ─────────────────────────────────────────────────────────────────────────────
 import feedparser
 
-from hunter.fetcher import _covered_digest_sections, _entry_snippet
+from hunter.fetcher import _covered_digest_sections, _entry_snippet, _entry_title
 
 # Item copiado do feed real (pox.globo.com/rss/valor/empresas, 30/09/2026). Matéria de
 # ASSINANTE: a <description> é só o aviso de paywall; a linha fina vem em <atom:subtitle>.
@@ -390,6 +390,57 @@ class TestResumoDeEmpresas:
         desc = _AGENDA_DESC.replace("Usiminas\nO presidente", "Governo e Usiminas\nO presidente")
         assert not _covered_digest_sections(desc)
         assert _entry_snippet(_Entry(summary=desc)).startswith("Azul\nA Azul assinou")
+
+
+class TestTituloDoResumo:
+    """A home corta o título em 2 linhas: o nome da coberta vai na FRENTE (padrão da CVM)."""
+
+    def test_agenda_real_ganha_o_nome_da_usiminas(self):
+        assert _entry_title(_Entry(title=_AGENDA_TITLE, summary=_AGENDA_DESC)) == (
+            "Usiminas — Agenda de empresas: BNDES financia Azul; acionista pede novo conselho na Oncoclínicas")
+
+    def test_duas_cobertas_fora_do_titulo(self):
+        desc = _AGENDA_DESC.replace("Brava Energia\nA Brava Energia iniciou", "Gerdau\nA Gerdau anunciou")
+        assert _entry_title(_Entry(title=_AGENDA_TITLE, summary=desc)).startswith(
+            "Usiminas, Gerdau — Agenda de empresas:")
+
+    def test_coberta_que_o_titulo_ja_cita_nao_repete(self):
+        """Caso real de 01/09: Suzano no título e Gerdau escondida → só a Gerdau vai na frente."""
+        desc = (_AGENDA_DESC.replace("Azul\nA Azul assinou", "Suzano\nA Suzano comprou")
+                .replace("Brava Energia\nA Brava Energia iniciou", "Gerdau\nA Gerdau anunciou")
+                .replace("Usiminas\nO presidente da Usiminas", "Copasa\nO presidente da Copasa"))
+        title = "Agenda de empresas: Suzano compra fatia em terminal portuário; Heringer obtém cautelar"
+        assert _entry_title(_Entry(title=title, summary=desc)) == f"Gerdau — {title}"
+
+    def test_titulo_ja_cita_todas_fica_igual(self):
+        title = "Agenda de empresas: Usiminas mantém produção; BNDES financia Azul"
+        assert _entry_title(_Entry(title=title, summary=_AGENDA_DESC)) == title
+
+    def test_csn_no_titulo_nao_esconde_a_csn_mineracao(self):
+        """'CSN' no título não é a CSN Mineração (outra coberta, CMIN)."""
+        desc = _AGENDA_DESC.replace("Usiminas\nO presidente da Usiminas", "CSN Mineração\nO presidente da CSN Mineração")
+        title = "Agenda de empresas: Steinbruch deixa presidência da CSN; Energisa compra usinas"
+        assert _entry_title(_Entry(title=title, summary=desc)) == f"CSN Mineração — {title}"
+
+    def test_materia_comum_fica_igual(self):
+        e = feedparser.parse(_VALOR_RSS).entries[0]
+        assert _entry_title(e) == "Frete e preço baixo levam a corte de produção em mineradoras"
+
+    def test_leitor_do_feed_usa_o_titulo_novo(self, monkeypatch):
+        """Ponta a ponta no _fetch_one: o item que vai pro banco sai com título e resumo novos."""
+        import hunter.fetcher as fetcher
+        from email.utils import format_datetime
+        rss = (_VALOR_RSS.split("<item>")[0]
+               + f"<item><title>{_AGENDA_TITLE}</title>"
+               + "<link>https://valor.globo.com/empresas/noticia/2026/09/30/agenda-de-empresas.ghtml</link>"
+               + f"<description><![CDATA[{_AGENDA_DESC}]]></description>"
+               + f"<pubDate>{format_datetime(_NOW)}</pubDate></item></channel></rss>")
+        monkeypatch.setattr(fetcher, "_http_get", lambda url: (200, rss.encode("utf-8")))
+        arts = fetcher._fetch_one({"label": "Valor Econômico", "url": "x", "filter": True})
+        assert len(arts) == 1
+        assert arts[0].title.startswith("Usiminas — Agenda de empresas:")
+        assert arts[0].snippet.startswith("Usiminas: O presidente da Usiminas")
+        assert len(filter_articles(arts)) == 1
 
 
 class TestReciclagemDePapel:
