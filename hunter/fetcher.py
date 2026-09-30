@@ -13,6 +13,7 @@ import feedparser
 import requests
 
 from .config import MAX_PER_SOURCE, WINDOW_HOURS
+from .news_take_classifier import COVERED_COMPANY_ALIASES, normalize_text
 from .sources import SOURCES
 
 log = logging.getLogger(__name__)
@@ -53,6 +54,39 @@ _PAYWALL_TEASER_RE = re.compile(
 )
 
 
+# Título de seção que É uma das cobertas ("Usiminas", "CSN Mineração", "Gerdau"…), já
+# normalizado (sem acento, minúsculo). Âncora no início: a seção tem de ser SOBRE a empresa.
+_COVERED_HEAD_RE = re.compile(
+    r"^(?:" + "|".join(re.escape(a) for a in sorted(
+        {normalize_text(a) for aliases in COVERED_COMPANY_ALIASES.values() for a in aliases},
+        key=len, reverse=True)) + r")(?!\w)"
+)
+
+
+def _covered_digest_sections(desc: str) -> list[str]:
+    """Seções de um RESUMO de várias empresas cujo título é uma coberta ("Nome: texto").
+
+    A "Agenda de empresas" do Valor vem na <description> em blocos separados por linha
+    em branco: o nome da empresa sozinho na 1ª linha, o texto embaixo. O título da matéria
+    só cita as primeiras, e o snippet só levava os primeiros 400 caracteres → o item da
+    coberta no meio do resumo sumia (Usiminas em 30/09/2026, no caractere ~700; em
+    setembro também Gerdau 11/09, CSN 15/09 e Irani 18/09). Exige 3+ seções e a coberta
+    no TÍTULO da seção: nome citado no meio de uma frase (ex.: lista de palestrantes de
+    um evento) não conta. Medido em 1.134 itens do Valor: só a Usiminas de 30/09 dispara.
+    """
+    text = re.sub(r"<br\s*/?>", "\n", desc or "", flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    sections = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = [ln.strip() for ln in block.strip().split("\n") if ln.strip()]
+        if len(lines) >= 2 and len(lines[0]) <= 60 and not lines[0].endswith("."):
+            sections.append((lines[0], " ".join(lines[1:])))
+    if len(sections) < 3:
+        return []
+    return [f"{head}: {body}" for head, body in sections
+            if _COVERED_HEAD_RE.match(normalize_text(head))]
+
+
 def _entry_snippet(entry) -> str:
     """Resumo do item: linha fina (subtítulo) + descrição, sem o aviso de paywall.
 
@@ -63,14 +97,20 @@ def _entry_snippet(entry) -> str:
     (30/09/2026): "Frete e preço baixo levam a corte de produção em mineradoras" foi
     descartada; a linha fina dizia "CSN Mineração reduziu produção do minério…".
     A linha fina vem PRIMEIRO para não ser cortada pelo limite de 400 caracteres.
+    Num resumo de várias empresas, a descrição dá lugar às seções das cobertas
+    (ver _covered_digest_sections), cada uma com o espaço de um snippet: com duas
+    cobertas no mesmo resumo (Suzano e Gerdau em 01/09/2026), a 2ª não pode ser cortada.
     """
     subtitle = _strip_html(entry.get("subtitle", ""))
-    desc = _PAYWALL_TEASER_RE.sub(" ", _strip_html(
-        entry.get("summary", "") or entry.get("description", "")
-    )).strip()
+    raw_desc = entry.get("summary", "") or entry.get("description", "")
+    covered = _covered_digest_sections(raw_desc)
+    if covered:
+        desc, limit = " · ".join(covered), 400 * len(covered)
+    else:
+        desc, limit = _PAYWALL_TEASER_RE.sub(" ", _strip_html(raw_desc)).strip(), 400
     if subtitle and subtitle not in desc:
         desc = f"{subtitle} {desc}".strip()
-    return desc[:400]
+    return desc[:limit]
 
 
 def _parse_date(entry) -> Optional[datetime]:

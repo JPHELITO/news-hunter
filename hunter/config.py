@@ -183,6 +183,11 @@ PULP_PAPER = [
     "Ibá", "ABTCP",
     # Gaps P&P (auditoria 2026-06-25)
     "kraftliner", "PIX kraftliner", "recovered fiber", "recovered paper",
+    # O mesmo em PORTUGUÊS (aparas = matéria-prima da Irani e do reciclado da Klabin), que
+    # faltava (2026-09-30): "Sob efeito do El Niño, chuvas afetam mercado brasileiro de
+    # reciclagem de papel" (Valor, 29/09) foi descartada. "papelão" sozinho NÃO entra:
+    # também é gíria de vexame ("fez um papelão").
+    "reciclagem de papel", "papel reciclado", "aparas de papel", "aparas de papelão",
     "EUDR", "EU Deforestation", "NBSK-BEK", "fluff pulp", "dissolving pulp",
 ]
 

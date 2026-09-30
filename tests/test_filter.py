@@ -248,7 +248,7 @@ class TestBlockedDomains:
 # ─────────────────────────────────────────────────────────────────────────────
 import feedparser
 
-from hunter.fetcher import _entry_snippet
+from hunter.fetcher import _covered_digest_sections, _entry_snippet
 
 # Item copiado do feed real (pox.globo.com/rss/valor/empresas, 30/09/2026). Matéria de
 # ASSINANTE: a <description> é só o aviso de paywall; a linha fina vem em <atom:subtitle>.
@@ -318,6 +318,94 @@ class TestValorLinhaFina:
         """Mesmo sem linha fina (8 de 100 assinantes do feed não têm), a manchete entra."""
         assert _passes("Frete e preço baixo levam a corte de produção em mineradoras", "", "Valor Econômico")
         assert _passes("Mineradora canadense compra projeto de minério no Pará", "", "Folha de S.Paulo")
+
+
+# "Agenda de empresas" do Valor de 30/09/2026 (trecho real): o título só cita Azul e
+# Oncoclínicas; a Usiminas é a 4ª seção, depois do corte de 400 caracteres do snippet.
+_AGENDA_DESC = (
+    "Azul\nA Azul assinou um contrato definitivo de empréstimo com o Banco Nacional de "
+    "Desenvolvimento Econômico e Social (BNDES) que disponibiliza acesso a até R$ 2,66 bilhões em "
+    "financiamento de longo prazo. O contrato está inserido no âmbito do programa de financiamento "
+    "do Fundo Nacional de Aviação Civil (FNAC).\n\n"
+    "Oncoclínicas\nA Oncoclínicas está analisando um pedido de convocação de assembleia feito pelo "
+    "acionista UBS Lumen para destituição e eleição de uma nova composição do seu conselho de "
+    "administração.\n\n"
+    "GPA\nA Corretora GPA, subsidiária da dona da rede Pão de Açúcar, recebeu habilitação da "
+    "Superintendência de Seguros Privados (Susep) para atuar como corretora de seguros de danos e "
+    "pessoas.\n\n"
+    "Usiminas\nO presidente da Usiminas, Marcelo Chara, afirmou que, por enquanto, a empresa não vê "
+    "necessidade de cortes adicionais na produção de minério de ferro. No início de setembro, a "
+    "companhia paralisou a usina de Samambaia, na sua unidade de mineração, em Itatiaiuçu, em Minas "
+    "Gerais. Hoje, a CSN Mineração também anunciou reduções, ambas em virtude do aumento do frete "
+    "marítimo.\n\n"
+    "Brava Energia\nA Brava Energia iniciou a produção do poço PPT-52, que integra a campanha de "
+    "perfuração de quatro novos poços produtores nos campos de Papa-Terra e Atlanta."
+)
+_AGENDA_TITLE = "Agenda de empresas: BNDES financia Azul; acionista pede novo conselho na Oncoclínicas"
+
+
+class _Entry(dict):
+    """Imita o item do feedparser (acesso por .get)."""
+
+
+class TestResumoDeEmpresas:
+    """Resumo de várias empresas: a seção de uma coberta vira o snippet, e o item entra."""
+
+    def test_agenda_real_vira_o_trecho_da_usiminas(self):
+        snip = _entry_snippet(_Entry(summary=_AGENDA_DESC))
+        assert snip.startswith("Usiminas: O presidente da Usiminas, Marcelo Chara")
+        assert "Azul" not in snip and "Brava" not in snip
+
+    def test_agenda_real_passa_no_filtro(self):
+        got = filter_articles([_mk(_AGENDA_TITLE, _entry_snippet(_Entry(summary=_AGENDA_DESC)),
+                                   "Valor Econômico")])
+        assert len(got) == 1 and "usiminas" in got[0]["matched_keywords"]
+
+    def test_antes_a_agenda_era_barrada(self):
+        """Regressão: com os primeiros 400 caracteres (Azul/Oncoclínicas), nada casava."""
+        assert not _passes(_AGENDA_TITLE, _AGENDA_DESC[:400], "Valor Econômico")
+
+    def test_duas_cobertas_no_mesmo_resumo(self):
+        desc = _AGENDA_DESC.replace("Brava Energia\nA Brava Energia iniciou",
+                                    "Gerdau\nA Gerdau anunciou")
+        snip = _entry_snippet(_Entry(summary=desc))
+        assert snip.startswith("Usiminas: ") and " · Gerdau: A Gerdau anunciou" in snip
+
+    def test_resumo_sem_coberta_nao_muda(self):
+        desc = _AGENDA_DESC.replace("Usiminas\nO presidente da Usiminas", "Copasa\nO presidente da Copasa")
+        assert _entry_snippet(_Entry(summary=desc)).startswith("Azul\nA Azul assinou")
+
+    def test_coberta_no_meio_da_frase_nao_conta(self):
+        """Caso medido (Valor, 29/09, "B55: Empreendedor vive 'montanha-russa'…"): a Suzano
+        só aparecia numa lista de palestrantes, no caractere ~1.800 — continua de fora."""
+        desc = ("O empreendedor brasileiro vive uma montanha-russa, disseram os participantes. " * 6
+                + "\n\nEntre os palestrantes estão Uri Levine, co-fundador do Waze, e David Feffer, "
+                "presidente do conselho de administração da Suzano.")
+        assert not _covered_digest_sections(desc)
+        assert "Suzano" not in _entry_snippet(_Entry(summary=desc))
+        assert not _passes("B55: Empreendedor vive ‘montanha-russa’ no Brasil",
+                           _entry_snippet(_Entry(summary=desc)), "Valor Econômico")
+
+    def test_titulo_de_secao_com_o_nome_no_meio_nao_conta(self):
+        desc = _AGENDA_DESC.replace("Usiminas\nO presidente", "Governo e Usiminas\nO presidente")
+        assert not _covered_digest_sections(desc)
+        assert _entry_snippet(_Entry(summary=desc)).startswith("Azul\nA Azul assinou")
+
+
+class TestReciclagemDePapel:
+    """Aparas = matéria-prima da Irani e do reciclado da Klabin (faltava o termo em PT)."""
+
+    def test_materia_real_de_29_09_passa(self):
+        assert _passes("Sob efeito do El Niño, chuvas afetam mercado brasileiro de reciclagem de papel",
+                       "Associação estima queda de até 10% nas entregas feitas em setembro por catadores "
+                       "de papéis, papelão e sobras de produção", "Valor Econômico")
+
+    def test_aparas_passa(self):
+        assert _passes("Preço das aparas de papelão sobe pelo terceiro mês", "", "Folha de S.Paulo")
+
+    def test_papelao_sozinho_nao_passa(self):
+        """'Papelão' também é gíria de vexame — sozinho não entra."""
+        assert not _passes("Deputado faz papelão em sessão da comissão", "", "CNN Brasil")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
