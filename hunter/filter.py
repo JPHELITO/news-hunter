@@ -15,6 +15,8 @@ from .fetcher import RawArticle
 #   title_exclude  list  → descarta se o título contém qualquer um destes termos
 #                          (case-insensitive, substring). Aplica-se SEMPRE,
 #                          inclusive a fontes pass_through.
+#   extra_keywords list  → keywords que valem SÓ nesta fonte (palavra inteira,
+#                          case-insensitive), somadas às de ALL_KEYWORDS.
 #
 # Para adicionar regras de outra fonte, basta inserir uma entrada aqui — nenhuma
 # outra parte do código precisa mudar.
@@ -30,6 +32,15 @@ SOURCE_FILTER_RULES: dict[str, dict] = {
     # já filtrada por categoria lá na origem (só o newsworthy). Aceita tudo.
     "CVM": {
         "pass_through": True,
+    },
+    # SMM (metal.com): site SÓ de metais → "cobre"/"ouro" soltos são sempre o metal. Fora dela
+    # são falso amigo ("o seguro cobre", "medalha de ouro"), por isso não estão em ALL_KEYWORDS.
+    # Medido em 29/09/2026: 19 matérias de cobre publicadas, só 4 entraram; de ouro, 15 e 2
+    # (Southern Copper, Grupo México e Aura são cobertas). Custo: ~+28 classificações/dia na IA.
+    # "metais preciosos" NÃO entra: em 8 dias (1.680 itens) só trazia o boletim sem manchete
+    # "[SMM Expresso de Metais Preciosos]" (8×) e patrocínio — a notícia de ouro diz "ouro".
+    "SMM": {
+        "extra_keywords": ["cobre", "copper", "ouro", "gold"],
     },
 }
 
@@ -152,9 +163,21 @@ def _match_text(text: str) -> list[str]:
     return sorted(found)
 
 
+@lru_cache(maxsize=16)
+def _extra_pattern(words: tuple[str, ...]) -> re.Pattern:
+    """Regex das extra_keywords de uma fonte (mesma fronteira de palavra das fortes)."""
+    escaped = [re.escape(w.lower()) for w in sorted(words, key=len, reverse=True)]
+    return re.compile(r"(?<!\w)(?:" + "|".join(escaped) + r")(?!\w)", re.IGNORECASE)
+
+
 def _matches(article: RawArticle) -> list[str]:
-    """Keywords que bateram no título + snippet."""
-    return _match_text(f"{article.title} {article.snippet}")
+    """Keywords que bateram no título + snippet (+ as extra_keywords da fonte)."""
+    text = f"{article.title} {article.snippet}"
+    found = _match_text(text)
+    extra = SOURCE_FILTER_RULES.get(article.source_name, {}).get("extra_keywords")
+    if extra:
+        found = sorted(set(found) | {m.group(0).lower() for m in _extra_pattern(tuple(extra)).finditer(text)})
+    return found
 
 
 def _to_dict(art: RawArticle, matched: list[str]) -> dict:

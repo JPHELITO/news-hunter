@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hunter.reuters_scraper import _title_from_slug
+from hunter.reuters_scraper import _is_relevant_url, _title_from_slug
 import hunter.html_scrapers as HS
 from hunter.html_scrapers import _canonical_key, _canonical_url
 from hunter.platts_scraper import _type_allowed, _is_headline_search_url
@@ -26,6 +26,32 @@ class TestReutersSlugTitle:
         t = _title_from_slug("https://www.reuters.com/x/vietnam-coal-output-rises-2026-06-08/")
         assert t.lower().endswith("rises")
         assert "2026" not in t
+
+
+class TestReutersRelevantUrl:
+    """Filtro pelo endereço: 'metal' e 'gold' entraram (2026-09-30); esporte fica de fora."""
+
+    def test_materias_reais_de_30_09_passam(self):
+        assert _is_relevant_url("https://www.reuters.com/commentary/reuters-open-interest/"
+                                "chinas-metal-heavy-commodity-imports-map-messy-energy-transition-2026-09-30/")
+        assert _is_relevant_url("https://www.reuters.com/world/india/"
+                                "gold-track-monthly-decline-investors-brace-us-inflation-data-2026-09-30/")
+
+    def test_medalha_de_ouro_no_esporte_nao_passa(self):
+        assert not _is_relevant_url("https://www.reuters.com/sports/"
+                                    "japans-ikeda-keen-make-splash-olympics-after-winning-asian-games-surfing-gold-2026-09-30/")
+
+    def test_desfile_dourado_na_moda_nao_passa(self):
+        """Visto na prévia de 30/09 (Reuters, seção lifestyle)."""
+        assert not _is_relevant_url("https://www.reuters.com/lifestyle/"
+                                    "saint-laurent-goes-gold-paris-show-that-may-be-vaccarellos-finale-2026-09-29/")
+
+    def test_palavra_inteira(self):
+        assert not _is_relevant_url("https://www.reuters.com/business/finance/goldman-succession-offers-less-drama-2026-09-30/")
+        assert not _is_relevant_url("https://www.reuters.com/world/golden-dome-missile-defense-2026-09-30/")
+
+    def test_o_que_ja_passava_continua(self):
+        assert _is_relevant_url("https://www.reuters.com/business/panama-government-recommend-copper-mine-restart-2026-09-30/")
 
 
 class TestCanonicalKey:

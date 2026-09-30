@@ -35,9 +35,12 @@ _TIMEOUT = 15
 
 # Termos de S&M / P&P na URL — com fronteira de palavra (slug é hifenizado).
 # Evita "steelers"→steel, "scraps"→scrap, "papers"→paper, "value"→vale.
+# "metal" (singular) e "gold" entraram em 2026-09-30: a coluna "China's metal-heavy commodity
+# imports…" e "Gold on track for monthly decline…" (Aura) ficavam de fora. "gold" também é
+# medalha e desfile de moda → /sports/ e /lifestyle/ são descartadas em _is_relevant_url.
 _RELEVANT_KW = re.compile(
     r"\b("
-    r"iron-ore|copper|steel|mining|metals|aluminium|aluminum|nickel|"
+    r"iron-ore|copper|steel|mining|metals|metal|gold|aluminium|aluminum|nickel|"
     r"coking-coal|met-coal|coal|zinc|manganese|pellet|scrap|pulp|"
     r"vale-sa|bhp|rio-tinto|anglo-american|fortescue|glencore|"
     r"gerdau|usiminas|csn|suzano|klabin|ternium|arcelormittal|nucor"
@@ -49,6 +52,14 @@ _RELEVANT_KW = re.compile(
 # não têm hash e o strip ⩾6 letras comia a última palavra REAL do título
 # (ex.: "...ipo plans ft" perdia "reports"; "...weigh tariff" perdia "support").
 _DATE_RE = re.compile(r"-\d{4}-\d{2}-\d{2}(?=[-/]|$)")
+
+
+_OFF_TOPIC_SECTIONS = ("/sports/", "/lifestyle/")   # "surfing-gold", "saint-laurent-goes-gold"
+
+
+def _is_relevant_url(loc: str) -> bool:
+    """Termo de S&M/P&P no endereço, fora das seções de esporte e estilo de vida."""
+    return not any(s in loc for s in _OFF_TOPIC_SECTIONS) and bool(_RELEVANT_KW.search(loc))
 
 
 def _title_from_slug(url: str) -> str:
@@ -140,7 +151,7 @@ def collect_reuters_headlines() -> list[RawArticle]:
                 loc = f.get("loc", "")
                 if not loc or loc in seen or ".jpg" in loc or ".png" in loc:
                     continue
-                if not _RELEVANT_KW.search(loc):
+                if not _is_relevant_url(loc):
                     continue
                 pub = _parse_lastmod(f.get("lastmod"))
                 if pub and pub < cutoff:

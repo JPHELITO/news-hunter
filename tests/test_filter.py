@@ -443,6 +443,52 @@ class TestTituloDoResumo:
         assert len(filter_articles(arts)) == 1
 
 
+class TestCobreOuroSoNaSMM:
+    """SMM é site só de metais: lá 'cobre'/'ouro' soltos valem. Fora dela são falso amigo."""
+
+    def test_manchetes_reais_da_smm_passam(self):
+        for t in ("[SMM Analysis] O comércio de tarifas de cobre dos EUA está perdendo força — mas ainda não acabou",
+                  "Produção de Cátodo de Cobre da China Cai em Setembro de 2026, Manutenção e Problemas de Suprimento",
+                  "Ouro, prata, platina e paládio se recuperam, setor de metais preciosos avança",
+                  "Centinela copper mine workers approve strike as labour talks move to mediation"):
+            assert _passes(t, "", "SMM"), t
+
+    def test_keyword_extra_aparece_no_registro(self):
+        got = filter_articles([_mk("Cobre sobe em Xangai antes do feriado", "", "SMM")])
+        assert got and "cobre" in got[0]["matched_keywords"]
+
+    def test_fora_da_smm_cobre_e_ouro_nao_valem(self):
+        assert not _passes("Plano de saúde cobre cirurgia bariátrica, decide STJ", "", "Folha de S.Paulo")
+        assert not _passes("Brasil conquista medalha de ouro no vôlei de praia", "", "CNN Brasil")
+        assert not _passes("Governo lança Selo Ouro para prefeituras", "", "Estadão")
+
+    def test_palavra_inteira(self):
+        assert not _passes("Goldman eleva recomendação para bancos chineses", "", "SMM")
+        assert not _passes("Golden Week: mercado chinês fecha para o feriado", "", "SMM")
+
+    def test_boletim_sem_manchete_nao_entra(self):
+        """Visto na prévia de 30/09: o boletim só com o rótulo não diz nada ao cliente."""
+        assert not _passes("[SMM Expresso de Metais Preciosos]", "", "SMM")
+
+
+class TestCodigoDaAcao:
+    """'VALE' não pega 'VALE3' (palavra inteira): os códigos com número vão escritos."""
+
+    def test_manchete_real_da_infomoney_passa(self):
+        assert _passes("Em 7 pontos, entenda por que VALE3 apagou os ganhos de 2026 — e o que vem agora",
+                       "VALE3 cai 10,58% em setembro e apaga os ganhos de 2026.", "InfoMoney")
+
+    def test_so_codigos_no_titulo(self):
+        assert _passes("Siderúrgicas começam com baixas consistentes: CSNA3, -6,68%; GGBR4, -1,08%; "
+                       "GOAU4, -1,07%; USIM5, -2,89%", "", "InfoMoney")
+        assert _passes("Day trade: venda CMIN3 e compre EMBJ3 hoje", "", "Money Times")
+        assert _passes("KLBN11 e SUZB3 recuam no pregão desta quarta", "", "Money Times")
+        assert _passes("AURA33 renova máxima histórica", "", "InfoMoney")
+
+    def test_codigo_de_outra_empresa_nao_passa(self):
+        assert not _passes("Day trade: compre EMBJ3 e PETR4 hoje", "", "Money Times")
+
+
 class TestReciclagemDePapel:
     """Aparas = matéria-prima da Irani e do reciclado da Klabin (faltava o termo em PT)."""
 

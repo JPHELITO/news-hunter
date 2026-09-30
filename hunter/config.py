@@ -22,6 +22,11 @@ COMPANIES_BR = [
     "Kinross",
     "Sigma Lithium",
     "Sigma",
+    # Códigos de ação COM o número (2026-09-30): o filtro casa palavra inteira, então "VALE"
+    # não pega "VALE3" — "Em 7 pontos, entenda por que VALE3 apagou os ganhos de 2026"
+    # (InfoMoney) foi descartada. Código de ação é inequívoco.
+    "VALE3", "CMIN3", "CSNA3", "GGBR3", "GGBR4", "GOAU3", "GOAU4", "USIM3", "USIM5",
+    "SUZB3", "KLBN3", "KLBN4", "KLBN11", "RANI3", "AURA33",
 ]
 
 # ── Empresas Internacionais ────────────────────────────────────────────────────
