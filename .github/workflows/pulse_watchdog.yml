@@ -18,11 +18,14 @@ name: Vigia do Market Pulse — fotos presentes e no horário
 # contínua do hunt-loop; este workflow é a segunda camada.
 
 on:
-  schedule:
-    # 13h40 UTC = 10h40 BRT: as duas janelas da manhã já fecharam (a B3 abre 13h UTC),
-    # então tudo o que devia existir já existe. Antes disso o vigia acusaria falta do que
-    # ainda está por vir.
-    - cron: "40 13 * * 1-5"
+  # ⏸️ DESLIGADO EM 2026-10-15 junto com a foto do pulse_daily.yml (decisão do usuário):
+  # sem foto, este vigia acusaria falta TODO dia útil e mandaria e-mail de alarme falso.
+  # Religar = devolver o cron abaixo (e a foto — ver o topo do pulse_daily.yml).
+  # schedule:
+  #   # 13h40 UTC = 10h40 BRT: as duas janelas da manhã já fecharam (a B3 abre 13h UTC),
+  #   # então tudo o que devia existir já existe. Antes disso o vigia acusaria falta do que
+  #   # ainda está por vir.
+  #   - cron: "40 13 * * 1-5"
   workflow_dispatch:
     inputs:
       dias:

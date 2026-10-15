@@ -126,7 +126,16 @@ def corte_pendente(agora: datetime | None = None) -> str | None:
     return None
 
 
+# ⏸️ DESLIGADO EM 2026-10-15 (decisão do usuário): os quadros "Overnight" e "At the Open"
+# saíram da tela em 09/09 e nada mais lê o que o pulse_daily fotografa. Em False o tick nem
+# consulta o banco e não imprime corte → o hunt-loop não dispara o pulse_daily.yml. Religar =
+# True aqui + o passo da foto e os crons (ver o topo do pulse_daily.yml).
+PULSE_LIGADO = False
+
+
 def main() -> int:
+    if not PULSE_LIGADO:
+        return 0
     cut = corte_pendente()
     if cut:
         print(cut)                # stdout = contrato com o shell que dispara o workflow

@@ -1,5 +1,13 @@
 name: Market Pulse — rodada diária (18:00 · 07:00 · 09:00 BRT)
 # ─────────────────────────────────────────────────────────────────────────────
+# ⏸️ FOTO E PLACAR DESLIGADOS EM 2026-10-15 (decisão do usuário). Os quadros "Overnight" e
+# "At the Open" saíram da tela em 2026-09-09 e nada mais lê o que este passo grava. No cron
+# só roda a RÉGUA do termômetro de notícias (último passo — o registro diário guardado para
+# calibrar o termômetro, que segue na home; não é dos quadros que saíram); a foto só roda se
+# alguém disparar à mão. Junto foram desligados: o gatilho do hunt-loop
+# (scripts/pulse_tick.py, PULSE_LIGADO) e os crons de pulse_train.yml e pulse_watchdog.yml.
+# RELIGAR = tirar o `if:` do passo da foto + PULSE_LIGADO=True + devolver os dois crons.
+# ─────────────────────────────────────────────────────────────────────────────
 # O QUE ESTE WORKFLOW FAZ
 #
 # Três vezes por dia útil ele tira uma "foto" do mundo (Ásia, Europa, commodities,
@@ -76,6 +84,8 @@ jobs:
         run: pip install requests python-dotenv
 
       - name: Tirar a foto e pontuar
+        # Desligado no cron desde 2026-10-15 (ver o topo) — só roda disparado à mão.
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

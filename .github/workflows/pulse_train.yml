@@ -17,8 +17,11 @@ name: Market Pulse — treino semanal do modelo
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 12 * * 0"      # domingo, 09:00 BRT
+  # ⏸️ DESLIGADO EM 2026-10-15 junto com a foto do pulse_daily.yml (decisão do usuário):
+  # sem fotos novas não há o que re-treinar. Religar = devolver o cron (ver o topo do
+  # pulse_daily.yml).
+  # schedule:
+  #   - cron: "0 12 * * 0"      # domingo, 09:00 BRT
 
 permissions:
   contents: read
