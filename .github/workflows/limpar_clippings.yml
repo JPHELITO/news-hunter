@@ -1,0 +1,62 @@
+name: Limpeza mensal — arquivos antigos do clipping no Storage
+# ─────────────────────────────────────────────────────────────────────────────
+# Apaga de admin-uploads/clippings/ o Word, o .eml e a prévia de clippings com mais de 30
+# dias (decisão do usuário, 2026-10-15). Nada lê esses arquivos depois: os links do job
+# valem 7 dias e a aba Clipping só mostra o último. Sem isto o Storage (1 GB no plano grátis)
+# enchia por volta de meados de 2027 e o upload do clipping passaria a falhar.
+#
+# Separado do clipping DE PROPÓSITO: não toca no generate_clipping.yml nem no
+# clipping/run_jobs.py. Roda dia 1º às 07:30 UTC (04:30 BRT), longe do clipping das 06:50.
+# Travas no script: só clippings/, nunca menos de 8 dias, listagem falhou = não apaga.
+# Erro = job vermelho = e-mail do GitHub.
+#
+# À mão: "Run workflow" — o padrão é SIMULAR (lista o que apagaria); escolha "apagar".
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: "30 7 1 * *"
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "simular (só lista) ou apagar"
+        required: true
+        default: "simular"
+        type: choice
+        options: ["simular", "apagar"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: limpar-clippings
+  cancel-in-progress: false
+
+jobs:
+  limpar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install requests python-dotenv
+
+      - name: Apagar clippings com mais de 30 dias
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PYTHONIOENCODING:     utf-8
+          MODO:                 ${{ github.event_name == 'schedule' && 'apagar' || github.event.inputs.modo }}
+        run: |
+          if [ "$MODO" = "apagar" ]; then
+            python -m scripts.limpar_clippings --dias 30 --aplicar
+          else
+            python -m scripts.limpar_clippings --dias 30
+          fi
