@@ -1,9 +1,14 @@
 """Push de artigos para o Supabase via REST API."""
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
+import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import requests
 
@@ -23,6 +28,50 @@ _TAKE_FIELDS = frozenset({
     "take_topics", "take_covered_companies", "take_confidence",
     "take_matched_rules", "include_in_report", "exclusion_reason",
 })
+
+# Memória do push_take_fields: o que ESTE job do Actions já gravou, por notícia.
+# Medido em 2026-10-15: numa rodada de 283 regravações, 282 eram idênticas ao banco e
+# NENHUMA mudava nada (a outra era notícia nova, que o INSERT já grava completa). Eram
+# ~100 mil PATCHes por dia, ~95% de todas as chamadas ao Supabase — o que estourava o
+# Log Ingestion. Com a memória, só vai PATCH quando o pacote de take muda. Mais de 6h =
+# memória de outro job (o job dura 5h55): ignora e regrava tudo, como antes.
+TAKE_CACHE_MAX_AGE_S = 6 * 3600
+TAKE_CACHE_FILE = "news_hunter_take_cache.json"
+
+
+def take_cache_path() -> Path | None:
+    """Arquivo da memória de takes — SÓ no GitHub Actions, dentro do RUNNER_TEMP (que o
+    runner esvazia a cada job). Fora do Actions devolve None = regrava tudo (o de sempre),
+    então rodar à mão no computador do analista segue idêntico."""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return None
+    return Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()) / TAKE_CACHE_FILE
+
+
+def _take_digest(take_data: dict) -> str:
+    """Impressão digital do pacote de take que iria no PATCH."""
+    raw = json.dumps(take_data, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _read_take_cache(path: Path) -> dict[str, str]:
+    """Memória gravada por rodadas anteriores deste job. Qualquer problema = vazia (regrava tudo)."""
+    try:
+        if time.time() - path.stat().st_mtime > TAKE_CACHE_MAX_AGE_S:
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_take_cache(path: Path, cache: dict[str, str]) -> None:
+    try:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(cache), encoding="utf-8")
+        os.replace(tmp, path)          # troca atômica: arquivo pela metade nunca é lido
+    except Exception as e:
+        log.debug("push_take_fields: memória não gravada: %s", e)
 
 
 def record_run(articles_new: int) -> bool:
@@ -200,10 +249,19 @@ def push_articles(articles: list[dict]) -> int:
     return total_new
 
 
-def push_take_fields(articles: list[dict]) -> int:
+def push_take_fields(articles: list[dict], cache_path: Path | None = None) -> int:
     """PATCH take classification fields nos artigos já inseridos no Supabase.
 
     Usa requests PATCH individuais em paralelo (um por artigo).
+
+    `cache_path` (só o hunt.py passa, e só no Actions — ver `take_cache_path`) é a memória
+    do que ESTE job já gravou: notícia cujo pacote de take é igual ao da última gravação
+    bem-sucedida não ganha PATCH de novo. Sem memória (None, arquivo ausente, ilegível ou
+    com mais de 6h) = regrava tudo, exatamente como antes. PATCH que falha não entra na
+    memória → é tentado de novo na rodada seguinte, como antes. URL repetida na mesma
+    rodada também vai sempre (dois pacotes para a mesma linha: não dá para lembrar qual
+    ficou no banco).
+
     Se as colunas ainda não existirem no schema (antes da migration SQL),
     loga um aviso e retorna 0 sem quebrar nada.
 
@@ -256,10 +314,29 @@ def push_take_fields(articles: list[dict]) -> int:
             log.debug("push_take_fields patch falhou: %s", e)
             return False
 
+    def _pacote(art: dict) -> tuple[str, dict]:
+        return art.get("url", ""), {k: art.get(k) for k in _TAKE_FIELDS if k in art}
+
+    pendentes = articles
+    memoria: dict[str, str] = {}
+    if cache_path is not None:
+        memoria = _read_take_cache(cache_path)
+        vezes: dict[str, int] = {}
+        for art in articles:
+            u = art.get("url", "")
+            vezes[u] = vezes.get(u, 0) + 1
+        pendentes = []
+        for art in articles:
+            u, td = _pacote(art)
+            if not (u and td and vezes[u] == 1 and memoria.get(u) == _take_digest(td)):
+                pendentes.append(art)
+
     count = 0
     migration_needed = False
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        results = list(ex.map(_patch_one, articles))
+    results = []
+    if pendentes:
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            results = list(ex.map(_patch_one, pendentes))
 
     for res in results:
         if res is None:
@@ -267,11 +344,26 @@ def push_take_fields(articles: list[dict]) -> int:
         elif res:
             count += 1
 
+    if cache_path is not None:
+        # A memória nova guarda SÓ as notícias desta rodada (a janela de 72h anda sozinha):
+        # as puladas seguem iguais ao banco, e as gravadas com sucesso passam a valer.
+        foram = {id(a) for a in pendentes}
+        nova = {art["url"]: memoria[art["url"]] for art in articles if id(art) not in foram}
+        for art, res in zip(pendentes, results):
+            u, td = _pacote(art)
+            if res is True and u and td and vezes[u] == 1:
+                nova[u] = _take_digest(td)
+        _write_take_cache(cache_path, nova)
+
     if migration_needed:
         log.warning(
             "push_take_fields: colunas de take não existem no Supabase. "
             "Rode o SQL de migração descrito na docstring desta função."
         )
+    elif cache_path is not None:
+        log.info("push_take_fields: %d/%d artigos atualizados com take fields "
+                 "(%d sem mudança desde a última gravação deste job — não regravados)",
+                 count, len(articles), len(articles) - len(pendentes))
     else:
         log.info("push_take_fields: %d/%d artigos atualizados com take fields", count, len(articles))
     return count

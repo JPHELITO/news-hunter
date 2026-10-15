@@ -29,7 +29,7 @@ def main() -> None:
 
     from hunter.fetcher import fetch_all
     from hunter.filter import filter_articles
-    from hunter.sync import push_articles, push_take_fields, record_run
+    from hunter.sync import push_articles, push_take_fields, record_run, take_cache_path
 
     log.info("=== News Hunter start (playwright=%s) ===", args.playwright)
 
@@ -114,9 +114,11 @@ def main() -> None:
     # o dashboard usa este timestamp para "sincronizado há X min".
     record_run(pushed)
 
-    # PATCH take fields separadamente (colunas não fazem parte do INSERT principal
-    # enquanto a migration SQL não for rodada no Supabase).
-    push_take_fields(articles_filtered)
+    # PATCH dos campos de take nas notícias JÁ gravadas (o INSERT acima é ignore-duplicates,
+    # então notícia antiga só muda de take por aqui — p.ex. depois de mudar uma regra). No
+    # Actions, a memória do job (take_cache_path) faz só ir PATCH do que mudou: regravar as
+    # ~300 idênticas a cada 5 min era ~95% de todas as chamadas ao Supabase (2026-10-15).
+    push_take_fields(articles_filtered, cache_path=take_cache_path())
 
     # Passo SHADOW da IA de takes (FASE 3). NÃO-FATAL e GATED por dentro
     # (LLM_TAKES_ENABLED=1 + GITHUB_ACTIONS): no-op até ativarmos. Grava só take_llm*
