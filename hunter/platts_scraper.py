@@ -53,6 +53,7 @@ _PRICE_SYMBOLS = {
     "IOBFC04", "IOFBC00", "IOFAC00",                     # pellet premium + frete
     "TSIPQ01", "TSIPQ02", "TSIPQ03", "TSIPY01",          # forwards
     "HCCAU00",                                            # HCC low vol
+    "SB01138", "SB01190",                                 # HRC e Rebar Brasil (R$/t, semanais)
 }
 
 # Cache de preços preenchido pelo _scrape() como efeito colateral.
@@ -166,6 +167,11 @@ def _parse_price(text: str) -> float | None:
                 t = t.replace(".", "").replace(",", ".")   # 1.234,56 → 1234.56
             else:
                 t = t.replace(",", "")                      # 1,234.56 → 1234.56
+        elif has_comma and re.fullmatch(r"-?\d{1,3}(,\d{3})+", t):
+            # Só vírgula em grupos de 3 → MILHAR no formato americano da grid (3,900 → 3900).
+            # Apareceu com o HRC/Rebar Brasil (R$ 3.900, sem decimais): antes caía no ramo
+            # de baixo e gravava 3,9 — nenhum preço da watchlist tinha passado de 1.000.
+            t = t.replace(",", "")
         elif has_comma:
             # Só vírgula → decimal europeu/brasileiro (103,35 → 103.35)
             t = t.replace(",", ".")

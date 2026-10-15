@@ -201,6 +201,11 @@ PLATTS_COMMODITIES = {
     "TSIPY01": ("TSIPY01",      "FW +1y",                  "USD/dmt"),
     # Coal
     "HCCAU00": ("HCCAU00",      "HCC Low Vol",             "USD/mt"),
+    # Aço Brasil — mercado doméstico (2026-10-15, pedido do analista). SEMANAIS, em REAIS,
+    # ex-works e SEM impostos: SB01138 = HRC Brazil dom prod · SB01190 = Rebar 10mm Brazil SE.
+    # Histórico: `seed_steel_history.py` (Flats!F e Longs!C da planilha de aço).
+    "SB01138": ("HRC_BRAZIL",   "HRC Brazil",              "BRL/mt"),
+    "SB01190": ("REBAR_BRAZIL", "Rebar Brazil",            "BRL/mt"),
 }
 
 # Commodities Fastmarkets — as linhas da aba "PIX Pulp Prices" do workspace do analista.
@@ -232,7 +237,7 @@ COMMODITIES_ORDER = [
     "IOPBQ00", "IOBBA00", "IONHA00", "IOMAA00", "IOJBA00",
     "IOBFC04", "IOFBC00", "IOFAC00",
     "TSIPQ01", "TSIPQ02", "TSIPQ03", "TSIPY01",
-    "HRC_CHINA", "REBAR_TURKEY", "MET_COAL", "HCCAU00",
+    "HRC_BRAZIL", "HRC_CHINA", "REBAR_BRAZIL", "REBAR_TURKEY", "MET_COAL", "HCCAU00",
     "COPPER", "GOLD",
 ]
 

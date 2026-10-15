@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from hunter.reuters_scraper import _is_relevant_url, _title_from_slug
 import hunter.html_scrapers as HS
 from hunter.html_scrapers import _canonical_key, _canonical_url
-from hunter.platts_scraper import _type_allowed, _is_headline_search_url
+from hunter.platts_scraper import _type_allowed, _is_headline_search_url, _parse_price
 
 
 class TestReutersSlugTitle:
@@ -96,6 +96,29 @@ class TestPlattsContentType:
         # ContentType ausente cai no default 'News' no chamador; a função é tolerante
         assert _type_allowed("")
         assert _type_allowed(None)
+
+
+class TestPlattsParsePrice:
+    """A grid da Platts é en-US. Preço acima de 1.000 sem decimais chega como "3,900"
+    (HRC/Rebar Brasil, R$/t) e era lido como 3,9 — vírgula sozinha tratada como decimal."""
+
+    def test_milhar_americano_sem_decimais(self):
+        assert _parse_price("3,900") == 3900.0
+        assert _parse_price("12,345,678") == 12345678.0
+        assert _parse_price("-1,250") == -1250.0
+
+    def test_milhar_americano_com_decimais(self):
+        assert _parse_price("3,900.50") == 3900.5
+
+    def test_decimal_brasileiro_continua(self):
+        assert _parse_price("103,35") == 103.35
+        assert _parse_price("1.234,56") == 1234.56
+        assert _parse_price("0,5") == 0.5
+
+    def test_precos_da_watchlist_de_sempre(self):
+        assert _parse_price("89.75") == 89.75
+        assert _parse_price("485") == 485.0
+        assert _parse_price("") is None
 
 
 class TestPlattsHeadlineUrl:
