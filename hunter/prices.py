@@ -54,7 +54,8 @@ _YAHOO_RETRIES = 3
 QUOTES_LIST = [
     # (ticker_supabase, name, sector, exchange, provider, query_symbol)
     # Setores finos: steel / iron_ore / gold / copper / rare_earths / pp / index.
-    # ── Cobertura IBBA (default do heatmap) ──────────────────────────────
+    # ── Cobertura IBBA ─────────────────────────────────────────────────────
+    # (o "Our coverage" do heatmap é decidido no front, G_COVERAGE do index.html)
     ("IBOV",        "Ibovespa",          "index",       "B3",    "yahoo", "^BVSP"),
     ("VALE3.SA",    "Vale",              "iron_ore",    "B3",    "yahoo", "VALE3.SA"),
     ("CSNA3.SA",    "CSN",               "steel",       "B3",    "yahoo", "CSNA3.SA"),
@@ -118,7 +119,10 @@ QUOTES_LIST = [
     # ── Copper ───────────────────────────────────────────────────────────
     ("ERO",         "Ero Copper",        "copper",      "NYSE",  "yahoo", "ERO"),
     ("CS.TO",       "Capstone Copper",   "copper",      "TSX",   "yahoo", "CS.TO"),
-    ("HBM",         "Hudbay Minerals",   "copper",      "NYSE",  "yahoo", "HBM"),
+    # Hudbay e Lundin pela linha OFICIAL, a de Toronto, em CAD (decisão do usuário, 2026-10-15).
+    # A Hudbay vinha pela listagem de NY (HBM, em USD).
+    ("HBM.TO",      "Hudbay Minerals",   "copper",      "TSX",   "yahoo", "HBM.TO"),
+    ("LUN.TO",      "Lundin Mining",     "copper",      "TSX",   "yahoo", "LUN.TO"),
     # Glencore VOLTOU em 2026-09-01. Ela tinha saído no 24407e8 (16/jun), quando o universo
     # virou grupos setoriais — decisão editorial, e o front continua sem exibi-la (ela não
     # está em nenhum G_* do index.html, e o filtro KNOWN de lá descarta quem não está).
