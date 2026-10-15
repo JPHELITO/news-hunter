@@ -709,33 +709,52 @@ def update_commodity_history(max_age_hours: float = 18.0) -> int:
       fazendo append do assessment do dia (dedup por data). A série cresce a partir do deploy.
     Auto-throttled por `daily_updated_at` (~1×/dia). Espelha o padrão PATCH de update_quote_history.
     Retorna nº de séries atualizadas.
+
+    Leitura em DOIS passos (2026-10-15): a série `daily` de todas as linhas pesava 191 KB
+    (54 KB comprimido) e era baixada em TODA rodada — ~336 por dia — só para descobrir que
+    nada estava atrasado. Agora a triagem pede só `code,daily_updated_at` (2,5 KB) e a série
+    viaja só para as atrasadas (~1×/dia cada). A decisão é a mesma de antes, refeita sobre
+    a linha completa (se outro processo atualizou no meio, ela sai da lista).
     """
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if not url or not key:
         return 0
+    now = datetime.now(timezone.utc)
+
+    def _velha(row: dict) -> bool:
+        du = row.get("daily_updated_at")
+        if not du:
+            return True
+        try:
+            age_h = (now - datetime.fromisoformat(du.replace("Z", "+00:00"))).total_seconds() / 3600
+            return age_h > max_age_hours
+        except Exception:
+            return True
+
+    hr = {"apikey": key, "Authorization": f"Bearer {key}"}
+    try:
+        t = requests.get(f"{url}/rest/v1/commodities",
+                         params={"select": "code,daily_updated_at"}, headers=hr, timeout=15)
+        triagem = t.json() if t.ok else []
+    except Exception as e:
+        log.warning("commodity_history: leitura de estado falhou: %s", e)
+        return 0
+    atrasadas = [row["code"] for row in triagem if row.get("code") and _velha(row)]
+    if not atrasadas:
+        return 0
     try:
         r = requests.get(
-            f"{url}/rest/v1/commodities?select=code,price,assessed_at,daily,daily_updated_at",
-            headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+            f"{url}/rest/v1/commodities",
+            params={"select": "code,price,assessed_at,daily,daily_updated_at",
+                    "code": "in.(" + ",".join(f'"{c}"' for c in atrasadas) + ")"},
+            headers=hr, timeout=15)
         rows = r.json() if r.ok else []
     except Exception as e:
         log.warning("commodity_history: leitura de estado falhou: %s", e)
         return 0
 
-    now = datetime.now(timezone.utc)
-    stale = []
-    for row in rows:
-        du = row.get("daily_updated_at")
-        old = True
-        if du:
-            try:
-                age_h = (now - datetime.fromisoformat(du.replace("Z", "+00:00"))).total_seconds() / 3600
-                old = age_h > max_age_hours
-            except Exception:
-                old = True
-        if old:
-            stale.append(row)
+    stale = [row for row in rows if _velha(row)]
     if not stale:
         return 0
 
