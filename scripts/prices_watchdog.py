@@ -73,6 +73,12 @@ RUN_MAX = int(os.environ.get("PRICES_FANTASMA_RUN_MAX", "3"))
 DIAS_JANELA = int(os.environ.get("PRICES_JANELA_DIAS", "45"))
 # Série nossa parada. 5 dias corridos cobrem fim de semana + 1 feriado sem falso alarme.
 SERIE_PARADA_DIAS = int(os.environ.get("PRICES_SERIE_PARADA_DIAS", "5"))
+# Carência do dia recém-carimbado. A manutenção (quote_history.fetch_recent) troca pelo
+# fechamento do intradiário a sessão que o Yahoo carimbou, mas só na rodada seguinte à do
+# carimbo (trava de 18h). Até lá o banco pode ter o fechamento OFICIAL que o robô pegou ao
+# vivo — que difere do intradiário pelo leilão (CAP: até 2,4%) — e julgá-lo acusaria um
+# número certo. 48h a partir da abertura da sessão sobram ~1 dia de folga.
+CARENCIA_H = float(os.environ.get("PRICES_CARENCIA_H", "48"))
 PAUSA_S = float(os.environ.get("PRICES_PAUSA_S", "0.35"))
 
 
@@ -132,8 +138,9 @@ def intradiario(qsym: str, ini: int, fim: int) -> tuple[int, list[list]]:
     return negocios, serie
 
 
-def pontos_fantasma(res: dict | None, ini: int, fim: int) -> dict[int, float]:
-    """{dia_epoch//86400: close} das barras fantasma daquela corrida (série CRUA do Yahoo)."""
+def pontos_fantasma(res: dict | None, ini: int, fim: int) -> dict[int, tuple[int, float]]:
+    """{dia_epoch//86400: (epoch_da_barra, close)} das barras fantasma daquela corrida
+    (série CRUA do Yahoo). O epoch DA BARRA é o que delimita a sessão — ver nao_reparados."""
     if not res:
         return {}
     ts = res.get("timestamp") or []
@@ -146,11 +153,12 @@ def pontos_fantasma(res: dict | None, ini: int, fim: int) -> dict[int, float]:
         if c is None or not (ini <= t <= fim):
             continue
         if qh.eh_fantasma(col["open"][i], col["high"][i], col["low"][i], c, col["volume"][i]):
-            out[int(t) // 86400] = round(float(c), 4)
+            out[int(t) // 86400] = (int(t), round(float(c), 4))
     return out
 
 
-def nao_reparados(ticker: str, fantasmas: dict[int, float], intra: list[list]) -> int:
+def nao_reparados(ticker: str, fantasmas: dict[int, tuple[int, float]], intra: list[list],
+                  agora: float | None = None) -> int:
     """Quantos daqueles dias ainda estão ERRADOS na nossa série guardada.
 
     ⚠️ Compara com o fechamento RECONSTRUÍDO pelo intradiário, **não** com o valor
@@ -160,18 +168,26 @@ def nao_reparados(ticker: str, fantasmas: dict[int, float], intra: list[list]) -
     um número correto. Usa a MESMA regra do conserto (`fechamento_da_sessao`), então o que
     o vigia chama de errado é exatamente o que o conserto mudaria.
 
-    Dia sem fonte intradiária, ou ausente da nossa série, não conta como estrago.
+    ⚠️ A sessão é a janela da BARRA DO YAHOO, nunca a do carimbo do NOSSO ponto. Quando o
+    robô grava a barra ao vivo logo depois do fechamento, o ponto sai com epoch ~19:00 UTC,
+    e a janela [19:00, +24h) engole o pregão SEGUINTE inteiro: o vigia comparava o nosso
+    fechamento (certo) com o do dia seguinte e acusava estrago que não existia (achado em
+    19/10/2026: 5 dias assim nos 3 chilenos, que o conserto nem tocaria — o vermelho não
+    sairia nunca). É a mesma janela que o conserto usa.
+
+    Dia sem fonte intradiária, ausente da nossa série ou ainda na carência (CARENCIA_H) não
+    conta como estrago.
     """
     if not fantasmas or not intra:
         return 0
-    nossa = {int(t) // 86400: (int(t), v) for t, v in (qh.load_series(ticker) or [])}
+    corte = (time.time() if agora is None else agora) - CARENCIA_H * 3600
+    nossa = {int(t) // 86400: v for t, v in (qh.load_series(ticker) or [])}
     sujos = 0
-    for d in fantasmas:
-        if d not in nossa:
+    for d, (epoch_barra, _carimbo) in fantasmas.items():
+        if d not in nossa or epoch_barra > corte:
             continue
-        epoch, guardado = nossa[d]
-        real = rp.fechamento_da_sessao(intra, epoch)
-        if real is not None and abs(guardado - round(float(real), 4)) > 1e-6:
+        real = rp.fechamento_da_sessao(intra, epoch_barra)
+        if real is not None and abs(nossa[d] - round(float(real), 4)) > 1e-6:
             sujos += 1
     return sujos
 

@@ -189,23 +189,44 @@ class TestNaoReparados:
     def test_serie_ja_consertada_nao_alarma(self, monkeypatch):
         self._serie(monkeypatch, [[D2, 1083.9]])
         intra = [[D2 + 7200, 1083.9]]
-        assert wd.nao_reparados("X", {D2 // DIA: 1070.0}, intra) == 0
+        assert wd.nao_reparados("X", {D2 // DIA: (D2, 1070.0)}, intra) == 0
 
     def test_carimbo_ainda_no_banco_alarma(self, monkeypatch):
         self._serie(monkeypatch, [[D2, 1070.0]])
         intra = [[D2 + 7200, 1083.9]]
-        assert wd.nao_reparados("X", {D2 // DIA: 1070.0}, intra) == 1
+        assert wd.nao_reparados("X", {D2 // DIA: (D2, 1070.0)}, intra) == 1
 
     def test_carimbo_que_e_o_preco_certo_NAO_alarma(self, monkeypatch):
         # O caso real da CMPC em 22/07 — comparar com o carimbo mandaria e-mail
         # todo dia sobre um número correto.
         self._serie(monkeypatch, [[D2, 1070.0]])
         intra = [[D2 + 7200, 1070.0]]
-        assert wd.nao_reparados("X", {D2 // DIA: 1070.0}, intra) == 0
+        assert wd.nao_reparados("X", {D2 // DIA: (D2, 1070.0)}, intra) == 0
 
     def test_sem_intradiario_nao_alarma(self, monkeypatch):
         self._serie(monkeypatch, [[D2, 1070.0]])
-        assert wd.nao_reparados("X", {D2 // DIA: 1070.0}, []) == 0
+        assert wd.nao_reparados("X", {D2 // DIA: (D2, 1070.0)}, []) == 0
+
+    def test_ponto_gravado_no_fechamento_NAO_herda_o_pregao_seguinte(self, monkeypatch):
+        # O caso real da CMPC em 21/09: o robô gravou a barra AO VIVO às 19:03 UTC (logo
+        # depois do fechamento, 976,00 — certo). Medida pela janela do NOSSO carimbo,
+        # [19:03, +24h) engolia o pregão de 22/09 inteiro e o vigia comparava 976,00 com o
+        # fechamento do dia SEGUINTE (966,10) — vermelho que o conserto nunca apagaria.
+        ao_vivo = D2 + 5 * 3600 + 33 * 60                     # 19:03 UTC
+        self._serie(monkeypatch, [[ao_vivo, 976.0]])
+        intra = [[D2 + 4 * 3600, 975.0], [D2 + 5 * 3600, 976.0],     # pregão de D2
+                 [D3 + 3600, 970.0], [D3 + 5 * 3600, 966.1]]         # pregão de D3
+        assert wd.nao_reparados("X", {D2 // DIA: (D2, 957.0)}, intra) == 0
+
+    def test_sessao_recente_fica_em_carencia(self, monkeypatch):
+        # A manutenção só troca o fechamento ao vivo pelo do intradiário na rodada
+        # seguinte ao carimbo; antes da carência, o vigia não julga o dia.
+        self._serie(monkeypatch, [[D2, 1070.0]])
+        intra = [[D2 + 7200, 1083.9]]
+        logo_depois = D2 + 20 * 3600
+        bem_depois = D2 + (wd.CARENCIA_H + 1) * 3600
+        assert wd.nao_reparados("X", {D2 // DIA: (D2, 1070.0)}, intra, agora=logo_depois) == 0
+        assert wd.nao_reparados("X", {D2 // DIA: (D2, 1070.0)}, intra, agora=bem_depois) == 1
 
 
 class TestPontosFantasma:
@@ -215,4 +236,10 @@ class TestPontosFantasma:
             (D2, 7.0, 7.0, 7.0, 7.0, 0),                    # dentro
             (D3, 1.0, 2.0, 0.5, 1.5, 10),                   # real, dentro
         ])
-        assert wd.pontos_fantasma(res, D2, D3) == {D2 // DIA: 7.0}
+        assert wd.pontos_fantasma(res, D2, D3) == {D2 // DIA: (D2, 7.0)}
+
+
+class TestUmaRegraSo:
+    def test_conserto_e_manutencao_usam_a_mesma_funcao(self):
+        # Copiar a regra faria o vigia acusar (ou perdoar) o que o conserto não faria.
+        assert rp.fechamento_da_sessao is qh.fechamento_da_sessao

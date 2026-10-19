@@ -8,8 +8,8 @@ baixa os 47 de uma vez, então ela não pode engordar. Mas o cliente às vezes q
 20 anos com detalhe diário — e aí entra a `quote_history`, carregada sob demanda só
 para os papéis que estão no gráfico.
 
-TRÊS ARMADILHAS DO YAHOO, TODAS MEDIDAS (não reintroduzir)
-----------------------------------------------------------
+QUATRO ARMADILHAS DO YAHOO, TODAS MEDIDAS (não reintroduzir)
+------------------------------------------------------------
 1. **`range=max&interval=1d` NÃO devolve diário.** O Yahoo ignora o `interval` quando
    a janela é longa e rebaixa para barras mensais: VALE3 volta com 320 pontos em 26
    anos (~30 dias de espaçamento). O caminho que devolve diário de verdade é
@@ -35,6 +35,17 @@ TRÊS ARMADILHAS DO YAHOO, TODAS MEDIDAS (não reintroduzir)
    "fechou no mesmo preço", e um buraco na série é honesto onde um carimbo é mentira.
    (A série INTRADIÁRIA do mesmo Yahoo continuou correta o tempo todo: é dela que o
    `scripts/repair_phantom_bars.py` reconstrói o que foi perdido.)
+
+4. **O feed morto parece vivo DURANTE o pregão.** O diário da SGO nunca voltou de verdade
+   (achado em 19/10/2026, com o vigia vermelho desde 27/08): a barra de HOJE vem real
+   enquanto a sessão está aberta, e no dia seguinte o Yahoo a troca pelo carimbo. O robô
+   gravava o preço da 1ª rodada do dia (minutos depois da abertura, por causa da trava
+   de 18h) e a correção nunca vinha — o filtro da armadilha 3 descartava a barra do dia
+   seguinte. Resultado: 22-23 "fechamentos" por papel que eram o preço de minutos
+   depois da ABERTURA, com até 6% de erro (CAP em 06/10). Por isso `fetch_recent()`
+   reconstrói pela série horária a sessão que a janela devolve carimbada — a MESMA regra
+   do conserto e do vigia (`fechamento_da_sessao`), então a série se cura sozinha em vez
+   de esperar alguém rodar o script.
 
 ECONOMIA QUE ISTO TRAZ (medido)
 -------------------------------
@@ -129,6 +140,60 @@ def _closes(res: dict | None, symbol: str = "") -> list[list]:
     return out
 
 
+def barras_fantasma(res: dict | None) -> list[int]:
+    """Epochs das barras FANTASMA de um `result` diário cru — exatamente as que `_closes` descarta."""
+    if not res:
+        return []
+    ts = res.get("timestamp") or []
+    quote = ((res.get("indicators", {}) or {}).get("quote") or [{}])[0]
+    col = lambda k: (quote.get(k) or [None] * len(ts))
+    o, h, l, c, v = col("open"), col("high"), col("low"), col("close"), col("volume")
+    return sorted(int(t) for i, t in enumerate(ts)
+                  if c[i] is not None and eh_fantasma(o[i], h[i], l[i], c[i], v[i]))
+
+
+def fechamento_da_sessao(intra: list[list], epoch_barra: int) -> float | None:
+    """Último ponto intradiário dentro de [epoch da barra, +24h) — a sessão daquela barra.
+
+    Casa pela JANELA DA BARRA, nunca pela data UTC: em bolsa a leste (ASX) a sessão cruza
+    a meia-noite UTC e agrupar por data partiria o pregão em dois. É a regra ÚNICA da
+    reconstrução: a manutenção diária, o conserto (`scripts/repair_phantom_bars.py`) e o
+    vigia (`scripts/prices_watchdog.py`) usam esta mesma função — copiar faria os três
+    divergirem e o vigia acusaria (ou perdoaria) o que os outros não fazem."""
+    dentro = [c for t, c in intra if epoch_barra <= t < epoch_barra + DAY]
+    return dentro[-1] if dentro else None
+
+
+def _reconstruir_fantasmas(symbol: str, fantasmas: list[int], dias: int) -> list[list]:
+    """[[epoch_da_barra, fechamento], ...] das sessões carimbadas, tirado da série HORÁRIA.
+
+    Só entra a sessão que teve NEGÓCIO no intradiário (algum candle com volume): sem negócio
+    é papel parado (halt), não feed morto — não existe fechamento a recuperar e o buraco fica
+    (armadilha 3). O VALOR, porém, é o último candle da sessão com ou sem volume — a mesma
+    regra do conserto: o último candle horário da SGO às vezes vem com volume zero e traz o
+    fechamento assim mesmo (CMPC em 13/10: 965,00, o que o pregão ao vivo marcou às 18:59).
+    Pede 3 dias a mais que a janela diária para a sessão mais antiga vir inteira.
+    Uma requisição por papel, e só quando a janela tem fantasma."""
+    res = _chart(symbol, {"range": f"{dias + 3}d", "interval": "1h"}, timeout=20)
+    if not res:
+        return []
+    ts = res.get("timestamp") or []
+    quote = ((res.get("indicators", {}) or {}).get("quote") or [{}])[0]
+    closes = quote.get("close") or []
+    vols = quote.get("volume") or []
+    intra = [[int(t), round(float(closes[i]), 4)] for i, t in enumerate(ts)
+             if i < len(closes) and closes[i] is not None]
+    com_negocio = [int(t) for i, t in enumerate(ts) if i < len(vols) and (vols[i] or 0) > 0]
+    out = []
+    for ep in fantasmas:
+        if not any(ep <= t < ep + DAY for t in com_negocio):
+            continue
+        c = fechamento_da_sessao(intra, ep)
+        if c is not None:
+            out.append([int(ep), round(float(c), 4)])
+    return out
+
+
 def _splits(res: dict | None) -> list[int]:
     """Epochs dos splits reportados na janela pedida (só vem com events=split)."""
     if not res:
@@ -149,10 +214,23 @@ def fetch_full(symbol: str) -> list[list]:
 
 
 def fetch_recent(symbol: str, days: int = 7) -> tuple[list[list], list[int]]:
-    """Janela curta do dia a dia: (fechamentos, epochs de split). ~1,7 KB de resposta."""
-    res = _chart(symbol, {"range": f"{max(1, int(days))}d", "interval": "1d",
-                          "events": "div,split"}, timeout=15)
-    return _closes(res, symbol), _splits(res)
+    """Janela curta do dia a dia: (fechamentos, epochs de split). ~1,7 KB de resposta.
+
+    Sessão que a janela devolve CARIMBADA não vira buraco: o fechamento dela vem da série
+    horária (armadilha 4 da docstring do módulo). Como a costura é por dia e o ponto novo
+    vence, isso também SUBSTITUI o preço do meio do pregão que a rodada anterior gravou."""
+    n = max(1, int(days))
+    res = _chart(symbol, {"range": f"{n}d", "interval": "1d", "events": "div,split"}, timeout=15)
+    pontos = _closes(res, symbol)
+    fantasmas = barras_fantasma(res)
+    if fantasmas:
+        tem = {_day(t) for t, _ in pontos}
+        novos = [p for p in _reconstruir_fantasmas(symbol, fantasmas, n) if _day(p[0]) not in tem]
+        if novos:
+            log.warning("quote_history: %s — %d sessão(ões) carimbada(s) reconstruída(s) pela "
+                        "série horária", symbol, len(novos))
+            pontos = sorted(pontos + novos, key=lambda p: p[0])
+    return pontos, _splits(res)
 
 
 # ───────────────────────────── merge ─────────────────────────────

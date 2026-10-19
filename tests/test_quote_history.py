@@ -10,7 +10,10 @@ O que estes testes TRAVAM, e por quê:
     o mesmo dia;
   • que um SPLIT novo força re-puxar a série INTEIRA em vez de append — o Yahoo reescreve
     o passado retroativamente (fixture real da NVDA, 10:1 em 10/06/2024) e um append
-    deixaria metade da série em outra escala, com um degrau falso e nenhum erro no log.
+    deixaria metade da série em outra escala, com um degrau falso e nenhum erro no log;
+  • que a sessão que a janela curta devolve CARIMBADA é reconstruída pela série horária
+    (e papel parado continua buraco) — sem isso o apagão da SGO deixava gravado, como
+    fechamento, o preço de minutos depois da abertura, para sempre (2026-10-19).
 
 Rodar: python -m pytest tests/test_quote_history.py -v
 """
@@ -115,6 +118,69 @@ class TestFetchFullUsaPeriod:
         assert visto.get("range") == "7d"
         assert "split" in (visto.get("events") or "")
         assert pts == [[D2, 2.0]] and splits == [D2]
+
+
+# ────────── sessão carimbada na janela curta: a série se cura sozinha ──────────
+def _barras(barras):
+    """[(ts, o, h, l, c, v), ...] -> payload `result` do Yahoo com OHLCV."""
+    campos = ("open", "high", "low", "close", "volume")
+    return {"timestamp": [b[0] for b in barras],
+            "indicators": {"quote": [{k: [b[i + 1] for b in barras] for i, k in enumerate(campos)}]}}
+
+
+class TestFetchRecentReconstroiFantasma:
+    """O apagão da SGO (2026-10-19): a barra de hoje vem real durante o pregão e no dia
+    seguinte vira carimbo; o robô ficava com o preço de minutos depois da abertura."""
+
+    def _yahoo(self, monkeypatch, diario, horario):
+        pedidos = []
+
+        def fake_chart(symbol, params, timeout=30):
+            pedidos.append(dict(params))
+            return diario if params.get("interval") == "1d" else horario
+
+        monkeypatch.setattr(qh, "_chart", fake_chart)
+        return pedidos
+
+    def test_sessao_carimbada_vem_do_intradiario(self, monkeypatch):
+        diario = _barras([(D1, 1040.0, 1052.0, 1036.0, 1049.0, 900_000),     # real
+                          (D2, 957.0, 957.0, 957.0, 957.0, 0)])               # CARIMBO
+        horario = _barras([(D2 + 3600, 1060.0, 1061.0, 1050.0, 1055.0, 300_000),
+                           (D2 + 6 * 3600, 1062.0, 1062.0, 1060.0, 1060.0, 290_000)])
+        pedidos = self._yahoo(monkeypatch, diario, horario)
+        pts, _ = qh.fetch_recent("CMPC.SN", days=7)
+        assert pts == [[D1, 1049.0], [D2, 1060.0]]                # o ÚLTIMO candle da sessão
+        assert pedidos[1]["interval"] == "1h" and pedidos[1]["range"] == "10d"
+
+    def test_ultimo_candle_sem_volume_e_o_fechamento(self, monkeypatch):
+        # CMPC em 13/10: o candle das 18:30 UTC veio com volume 0 e o fechamento certo.
+        diario = _barras([(D2, 957.0, 957.0, 957.0, 957.0, 0)])
+        horario = _barras([(D2 + 3600, 955.0, 958.0, 950.0, 955.0, 250_000),
+                           (D2 + 5 * 3600, 965.0, 965.0, 965.0, 965.0, 0)])
+        self._yahoo(monkeypatch, diario, horario)
+        assert qh.fetch_recent("CMPC.SN")[0] == [[D2, 965.0]]
+
+    def test_papel_parado_continua_buraco(self, monkeypatch):
+        # VMM.AX em ago/26: halt na bolsa — sem NENHUM negócio no intradiário não existe
+        # fechamento a recuperar, e carimbo não entra (armadilha 3).
+        diario = _barras([(D1, 4.0, 4.4, 3.9, 4.3, 50_000),
+                          (D2, 4.3, 4.3, 4.3, 4.3, 0)])
+        horario = _barras([(D2 + 3600, 4.3, 4.3, 4.3, 4.3, 0)])
+        self._yahoo(monkeypatch, diario, horario)
+        assert qh.fetch_recent("VMM.AX")[0] == [[D1, 4.3]]
+
+    def test_sem_carimbo_nao_pede_o_horario(self, monkeypatch):
+        # O caso de todo dia em todas as outras bolsas: nenhuma requisição a mais.
+        diario = _barras([(D1, 10.0, 11.0, 9.0, 10.5, 1000), (D2, 10.5, 11.0, 10.0, 10.8, 900)])
+        pedidos = self._yahoo(monkeypatch, diario, None)
+        assert qh.fetch_recent("VALE3.SA")[0] == [[D1, 10.5], [D2, 10.8]]
+        assert len(pedidos) == 1
+
+    def test_horario_fora_do_ar_nao_derruba(self, monkeypatch):
+        diario = _barras([(D1, 1040.0, 1052.0, 1036.0, 1049.0, 900_000),
+                          (D2, 957.0, 957.0, 957.0, 957.0, 0)])
+        self._yahoo(monkeypatch, diario, None)                    # _chart devolveu None
+        assert qh.fetch_recent("CMPC.SN")[0] == [[D1, 1049.0]]   # = o comportamento antigo
 
 
 # ───────────── decisão do dia a dia: append x re-puxar a série inteira ─────────────

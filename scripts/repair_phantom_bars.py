@@ -114,13 +114,10 @@ def separar_barras(res: dict | None) -> tuple[list[list], list[list]]:
     return fantasmas, reais
 
 
-def fechamento_da_sessao(intra: list[list], epoch_barra: int) -> float | None:
-    """Último ponto intradiário dentro de [epoch da barra, +24h) — a sessão daquela barra.
-
-    Casa pela JANELA DA BARRA, nunca pela data UTC: em bolsa a leste (ASX) a sessão cruza
-    a meia-noite UTC e agrupar por data partiria o pregão em dois."""
-    dentro = [c for t, c in intra if epoch_barra <= t < epoch_barra + DIA]
-    return dentro[-1] if dentro else None
+# A regra mora em hunter/quote_history desde 19/10/2026, porque a manutenção diária passou a
+# usá-la também (a série se cura sozinha). O nome continua aqui: o vigia e os testes chamam
+# `rp.fechamento_da_sessao`, e é a MESMA função — não uma cópia.
+fechamento_da_sessao = qh.fechamento_da_sessao
 
 
 def aferir(reais: list[list], intra: list[list]) -> dict:
