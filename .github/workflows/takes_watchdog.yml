@@ -4,10 +4,14 @@ name: Vigia dos takes — qualidade da IA
 # a olho pelo analista numa manchete errada. Não havia número nenhum vigiando isso.
 #
 # Checa 1x/dia: quem está classificando · % de "no take" nas fontes curadas · fila parada ·
-# e faz 1 chamada REAL por provedor da cadeia (3 chamadas/dia — desprezível contra 500/dia).
+# e faz 1 chamada REAL por provedor da cadeia, com as mesmas 3 tentativas da produção
+# (as tentativas extras só acontecem quando a anterior FALHOU — desprezível contra 500/dia).
 #
 # Alarme: o script sai com código 1 → o job FALHA de propósito → o GitHub manda e-mail ao dono
 # do repo. Mesmo padrão do watchdog.yml, e SEM e-mail quando está tudo bem (anti-spam).
+# Desde 2026-10-19, e-mail SÓ com estrago de verdade (GLM > 20% do dia, titular < 50%, "no take"
+# alto, fila parada, ninguém respondendo ou titular recusando a chave). Soluço passageiro de
+# uma IA fica só no relatório — antes ele pintava o job de vermelho em 16 de 40 dias.
 # Somente leitura no banco; não escreve nada.
 
 on:
@@ -30,7 +34,9 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20 (era 10): com 3 tentativas, o pior caso é ~12 min (GLM tem timeout de 150s por tentativa).
+    # Estourar o tempo também pinta o job de vermelho — e isso não seria estrago nenhum.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
