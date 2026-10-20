@@ -169,6 +169,7 @@ class TestPlattsHeadlineUrl:
 
 class _FakeResp:
     status_code = 200
+    headers = {"Content-Type": "text/html; charset=UTF-8"}   # o que o ibram.org.br manda
     text = (
         '<html><body>'
         '<a class="mb-3" href="https://ibram.org.br/noticia/mineracao-essencial-transicao/"'
@@ -223,6 +224,7 @@ class _FakeSmmResp:
     """Home da SMM reduzida: um card normal (__title) + a caixa "mais lidas", que usa
     __itemTitle (T maiúsculo) e põe o número do ranking numa <div> IRMÃ."""
     status_code = 200
+    headers = {"Content-Type": "text/html; charset=utf-8"}   # o que o news.metal.com manda
     text = (
         '<html><body>'
         # card normal do feed

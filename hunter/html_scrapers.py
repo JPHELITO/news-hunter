@@ -20,6 +20,7 @@ import requests
 
 try:
     from bs4 import BeautifulSoup
+    from bs4.dammit import EncodingDetector
     BS4_OK = True
 except ImportError:
     BS4_OK = False
@@ -170,6 +171,29 @@ def _canonical_url(href: str) -> str:
     return f"{p.scheme}://{p.netloc}/pt/newscontent/{m.group(1)}"
 
 
+def _use_page_charset(r: requests.Response) -> None:
+    """Acerta a codificação ANTES de ler `r.text` quando o servidor não diz qual é.
+
+    Sem charset no cabeçalho, o requests chuta ISO-8859-1 (regra antiga do HTTP p/ text/*) e
+    a página UTF-8 vira acento estragado: "Södra" → "SÃ¶dra". Era a PaperAge, que manda só
+    "text/html" e declara <meta charset="utf-8"> dentro da página — 15 manchetes gravadas
+    assim de 25/06 a 20/10/2026 (Metsä, Södra, Paulínia...). Mesma ordem do navegador:
+    cabeçalho → <meta> da página → UTF-8 se os bytes forem UTF-8 válido; sem nada disso,
+    fica o ISO-8859-1 de sempre. Não usa o chute estatístico (apparent_encoding): num teste
+    ele leu português curto como windows-1250 ("Mineraçăo") — pior que o de sempre.
+    """
+    if re.search(r"charset\s*=", r.headers.get("Content-Type", ""), re.I):
+        return  # o servidor disse → vale o que ele disse (6 das 8 fontes HTML em 20/10/2026)
+    enc = EncodingDetector.find_declared_encoding(r.content, is_html=True)
+    if not enc:
+        try:
+            r.content.decode("utf-8")
+            enc = "utf-8"
+        except UnicodeDecodeError:
+            return
+    r.encoding = enc
+
+
 def _scrape_source(src: dict) -> list[RawArticle]:
     """Faz scraping de uma fonte HTML."""
     if not BS4_OK:
@@ -183,6 +207,7 @@ def _scrape_source(src: dict) -> list[RawArticle]:
         if r.status_code != 200:
             log.warning("HTML [%s] %s: HTTP %d", label, url, r.status_code)
             return []
+        _use_page_charset(r)
         soup = BeautifulSoup(r.text, "html.parser")
         # Fonte pode selecionar por CSS (selector) OU por padrão de URL (href_re).
         # href_re é mais robusto p/ sites que trocam classes (ex.: Estadão).

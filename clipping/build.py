@@ -326,9 +326,24 @@ _DEFAULT_ANALYSTS: list[dict] = [
 # então um "&" solto ("Pulp & Paper") ou "AT&T" NÃO casa e passa intacto.
 _ENTITY_RE = re.compile(r"&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});")
 
+# Acento estragado = texto UTF-8 lido como Latin-1: "Södra" vira "SÃ¶dra". Cada letra acentuada
+# vira "Ã" (ou "Â") + um caractere da faixa U+0080–U+00BF (o 2º byte do UTF-8 visto como
+# Latin-1, às vezes INVISÍVEL: "Paulínia" → "PaulÃ" + hífen oculto + "nia"); aspas curvas e
+# travessões (3 bytes) viram "â" + dois deles. Esses pares não aparecem em texto de verdade.
+_MOJIBAKE_RE = re.compile("[\xc2\xc3][\x80-\xbf]|\xe2[\x80-\xbf]{2}")   # [ÂÃ]+1 | â+2
+
+
+def _fix_mojibake(m: re.Match) -> str:
+    s = m.group(0)
+    # "MANHÃ" + espaço fixo numa manchete em CAIXA ALTA é Ã de verdade, não estrago
+    if s == "\xc3\xa0" and m.start() and m.string[m.start() - 1].isupper():
+        return s
+    return s.encode("latin-1").decode("utf-8")
+
 
 def clean_headline(t: str) -> str:
-    """Manchete → texto de verdade. "Arauco&rsquo;s Sucuri&uacute;" → "Arauco’s Sucuriú".
+    """Manchete → texto de verdade. "Arauco&rsquo;s Sucuri&uacute;" → "Arauco’s Sucuriú";
+    "SÃ¶dra" → "Södra".
 
     O Fastmarkets entrega o título com CÓDIGO DE HTML dentro e o banco guarda assim (122 de
     124 casos medidos em 11.540 manchetes). Na dashboard o navegador decodifica sozinho e
@@ -338,10 +353,17 @@ def clean_headline(t: str) -> str:
     coleta, mas as manchetes que JÁ estão no banco vieram cruas (o push é ignore-duplicates,
     não reescreve título). Só age quando existe entidade de fato — medido: dos 11.416 títulos
     sem entidade, ZERO mudariam. Um passe basta (0 casos de codificação dupla no banco).
+
+    Acento estragado (2026-10-20): a PaperAge chegava como "SÃ¶dra"/"MetsÃ¤" (15 no banco;
+    raiz consertada em `hunter/html_scrapers._use_page_charset`). Medido: só 2 outros títulos
+    do banco têm um par parecido — "Comitê"+espaço fixo e "Metrô"+aspas curvas — e os dois
+    ficam intactos.
     """
-    if not t or "&" not in t:
+    if not t:
         return t
-    return html.unescape(t) if _ENTITY_RE.search(t) else t
+    if "&" in t and _ENTITY_RE.search(t):
+        t = html.unescape(t)
+    return _MOJIBAKE_RE.sub(_fix_mojibake, t)
 
 
 @dataclass
