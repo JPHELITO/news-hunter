@@ -420,51 +420,70 @@ def normalize_text(text: str) -> str:
 
 
 # Aliases que coincidem com palavras comuns (PT/EN) e geram falso-positivo:
-#   'vale'  → verbo "valer" ("vale a pena", "vale comprar")
+#   'vale'  → verbo "valer" ("vale a pena", "vale comprar") e o vale geográfico ("Vale do Aço")
 #   'aura'  → palavra comum ("aura de mercado")
-# Só contam como menção à empresa se houver contexto setorial/financeiro no texto.
+# Contam como a EMPRESA só escritos como NOME PRÓPRIO no texto original (ver _PROPER_NOUN_RE).
 # (O ticker "tx" da Ternium foi REMOVIDO da lista de aliases — colide com "TX" =
 #  Texas e o contexto setorial não desambigua em notícia de aço dos EUA.)
 _AMBIGUOUS_ALIAS_WORDS = frozenset({"vale", "aura"})
 
-# Contexto que confirma que a menção é realmente à empresa
-_COMPANY_CONTEXT_RE = re.compile(
-    r"(?<!\w)("
-    r"vale3|cmin3|ggbr4|usim5|csna3|suzb3|rani3|klbn11|aura33|"          # tickers BR
-    r"minerio|mineradora|mineracao|ferro|pelota|niquel|cobre|ouro|"       # mineração
-    r"aco|siderurg|steel|iron|mining|mineral|smelter|"                    # steel/mining
-    r"celulose|pulp|paper|papel|"                                         # P&P
-    r"acoes|acao|bolsa|b3|dividendo|balanco|resultado|trimestre|"         # finanças BR
-    r"shares|stock|equity|earnings|quarter|production|producao|"          # finanças EN
-    r"exports?|exportac|demanda|demand|capacidade|capacity|"              # mercado
-    r"mine|mines|output|shipments?|operations|operacao|shutdown|"         # operacional
-    r"tailings|barragem|dam|port|porto|refinery|refinaria"               # ativos/instalações
-    r")", re.I,
-)
+# NOME PRÓPRIO no texto ORIGINAL — maiúscula preservada, que é como a empresa é escrita (2026-10-20).
+# A regra anterior ("vale" + qualquer palavra do setor em qualquer ponto do texto) errava dos dois lados,
+# medido no gabarito de 8.639 manchetes do time (Documents/USP/ITAU/takes_master.csv): NÃO marcava 68 das
+# 177 manchetes da Vale (governança, CEO, lucro — p.ex. "Vale quer captar até US$ 1,5 bi em panda pounds
+# na China", de fonte que chega só com o título) e MARCAVA "Vale a pena investir em ouro?", "Vale do Aço",
+# "Vale do Jequitinhonha" e "Vale da Celulose". Com esta: Vale 176/176 (o único perdido era a região
+# "Vale da Celulose"), Aura 7/7, nenhuma outra empresa muda. Mesma ideia do filtro de entrada
+# (hunter/filter.py: _AMBIGUOUS_CASED + _VALE_IDIOM), mas mais estrita: o filtro deixa "Vale do Aço"
+# ENTRAR no feed (a região interessa), e aqui ela não pode virar a EMPRESA.
+#   · depois do nome: nada de lugar (do/da/de… — a empresa é FEMININA, "da Vale"; o vale é "do Vale"),
+#     construção do verbo ("Vale a pena", "Vale lembrar"…, as mesmas do _VALE_IDIOM e mais) nem
+#     "Vale Verde" (outra mineradora, de Alagoas);
+#   · antes: nada de artigo masculino ("o/no/pelo/do Vale" = o vale geográfico) — para Aura, de artigo
+#     indefinido ("uma aura de…").
+_VALE_NOT_NEXT = (r"d[oa]s?|de|del|a\s+pena|tudo|lembrar|destacar|ressaltar|citar|notar|mencionar|frisar|"
+                  r"salientar|dizer|conferir|registrar|comentar|observar|pontuar|acompanhar|saber|ficar|ter|"
+                  r"ser|apostar|esperar|mais|menos|ouro|quanto|muito|pouco|at[eé]|por|o|verde")
+_PROPER_NOUN_RE: dict[str, re.Pattern] = {
+    "vale": re.compile(r"(?<![\w.'’])(?:Vale|VALE)(?!\w)(?!\s+(?i:" + _VALE_NOT_NEXT + r")\b)"),
+    "aura": re.compile(r"(?<![\w.'’])(?:Aura|AURA)(?!\w)(?!\s+(?i:d[oa]s?|de|of)\b)"),
+}
+_PROPER_NOUN_NOT_AFTER: dict[str, re.Pattern] = {
+    "vale": re.compile(r"(?:^|[^\w])(?:o|um|no|num|pelo|ao|do|dum|os|nos|pelos|aos|dos)\s+$", re.I),
+    "aura": re.compile(r"(?:^|[^\w])(?:uma|numa|an)\s+$", re.I),
+}
+
+
+def _proper_noun_mention(alias: str, text: str) -> bool:
+    """O alias ambíguo aparece como NOME PRÓPRIO (a empresa) no texto original?"""
+    for m in _PROPER_NOUN_RE[alias].finditer(text or ""):
+        if not _PROPER_NOUN_NOT_AFTER[alias].search(text[:m.start()]):
+            return True
+    return False
 
 
 def detect_covered_companies(text: str) -> list[str]:
     """Retorna nomes canônicos de empresas cobertas mencionadas no texto.
 
-    Aliases ambíguos (ex: 'vale' = verbo em PT) só contam se houver contexto
-    setorial/financeiro — evita falsos positivos com cripto/política/geral.
+    Aliases ambíguos ('vale' = verbo em PT, 'aura' = palavra comum) só contam escritos como
+    nome próprio no texto original — ver _PROPER_NOUN_RE.
     """
     norm = normalize_text(text)
-    has_context = bool(_COMPANY_CONTEXT_RE.search(norm))
     found: list[str] = []
     for canonical, aliases in COVERED_COMPANY_ALIASES.items():
-        strong = False   # alias inequívoco (ticker, nome completo)
-        weak = False     # alias ambíguo (palavra comum)
+        strong = False   # alias inequívoco (ticker, nome completo) ou ambíguo escrito como nome próprio
         for alias in aliases:
+            if alias in _AMBIGUOUS_ALIAS_WORDS:
+                if _proper_noun_mention(alias, text):
+                    strong = True
+                    break
+                continue
             # Evita palavra dentro de palavra (ex: "csn" em "csn mineracao" e "csna3")
             pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
             if re.search(pattern, norm):
-                if alias in _AMBIGUOUS_ALIAS_WORDS:
-                    weak = True
-                else:
-                    strong = True
-                    break
-        if strong or (weak and has_context):
+                strong = True
+                break
+        if strong:
             found.append(canonical)
     return found
 
