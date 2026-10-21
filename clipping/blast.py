@@ -271,9 +271,9 @@ def _chamar(cfg: dict, prompt: str):
     if not isinstance(out, dict):
         log.warning("blast: %s devolveu JSON inválido", cfg["rotulo"])
         return None
-    destaques = [str(d).strip().rstrip(";.").strip()
-                 for d in (out.get("destaques") or []) if str(d).strip()]
-    return destaques or None
+    from hunter.llm_take import _text_items     # texto solto no lugar da lista não vira letras
+    destaques = [d.strip().rstrip(";.").strip() for d in _text_items(out.get("destaques"))]
+    return [d for d in destaques if d] or None
 
 
 # Quanto de cada notícia vai para a IA. Medido em 2026-09-01: os corpos guardados em

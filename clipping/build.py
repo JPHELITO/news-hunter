@@ -792,8 +792,9 @@ def _translate_call(cfg: dict, title: str, para_texts: list[str], source_lang: s
     if not isinstance(out, dict):
         log.warning("clipping: tradução %s devolveu JSON inválido", cfg["name"])
         return None
+    from hunter.llm_take import _text_items           # texto solto no lugar da lista não vira letras
     t_title = (out.get("title") or "").strip()
-    t_paras = [str(p).strip() for p in (out.get("paragraphs") or []) if str(p).strip()]
+    t_paras = [p.strip() for p in _text_items(out.get("paragraphs"))]
     return (t_title, t_paras) if t_title else None
 
 

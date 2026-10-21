@@ -304,6 +304,17 @@ def _parse_json_dict(raw, key):
     return None
 
 
+def _text_items(value):
+    """Os itens de texto da lista que a IA mandou. Texto solto no lugar da lista vira um item por
+    LINHA — percorrê-lo daria letra por letra ("M", "i", "n"). O que não é texto (número, objeto)
+    não é frase e sai; item em branco também."""
+    if isinstance(value, str):
+        value = value.splitlines()
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [v for v in value if isinstance(v, str) and v.strip()]
+
+
 def _parse_json_take(raw):
     for cand in _json_candidates(raw):
         try:

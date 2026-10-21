@@ -15,9 +15,14 @@ sem aviso, e a cadeia ia gastar a próxima IA à toa.
 Os testes de antes não pegavam porque trocavam o `_chamar` inteiro por um falso: a leitura
 do JSON nunca foi exercitada. Aqui ela é: só o `requests.post` é falso, e as respostas são
 escritas à mão no formato que cada provedor devolve. NENHUMA IA é chamada.
+
+ACHADO JUNTO (seção 4): pedimos uma LISTA e a IA reserva pode mandar um TEXTO só. O código
+percorria o texto letra por letra — o blast saía com "M", "i", "n" de destaques e a tradução
+punha uma letra por parágrafo no Word. Esse acontecia até com JSON limpo.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -245,3 +250,75 @@ class TestTraducaoDoClipping:
             r = build._translate_via_llm("Vale eleva projeção", ["a", "b"], "Portuguese")
         assert r == TRADUCAO_ESPERADA
         assert chamadas == ["generativelanguage", "api.z.ai"]
+
+
+# ── 4) Lista mandada como TEXTO SOLTO ────────────────────────────────────────────────
+
+class TestListaComoTextoSolto:
+    """Pedimos {"destaques": ["...", "..."]} e {"paragraphs": ["...", "..."]}. Texto solto no
+    lugar da lista vira um item por LINHA; o que não é texto (número, objeto) não é frase."""
+
+    def test_texto_solto_vira_um_item(self):
+        assert llm_take._text_items("Minério sobe forte") == ["Minério sobe forte"]
+
+    def test_texto_com_linhas_vira_um_item_por_linha(self):
+        assert llm_take._text_items("Primeiro.\n\nSegundo.\r\nTerceiro.") == [
+            "Primeiro.", "Segundo.", "Terceiro."]
+
+    def test_lista_de_verdade_segue_igual(self):
+        assert llm_take._text_items(["a", "b"]) == ["a", "b"]
+
+    def test_o_que_nao_e_texto_sai(self):
+        assert llm_take._text_items(["ok", 3, {"texto": "x"}, None, "   ", ["y"]]) == ["ok"]
+
+    @pytest.mark.parametrize("valor", [None, 42, {"1": "a"}, "", "   "])
+    def test_sem_texto_e_lista_vazia(self, valor):
+        assert llm_take._text_items(valor) == []
+
+    # blast
+    def _blast(self, texto):
+        with mock.patch.object(blast.requests, "post", _post_falso({"api.z.ai": texto})):
+            return blast._chamar(ZAI_BLAST, "prompt")
+
+    def test_blast_texto_solto_nao_vira_letras(self):
+        assert self._blast('{"destaques": "Minério sobe forte na China"}') == [
+            "Minério sobe forte na China"]
+
+    def test_blast_texto_com_linhas_vira_um_destaque_por_linha(self):
+        texto = json.dumps({"destaques": "Minério sobe 2%;\nCelulose estável;\nAço cai."},
+                           ensure_ascii=False)
+        assert self._blast(texto) == ["Minério sobe 2%", "Celulose estável", "Aço cai"]
+
+    def test_blast_item_so_de_pontuacao_nao_vira_destaque_em_branco(self):
+        assert self._blast('{"destaques": ["...", ";", "Minério sobe"]}') == ["Minério sobe"]
+
+    def test_blast_sem_frase_nenhuma_passa_a_vez(self):
+        assert self._blast('{"destaques": [{"texto": "x"}, 3]}') is None
+        assert self._blast('{"destaques": {"1": "a"}}') is None
+
+    def test_reserva_manda_texto_solto_e_o_blast_sai_com_a_frase(self):
+        post = _post_falso({"generativelanguage": 503, "api.mistral.ai": 429,
+                            "api.z.ai": '{"destaques": "Minério sobe forte na China"}'})
+        with mock.patch.dict(os.environ, CHAVES, clear=False), \
+             mock.patch.object(blast, "_carga_hoje", return_value=ZERADO), \
+             mock.patch.object(blast.requests, "post", post):
+            r = blast.highlights([{"title": "x"}], n=3)
+        assert r["destaques"] == ["Minério sobe forte na China"]
+        assert r["provedor"] == "z.ai (GLM)"
+
+    # tradução
+    def _traduzir(self, texto):
+        with mock.patch("requests.post", _post_falso({"api.z.ai": texto})):
+            return build._translate_call(ZAI_TRAD, "Vale eleva projeção", ["a", "b"], "Portuguese")
+
+    def test_traducao_paragrafo_solto_nao_vira_uma_letra_por_paragrafo(self):
+        assert self._traduzir('{"title": "Vale raises", "paragraphs": "One paragraph."}') == (
+            "Vale raises", ["One paragraph."])
+
+    def test_traducao_paragrafos_num_texto_so_voltam_a_ser_paragrafos(self):
+        texto = json.dumps({"title": "T", "paragraphs": "First.\n\nSecond."})
+        assert self._traduzir(texto) == ("T", ["First.", "Second."])
+
+    def test_traducao_o_que_nao_e_texto_sai(self):
+        texto = json.dumps({"title": "T", "paragraphs": ["One.", 2, {"x": 1}, "  "]})
+        assert self._traduzir(texto) == ("T", ["One."])
