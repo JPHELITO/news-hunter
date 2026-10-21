@@ -293,6 +293,9 @@ def write_summary(items, kind, label, previous, url=None, H=None):
     """Pede o texto à IA. Devolve {'summary','model','tokens_in','tokens_out'} ou None (falhou ou foi recusado)."""
     from .llm_take import PROVIDERS
     model = (PROVIDERS.get("gemini") or {}).get("model") or "gemini-3.1-flash-lite"
+    # 2º modelo do Gemini no MESMO projeto do clipping (cota por modelo): o 3.1 dá "503 high demand"
+    # nas tardes de dia útil, justo no meio da janela deste resumo (2026-10-21).
+    model_b = (PROVIDERS.get("gemini_b") or {}).get("model")
     prompt = build_prompt(items, kind, label, previous)
 
     def _pools():
@@ -302,6 +305,8 @@ def write_summary(items, kind, label, previous, url=None, H=None):
         k1 = os.environ.get("CLIPPING_TRANSLATE_KEY", "")
         if k1:
             yield {"rotulo": "gemini (projeto clipping)", "key": k1, "model": model}
+            if model_b and model_b != model:
+                yield {"rotulo": "gemini (projeto clipping)", "key": k1, "model": model_b}
         k2 = os.environ.get("GEMINI_API_KEY", "")
         if k2 and _takes_have_room(url, H):
             yield {"rotulo": "gemini (projeto takes)", "key": k2, "model": model}
@@ -320,7 +325,7 @@ def write_summary(items, kind, label, previous, url=None, H=None):
         if motivo:
             log.warning("Resumo da hora: texto de %s recusado (%s)", cfg["rotulo"], motivo)
             continue
-        return {"summary": text, "model": f"{model} · {cfg['rotulo'].split('(')[-1].rstrip(')')}",
+        return {"summary": text, "model": f"{cfg['model']} · {cfg['rotulo'].split('(')[-1].rstrip(')')}",
                 "tokens_in": tin, "tokens_out": tout}
     return None
 

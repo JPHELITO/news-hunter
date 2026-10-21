@@ -127,3 +127,16 @@ def test_ping_usa_3_tentativas_e_soluco_nao_derruba(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["takes_watchdog", "--ping"])
     assert wd.main() == 0                                   # Gemini com 503 + GLM vivo = verde
     assert chamadas == [(p, 2) for p in CADEIA]             # max_retries=2 = 3 tentativas
+
+
+def test_segundo_gemini_recusado_vira_alarme():
+    from scripts.takes_watchdog import problemas_do_ping
+    out = problemas_do_ping(["gemini", "gemini_b", "zai"],
+                            {"gemini": "ok", "gemini_b": "http 404", "zai": "ok"})
+    assert out and "gemini_b" in out[0]
+
+
+def test_segundo_gemini_lotado_nao_vira_alarme():
+    from scripts.takes_watchdog import problemas_do_ping
+    assert problemas_do_ping(["gemini", "gemini_b", "zai"],
+                             {"gemini": "ok", "gemini_b": "http 503", "zai": "ok"}) == []

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import time
+from collections import Counter
 
 import requests
 
@@ -38,6 +39,15 @@ PROVIDERS = {
                # 2026-06-26: troca de 2.5-flash-lite (só 20 req/dia na nossa conta — gargalo) p/ 3.1-flash-lite
                # (500 req/dia, confirmado no painel AI Studio + doc oficial; modelo Flash-Lite => suporta systemInstruction + JSON).
                "key": os.environ.get("GEMINI_API_KEY", ""), "throttle": 4.5},
+    # 2026-10-21: SEGUNDO MODELO DO GEMINI, no MESMO projeto e com a MESMA chave (a cota grátis é POR
+    # MODELO — não gasta nada do titular). Sondas desse dia: o 3.1-flash-lite deu "503 This model is
+    # currently experiencing high demand" (lotação do Google, não cota nossa) e o 3.5-flash-lite
+    # respondeu 250 de 250 na mesma tarde. MAS ele fica por ÚLTIMO, por qualidade medida: nas 100
+    # manchetes que o GLM classificou em produção, julgadas às cegas pelo Claude contra o prompt, o
+    # GLM acertou 22 das 31 divergências, o 3.1 16 e o 3.5 só 10. É rede de segurança para quando
+    # Gemini, Mistral e GLM caem juntos (o GLM também responde "1305 overloaded"), não um titular.
+    "gemini_b": {"style": "gemini", "model": os.environ.get("GEMINI_B_MODEL", "gemini-3.5-flash-lite"),
+                 "key": os.environ.get("GEMINI_API_KEY", ""), "throttle": 4.5},
     # 2026-08-03: REFORÇO grátis / SEM cartão. A Cerebras passa a exigir cartão em 17/ago
     # (fim do free tier atual) → adicionamos o OpenRouter como rede extra p/ não depender só
     # do Gemini. OpenAI-compatível → usa _call_openai_style. json_mode=False: nem todo modelo
@@ -98,12 +108,25 @@ PROVIDERS = {
 # troca (Platts+Fastmarkets, 45d, % de "no take" claramente errado contra as regras do prompt):
 # gemini 0,8% · gpt-oss 2,4% · mistral 4,7% · glm ~25%.
 # Reverter é só setar a env LLM_CHAIN (ex.: LLM_CHAIN=mistral,groq,zai,gemini).
-CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "gemini,mistral,zai").split(",")
+CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "gemini,mistral,zai,gemini_b").split(",")
          if p.strip() in PROVIDERS and PROVIDERS[p.strip()]["key"]]
 
 ATTEMPTS = {p: 0 for p in PROVIDERS}
 _LAST_CALL = {p: 0.0 for p in PROVIDERS}
 LAST_ERRORS: list[str] = []
+# Por que cada provedor falhou NESTA rodada, mesmo quando um degrau de baixo salvou o item.
+# Sem isto o log só contava a falha quando TODOS caíam — e por isso a queda diária do Gemini
+# passou meses sem motivo registrado. Ex.: Counter({"gemini: http 503": 7}).
+RUN_FAILS: Counter = Counter()
+LAST_DETAIL: dict[str, str] = {}     # última mensagem de erro do provedor (curta, sem dado do artigo)
+
+# Lotação (5xx) é passageira, mas toda tarde de dia útil ela dura horas. Com a reserva logo
+# atrás, insistir 3x por manchete só atrasa a rodada: 1 nova tentativa por item e, depois de
+# SOFT_SKIP_AFTER manchetes seguidas com 5xx, o provedor sai do resto da rodada (volta na próxima,
+# 5 min depois).
+RETRIES_5XX = int(os.environ.get("LLM_RETRIES_5XX", "1"))
+SOFT_SKIP_AFTER = int(os.environ.get("LLM_SOFT_SKIP_AFTER", "2"))
+_RUN_5XX: Counter = Counter()
 
 # Disjuntor POR RODADA: se um provedor responde "cota dura estourada" (429 longo /
 # teto mensal), ele é pulado no RESTO da rodada — evita desperdiçar o orçamento
@@ -114,6 +137,8 @@ _RUN_SKIP: set = set()
 def reset_run_skips() -> None:
     """Zera o disjuntor (chamar no início de cada run do shadow)."""
     _RUN_SKIP.clear()
+    _RUN_5XX.clear()
+    RUN_FAILS.clear()
 
 # ── Prompts (carregados 1x, lazy) ───────────────────────────────────────────────
 _SYSTEM: str | None = None
@@ -375,9 +400,28 @@ def _call_gemini(p, user_text):
     return r, (lambda: r.json()["candidates"][0]["content"]["parts"][0]["text"])
 
 
-def _try_provider(p, user_text, max_retries=2):
+def _err_detail(r) -> str:
+    """Motivo curto que o provedor deu para recusar ("high demand", qual cota estourou...).
+    Só o texto do provedor — nada do artigo vai para o log (o log do Actions é público)."""
+    try:
+        err = r.json().get("error") or {}
+        if isinstance(err, str):
+            return err[:120]
+        quota = [v.get("quotaId") for d in (err.get("details") or []) if isinstance(d, dict)
+                 for v in (d.get("violations") or []) if isinstance(v, dict) and v.get("quotaId")]
+        msg = str(err.get("message") or err.get("code") or "")[:120]
+        return f"{msg} [{quota[0]}]" if quota else msg
+    except Exception:
+        return (r.text or "")[:120]
+
+
+def _try_provider(p, user_text, max_retries=2, retries_5xx=None):
+    """Uma manchete num provedor. `retries_5xx` limita as novas tentativas em lotação (5xx);
+    sem ele vale `max_retries` (é o que o vigia usa no --ping, igual à produção antiga)."""
     cfg = PROVIDERS[p]
     call = _call_gemini if cfg["style"] == "gemini" else _call_openai_style
+    if retries_5xx is None:
+        retries_5xx = max_retries
     for attempt in range(max_retries + 1):
         _throttle(p)
         ATTEMPTS[p] += 1
@@ -388,15 +432,19 @@ def _try_provider(p, user_text, max_retries=2):
                 time.sleep(3); continue
             return None, f"rede: {type(e).__name__}"
         if r.status_code == 429:
+            LAST_DETAIL[p] = _err_detail(r)
             ra = float(r.headers.get("retry-after", 20) or 20)
             if ra <= 65 and attempt < max_retries:
                 time.sleep(ra + 1); continue
             return None, "rate_limited"
         if r.status_code in (401, 402, 403):   # 402 = cerebras pós-17/ago (exige cartão) → pula na hora
+            LAST_DETAIL[p] = _err_detail(r)
             return None, f"auth {r.status_code}"
         if not r.ok:
-            if attempt < max_retries:
-                time.sleep(3); continue
+            LAST_DETAIL[p] = _err_detail(r)
+            limite = retries_5xx if r.status_code >= 500 else max_retries
+            if attempt < limite:
+                time.sleep(2 if r.status_code >= 500 else 3); continue
             return None, f"http {r.status_code}"
         try:
             raw = extract()
@@ -420,17 +468,35 @@ def classify(headline, source=None, body=None):
     errors = []
     for p in CHAIN:
         if p in _RUN_SKIP:                      # cota dura já estourada nesta rodada → pula (sem desperdiçar tempo)
-            errors.append(f"{p}: skip(rate-limited this run)")
+            errors.append(f"{p}: skip(this run)")
             continue
-        result, why = _try_provider(p, user_text)
+        result, why = _try_provider(p, user_text, retries_5xx=RETRIES_5XX)
         if result:
+            _RUN_5XX[p] = 0
             return {**result, "provider": p, "model": PROVIDERS[p]["model"]}
         if why == "rate_limited" or why.startswith("auth") or why.startswith("http 4"):
             _RUN_SKIP.add(p)                     # falha PERSISTENTE (cota 429 / chave 401-403 / erro de cliente 4xx) →
                                                  # não re-tenta no resto da rodada (não desperdiça orçamento; auto-cura na próxima)
+        elif why.startswith("http 5"):
+            _RUN_5XX[p] += 1                     # lotação: depois de N manchetes seguidas, sai da rodada
+            if _RUN_5XX[p] >= SOFT_SKIP_AFTER:
+                _RUN_SKIP.add(p)
+        RUN_FAILS[f"{p}: {why}"] += 1
         errors.append(f"{p}: {why}")
     LAST_ERRORS = errors
     return None
+
+
+def run_fail_summary() -> str:
+    """Uma linha para o log da rodada: o que caiu, quantas vezes e o que o provedor disse."""
+    if not RUN_FAILS:
+        return ""
+    partes = []
+    for chave, n in RUN_FAILS.most_common():
+        p = chave.split(":", 1)[0]
+        det = LAST_DETAIL.get(p, "")
+        partes.append(f"{chave} ×{n}" + (f" ({det})" if det else ""))
+    return " · ".join(partes)
 
 
 def chain_status():

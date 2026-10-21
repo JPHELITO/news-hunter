@@ -143,6 +143,12 @@ def problemas_do_ping(chain: list[str], resultados: dict[str, str]) -> list[str]
     if classificar_falha(resultados.get(titular, "")) == "permanente":
         return [f"o titular da cadeia ({titular}) RECUSOU a chamada ({resultados[titular]}) — "
                 f"chave, assinatura ou modelo; não volta sozinho e os takes estão saindo da reserva."]
+    # 2026-10-21: o 2º Gemini é quem segura as tardes de lotação. Recusa permanente dele (o Google
+    # aposentou o 2.5 para contas novas com um 404) deixaria o GLM de volta na linha de frente, calado.
+    for p in chain[1:]:
+        if p.startswith("gemini") and classificar_falha(resultados.get(p, "")) == "permanente":
+            return [f"o 2º Gemini da cadeia ({p}) RECUSOU a chamada ({resultados[p]}) — modelo "
+                    f"aposentado ou chave; as tardes de lotação voltariam a cair no GLM."]
     return []
 
 

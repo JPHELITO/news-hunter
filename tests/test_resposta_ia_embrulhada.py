@@ -240,8 +240,8 @@ class TestTraducaoDoClipping:
         assert self._traduzir(None) is None
 
     def test_reserva_pensante_traduz_sem_gastar_a_cota_dos_takes(self):
-        """Gemini dedicado sem cota (429), o GLM responde embrulhado: a tradução sai dele, e o
-        Gemini COMPARTILHADO (que é a cota dos takes) nem é chamado."""
+        """Gemini dedicado sem cota (429) nos seus DOIS modelos, o GLM responde embrulhado: a
+        tradução sai dele, e o Gemini COMPARTILHADO (que é a cota dos takes) nem é chamado."""
         chamadas = []
         post = _post_falso({"generativelanguage": 429, "api.z.ai": TRADUCAO_PENSANTE}, chamadas)
         with mock.patch.dict(os.environ, CHAVES, clear=False), \
@@ -249,7 +249,7 @@ class TestTraducaoDoClipping:
             os.environ.pop("CLIPPING_TRANSLATE_CHAIN", None)      # a ordem padrão da cadeia
             r = build._translate_via_llm("Vale eleva projeção", ["a", "b"], "Portuguese")
         assert r == TRADUCAO_ESPERADA
-        assert chamadas == ["generativelanguage", "api.z.ai"]
+        assert chamadas == ["generativelanguage", "generativelanguage", "api.z.ai"]
 
 
 # ── 4) Lista mandada como TEXTO SOLTO ────────────────────────────────────────────────

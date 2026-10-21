@@ -716,10 +716,14 @@ def _translate_chain() -> list[dict]:
     try:
         from hunter.llm_take import PROVIDERS as _P
         gem_model = (_P.get("gemini") or {}).get("model") or "gemini-2.5-flash-lite"
+        gem_b_model = (_P.get("gemini_b") or {}).get("model") or ""
         zai_model = (_P.get("zai") or {}).get("model") or "glm-4.5-flash"
     except Exception:
-        gem_model, zai_model = "gemini-2.5-flash-lite", "glm-4.5-flash"
+        gem_model, gem_b_model, zai_model = "gemini-2.5-flash-lite", "", "glm-4.5-flash"
     gem_model = os.environ.get("CLIPPING_TRANSLATE_MODEL", gem_model)
+    # 2026-10-21: 2º modelo do Gemini no projeto DEDICADO (cota por modelo). Quando o titular dá
+    # "503 high demand" — tardes de dia útil — a tradução segue no Gemini em vez de cair no GLM.
+    gem_b_model = os.environ.get("CLIPPING_TRANSLATE_MODEL_B", gem_b_model)
 
     defs = {
         "zai": {"name": "zai", "kind": "openai", "key": os.environ.get("ZAI_API_KEY", ""),
@@ -727,11 +731,15 @@ def _translate_chain() -> list[dict]:
                 "url": "https://api.z.ai/api/paas/v4/chat/completions"},
         "gemini_dedicated": {"name": "gemini(dedicada)", "kind": "gemini",
                              "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""), "model": gem_model},
+        "gemini_dedicated_b": {"name": "gemini(dedicada, 2º modelo)", "kind": "gemini",
+                               "key": os.environ.get("CLIPPING_TRANSLATE_KEY", "") if gem_b_model
+                               and gem_b_model != gem_model else "", "model": gem_b_model},
         "gemini_shared": {"name": "gemini(compartilhada)", "kind": "gemini",
                           "key": os.environ.get("GEMINI_API_KEY", ""), "model": gem_model},
     }
     order = [p.strip() for p in os.environ.get(
-        "CLIPPING_TRANSLATE_CHAIN", "gemini_dedicated,zai,gemini_shared").split(",") if p.strip()]
+        "CLIPPING_TRANSLATE_CHAIN", "gemini_dedicated,gemini_dedicated_b,zai,gemini_shared").split(",")
+        if p.strip()]
     return [defs[p] for p in order if p in defs and defs[p]["key"]]
 
 

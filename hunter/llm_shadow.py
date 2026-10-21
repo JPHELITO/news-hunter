@@ -120,6 +120,7 @@ def run_llm_shadow() -> None:
                 seen.add(u); pend.append(a)
     pend = pend[:BATCH + CATCHUP]                                          # bound da pré-busca
     if not pend:
+        _log_fails()
         _check_queue_age(url, H, cutoff)
         return
 
@@ -153,7 +154,16 @@ def run_llm_shadow() -> None:
         log.warning("LLM shadow: provedores que falharam (último item all-fail): %s", llm_take.LAST_ERRORS)
     log.info("LLM shadow: %d/%d classificados (cobertas=%d catch-up=%d chain=%s attempts=%s)",
              done, len(pend), len(covered), len(catchup), llm_take.CHAIN, llm_take.chain_status()["attempts"])
+    _log_fails()
     _check_queue_age(url, H, cutoff)
+
+
+def _log_fails() -> None:
+    """Uma linha por rodada com o que caiu e o que o provedor disse (ex.: "gemini: http 503 ×4
+    (This model is currently experiencing high demand…)"), inclusive quando outro degrau salvou."""
+    resumo = llm_take.run_fail_summary()
+    if resumo:
+        log.warning("LLM shadow: quedas nesta rodada: %s", resumo)
 
 
 def _save(url, H, url_a, res) -> None:

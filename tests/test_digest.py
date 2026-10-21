@@ -204,12 +204,24 @@ class TestCota:
              mock.patch.object(D.requests, "post", return_value=falha) as post, \
              mock.patch.object(D, "_takes_have_room", return_value=False):
             assert D.write_summary(ITEMS, "hour", "11:00-12:00", None) is None
-        assert post.call_count == 1                   # só o do clipping
+        assert post.call_count == 2                   # só o do clipping (os dois modelos dele)
+        assert {c.kwargs["headers"]["x-goog-api-key"] for c in post.call_args_list} == {"kc"}
+
+    def test_lotacao_do_titular_cai_no_segundo_modelo_do_mesmo_projeto(self):
+        lotado = mock.Mock(ok=False, status_code=503)
+        with mock.patch.dict("os.environ", {"CLIPPING_TRANSLATE_KEY": "kc", "GEMINI_API_KEY": "kt"}), \
+             mock.patch.object(D.requests, "post", side_effect=[lotado, _gem_ok()]) as post, \
+             mock.patch.object(D, "_takes_have_room") as room:
+            got = D.write_summary(ITEMS, "hour", "11:00-12:00", None)
+        from hunter.llm_take import PROVIDERS
+        assert got and got["model"].startswith(PROVIDERS["gemini_b"]["model"]) and "clipping" in got["model"]
+        assert PROVIDERS["gemini_b"]["model"] in post.call_args_list[1].args[0]
+        room.assert_not_called()                      # a cota dos takes nem é consultada
 
     def test_cai_para_o_dos_takes_quando_ha_folga(self):
         falha = mock.Mock(ok=False, status_code=429)
         with mock.patch.dict("os.environ", {"CLIPPING_TRANSLATE_KEY": "kc", "GEMINI_API_KEY": "kt"}), \
-             mock.patch.object(D.requests, "post", side_effect=[falha, _gem_ok()]), \
+             mock.patch.object(D.requests, "post", side_effect=[falha, falha, _gem_ok()]), \
              mock.patch.object(D, "_takes_have_room", return_value=True):
             got = D.write_summary(ITEMS, "hour", "11:00-12:00", None)
         assert got and "takes" in got["model"]
