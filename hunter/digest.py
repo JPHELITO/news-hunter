@@ -257,18 +257,13 @@ def parse_answer(raw) -> str | None:
     """O texto do campo summary. Aceita JSON puro e JSON embrulhado (modelo que 'pensa' antes, cercas ```)."""
     if not raw:
         return None
-    try:
-        from .llm_take import _json_candidates
-        cands = list(_json_candidates(raw))
+    try:   # a mesma leitura do blast e da tradução: só vale o que vem DEPOIS do </think> do raciocínio
+        from .llm_take import _parse_json_dict
+        obj = _parse_json_dict(raw, "summary")
     except Exception:
-        cands = [raw]
-    for c in cands:
-        try:
-            obj = json.loads(c)
-        except Exception:
-            continue
-        if isinstance(obj, dict) and isinstance(obj.get("summary"), str) and obj["summary"].strip():
-            return _clean(obj["summary"])
+        obj = None
+    if isinstance(obj, dict) and isinstance(obj.get("summary"), str) and obj["summary"].strip():
+        return _clean(obj["summary"])
     return None
 
 
