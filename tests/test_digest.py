@@ -214,6 +214,21 @@ class TestCota:
             got = D.write_summary(ITEMS, "hour", "11:00-12:00", None)
         assert got and "takes" in got["model"]
 
+    def test_sem_a_chave_do_clipping_usa_o_dos_takes(self):
+        # o incidente de 21/10: o job do hunt-loop ainda não tinha a env nova e a 1ª versão não chamava ninguém
+        with mock.patch.dict("os.environ", {"CLIPPING_TRANSLATE_KEY": "", "GEMINI_API_KEY": "kt"}), \
+             mock.patch.object(D.requests, "post", return_value=_gem_ok()) as post, \
+             mock.patch.object(D, "_takes_have_room", return_value=True):
+            got = D.write_summary(ITEMS, "hour", "11:00-12:00", None)
+        assert got and "takes" in got["model"]
+        assert post.call_args.kwargs["headers"]["x-goog-api-key"] == "kt"
+
+    def test_sem_chave_nenhuma_nao_chama_ninguem(self):
+        with mock.patch.dict("os.environ", {"CLIPPING_TRANSLATE_KEY": "", "GEMINI_API_KEY": ""}), \
+             mock.patch.object(D.requests, "post") as post:
+            assert D.write_summary(ITEMS, "hour", "11:00-12:00", None) is None
+        post.assert_not_called()
+
     def test_texto_recusado_nao_e_publicado(self):
         with mock.patch.dict("os.environ", {"CLIPPING_TRANSLATE_KEY": "kc", "GEMINI_API_KEY": ""}), \
              mock.patch.object(D.requests, "post", return_value=_gem_ok("CSN (CSNA3) jumped 12% on the day.")):

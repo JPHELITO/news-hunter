@@ -294,19 +294,19 @@ def write_summary(items, kind, label, previous, url=None, H=None):
     from .llm_take import PROVIDERS
     model = (PROVIDERS.get("gemini") or {}).get("model") or "gemini-3.1-flash-lite"
     prompt = build_prompt(items, kind, label, previous)
-    tentativas = []
-    k1 = os.environ.get("CLIPPING_TRANSLATE_KEY", "")
-    if k1:
-        tentativas.append({"rotulo": "gemini (projeto clipping)", "key": k1, "model": model})
-    k2 = os.environ.get("GEMINI_API_KEY", "")
-    for i in range(2):
-        if i == 1:                                  # o projeto dos takes só se o do clipping não deu
-            if not k2 or not _takes_have_room(url, H):
-                break
-            tentativas.append({"rotulo": "gemini (projeto takes)", "key": k2, "model": model})
-        if i >= len(tentativas):
-            continue
-        cfg = tentativas[i]
+
+    def _pools():
+        # Gerador de propósito: o projeto dos takes só é considerado (e a cota dele só é medida) quando o do
+        # clipping não existe ou não deu. ⚠️ 1ª versão (21/10) indexava uma lista e, SEM a chave do clipping
+        # (o job do hunt-loop só recebe env novo no ciclo seguinte), pulava os dois: a IA nem era chamada.
+        k1 = os.environ.get("CLIPPING_TRANSLATE_KEY", "")
+        if k1:
+            yield {"rotulo": "gemini (projeto clipping)", "key": k1, "model": model}
+        k2 = os.environ.get("GEMINI_API_KEY", "")
+        if k2 and _takes_have_room(url, H):
+            yield {"rotulo": "gemini (projeto takes)", "key": k2, "model": model}
+
+    for cfg in _pools():
         try:
             got = _gemini(cfg, prompt)
         except Exception as e:
