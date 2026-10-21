@@ -53,7 +53,6 @@ log = logging.getLogger(__name__)
 CAPACIDADE = {
     "gemini_clipping": 500,    # projeto dedicado ao clipping (~7 chamadas/dia)
     "gemini_takes":    500,    # projeto dos takes (~250-280/dia)
-    "mistral":         300,    # de volta desde 01/09; teto conservador, não medido
     "zai":            1000,    # ocioso, porém LENTO (55-66s por chamada)
 }
 
@@ -87,8 +86,6 @@ def _carga_hoje() -> dict:
             m = str(row.get("take_llm_model") or "")
             if m.startswith("gemini"):
                 carga["gemini_takes"] += 1
-            elif m.startswith("mistral"):
-                carga["mistral"] += 1
             elif m.startswith("glm"):
                 carga["zai"] += 1
     except Exception as e:
@@ -108,7 +105,8 @@ FOLGA_MINIMA = float(os.environ.get("BLAST_FOLGA_MINIMA", "0.20"))
 
 # Erro medido de cada família em 2026-08-06 (% de julgamento claramente errado, nas fontes
 # curadas): gemini 0,8% · mistral 4,7% · glm ~25%. Menor é melhor.
-QUALIDADE = {"gemini_clipping": 0, "gemini_takes": 0, "mistral": 1, "zai": 2}
+# A Mistral saiu em 2026-10-21: conta grátis com limite zero, passou a exigir cartão.
+QUALIDADE = {"gemini_clipping": 0, "gemini_takes": 0, "zai": 2}
 
 
 def escolher_provedores() -> list:
@@ -136,16 +134,12 @@ def escolher_provedores() -> list:
     from hunter.llm_take import PROVIDERS as _P
     gem = (_P.get("gemini") or {}).get("model") or "gemini-3.1-flash-lite"
     zai = (_P.get("zai") or {}).get("model") or "glm-4.5-flash"
-    mis = (_P.get("mistral") or {}).get("model") or "mistral-medium-latest"
 
     defs = {
         "gemini_clipping": {"rotulo": "gemini (projeto clipping)", "kind": "gemini", "lento": False,
                             "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""), "model": gem},
         "gemini_takes":    {"rotulo": "gemini (projeto takes)", "kind": "gemini", "lento": False,
                             "key": os.environ.get("GEMINI_API_KEY", ""), "model": gem},
-        "mistral":         {"rotulo": "mistral", "kind": "openai", "lento": False,
-                            "key": os.environ.get("MISTRAL_API_KEY", ""), "model": mis,
-                            "url": "https://api.mistral.ai/v1/chat/completions"},
         "zai":             {"rotulo": "z.ai (GLM)", "kind": "openai", "lento": True,
                             "key": os.environ.get("ZAI_API_KEY", ""), "model": zai,
                             "url": "https://api.z.ai/api/paas/v4/chat/completions"},

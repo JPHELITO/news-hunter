@@ -61,7 +61,6 @@ jobs:
           # INALTERADOS). Habilitado só AQUI (não no hunt-playwright) p/ evitar corrida
           # entre os 2 loops. Prompts vêm da tabela Supabase llm_prompts (RLS).
           LLM_TAKES_ENABLED:    "1"
-          MISTRAL_API_KEY:      ${{ secrets.MISTRAL_API_KEY }}
           CEREBRAS_API_KEY:     ${{ secrets.CEREBRAS_API_KEY }}
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY:         ${{ secrets.GROQ_API_KEY }}

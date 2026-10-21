@@ -58,7 +58,6 @@ jobs:
           # As MESMAS chaves da cadeia — o --ping testa cada provedor de verdade (auth, cota,
           # tamanho de prompt e parse do JSON de uma vez). Sem elas o passo 4 não roda.
           GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
-          MISTRAL_API_KEY:      ${{ secrets.MISTRAL_API_KEY }}
           ZAI_API_KEY:          ${{ secrets.ZAI_API_KEY }}
           GROQ_API_KEY:         ${{ secrets.GROQ_API_KEY }}
         run: python -m scripts.takes_watchdog --ping --hours ${{ github.event.inputs.hours || '24' }}

@@ -41,15 +41,15 @@ def _ordem(carga, env=None):
         return [p["nome"] for p in blast.escolher_provedores()]
 
 
-ZERADO = {"gemini_clipping": 0, "gemini_takes": 0, "mistral": 0, "zai": 0}
+ZERADO = {"gemini_clipping": 0, "gemini_takes": 0, "zai": 0}
 
 
 class TestEscolhaDoProvedor:
     def test_com_todos_ociosos_ganha_o_de_melhor_qualidade(self):
-        """Mistral e Z.AI zeradas não passam na frente do Gemini."""
+        """A Z.AI zerada não passa na frente do Gemini."""
         ordem = _ordem(ZERADO)
         assert ordem[0].startswith("gemini")
-        assert ordem.index("mistral") > ordem.index("gemini_takes")
+        assert ordem.index("zai") > ordem.index("gemini_takes")
 
     def test_entre_iguais_em_qualidade_ganha_o_mais_ocioso(self):
         """É aqui que o balanceamento de carga realmente acontece."""
@@ -59,10 +59,10 @@ class TestEscolhaDoProvedor:
         assert _ordem(carga2)[0] == "gemini_takes"
 
     def test_pool_sobrecarregado_sai_da_disputa(self):
-        """Os dois Gemini quase no teto -> a vez é da Mistral, e não de um Gemini apertado."""
+        """Os dois Gemini quase no teto -> a vez é da Z.AI, e não de um Gemini apertado."""
         carga = {**ZERADO, "gemini_clipping": 490, "gemini_takes": 495}
         ordem = _ordem(carga)
-        assert ordem[0] == "mistral"
+        assert ordem[0] == "zai"
         assert "gemini_clipping" not in ordem and "gemini_takes" not in ordem
 
     def test_lento_fica_por_ultimo_mesmo_ocioso(self):
@@ -71,20 +71,24 @@ class TestEscolhaDoProvedor:
 
     def test_todos_apertados_usa_o_menos_pior_em_vez_de_desistir(self):
         """Blast sem destaque é aceitável; blast que nem tenta, não."""
-        carga = {"gemini_clipping": 500, "gemini_takes": 500, "mistral": 300, "zai": 900}
+        carga = {"gemini_clipping": 500, "gemini_takes": 500, "zai": 900}
         ordem = _ordem(carga)
         assert len(ordem) == 1 and ordem[0] == "zai"      # 10% livre é a maior folga restante
 
     def test_provedor_sem_chave_nao_entra(self):
-        assert "mistral" not in _ordem(ZERADO, env={"MISTRAL_API_KEY": ""})
+        assert "zai" not in _ordem(ZERADO, env={"ZAI_API_KEY": ""})
+
+    def test_mistral_fora_mesmo_com_chave(self):
+        """Retirada em 2026-10-21: conta grátis com limite zero, passou a exigir cartão."""
+        assert "mistral" not in _ordem(ZERADO)
 
     def test_a_folga_e_relativa_ao_teto_de_cada_pool(self):
         """200 usados pesam diferente num teto de 500 e num de 1000."""
-        carga = {**ZERADO, "mistral": 150, "zai": 150}     # 50% vs 85% de folga
+        carga = {**ZERADO, "gemini_takes": 250, "zai": 150}     # 50% vs 85% de folga
         with mock.patch.dict("os.environ", CHAVES, clear=False), \
              mock.patch.object(blast, "_carga_hoje", return_value=carga):
             por_nome = {p["nome"]: p["folga"] for p in blast.escolher_provedores()}
-        assert por_nome["mistral"] == pytest.approx(0.5)
+        assert por_nome["gemini_takes"] == pytest.approx(0.5)
         assert por_nome["zai"] == pytest.approx(0.85)
 
 

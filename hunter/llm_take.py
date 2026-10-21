@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """Motor LLM do classificador de takes (FASE 3 — produção). Ver LLM_TAKES_PLAN.md §5.2.
 
-- Cadeia de provedores GRÁTIS com cascata: mistral -> cerebras -> groq -> gemini
-  (pula os sem chave; 429 curto re-tenta, longo cascateia). Mistral é a principal
-  (sem teto diário); Gemini foi p/ o fim (conta com 20 RPD).
+- Cadeia de provedores GRÁTIS com cascata (ordem em CHAIN, abaixo): gemini -> zai (GLM) ->
+  gemini_b (pula os sem chave; 429 curto re-tenta, longo cascateia; 5xx desiste rápido).
 - Saída JSON estruturada {take, reason, confidence} (temperature=0).
 - Prompts (IP do analista) vêm da tabela Supabase `llm_prompts` (RLS fechada) — NUNCA
   versionados no repo público. Fallback dev: arquivos em $LLM_PROMPTS_DIR.
@@ -24,6 +23,9 @@ log = logging.getLogger(__name__)
 
 # ── Provedores ────────────────────────────────────────────────────────────────
 PROVIDERS = {
+    # RETIRADA da cadeia em 2026-10-21 (decisão do usuário): a conta grátis ficou com limite ZERO
+    # (429 code 1300, x-ratelimit-limit-req-minute: 0 em qualquer modelo e com chave nova) e a Mistral
+    # passou a exigir cartão (Pay-as-you-go). Definição mantida só p/ referência — fora do CHAIN.
     "mistral": {"style": "openai", "url": "https://api.mistral.ai/v1/chat/completions",
                 "model": os.environ.get("MISTRAL_MODEL", "mistral-medium-latest"),
                 "key": os.environ.get("MISTRAL_API_KEY", ""), "throttle": 1.2},
@@ -45,7 +47,7 @@ PROVIDERS = {
     # respondeu 250 de 250 na mesma tarde. MAS ele fica por ÚLTIMO, por qualidade medida: nas 100
     # manchetes que o GLM classificou em produção, julgadas às cegas pelo Claude contra o prompt, o
     # GLM acertou 22 das 31 divergências, o 3.1 16 e o 3.5 só 10. É rede de segurança para quando
-    # Gemini, Mistral e GLM caem juntos (o GLM também responde "1305 overloaded"), não um titular.
+    # Gemini e GLM caem juntos (o GLM também responde "1305 overloaded"), não um titular.
     "gemini_b": {"style": "gemini", "model": os.environ.get("GEMINI_B_MODEL", "gemini-3.5-flash-lite"),
                  "key": os.environ.get("GEMINI_API_KEY", ""), "throttle": 4.5},
     # 2026-08-03: REFORÇO grátis / SEM cartão. A Cerebras passa a exigir cartão em 17/ago
@@ -108,7 +110,7 @@ PROVIDERS = {
 # troca (Platts+Fastmarkets, 45d, % de "no take" claramente errado contra as regras do prompt):
 # gemini 0,8% · gpt-oss 2,4% · mistral 4,7% · glm ~25%.
 # Reverter é só setar a env LLM_CHAIN (ex.: LLM_CHAIN=mistral,groq,zai,gemini).
-CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "gemini,mistral,zai,gemini_b").split(",")
+CHAIN = [p.strip() for p in os.environ.get("LLM_CHAIN", "gemini,zai,gemini_b").split(",")
          if p.strip() in PROVIDERS and PROVIDERS[p.strip()]["key"]]
 
 ATTEMPTS = {p: 0 for p in PROVIDERS}

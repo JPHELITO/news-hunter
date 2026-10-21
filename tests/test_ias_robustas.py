@@ -13,11 +13,12 @@ O QUE A MEDIÇÃO DE QUALIDADE MUDOU NO PLANO
 Julgamento às cegas pelo Claude, contra o próprio prompt, das 100 manchetes que o GLM classificou
 em produção: nas 31 em que os três modelos divergiram, o GLM acertou 22, o 3.1 16 e o 3.5 só 10.
 Por isso: (a) NÃO existe "refazer pelo Gemini" o que saiu do GLM — pioraria; (b) o 3.5 entra por
-ÚLTIMO, como rede de segurança quando Gemini, Mistral e GLM caem juntos.
+ÚLTIMO, como rede de segurança quando Gemini e GLM caem juntos.
 
 O QUE ESTES TESTES TRAVAM
 -------------------------
-1. A cadeia padrão: gemini → mistral → zai → gemini_b (o 2º Gemini por último, na mesma chave).
+1. A cadeia padrão: gemini → zai → gemini_b (o 2º Gemini por último, na mesma chave). A Mistral
+   saiu em 21/10: conta grátis com limite zero, passou a exigir cartão.
 2. Lotação (5xx) não segura a rodada: 1 nova tentativa por manchete e, depois de 2 manchetes
    seguidas, o provedor sai da rodada. O --ping do vigia continua com as 3 tentativas de sempre.
 3. O motivo de cada queda fica registrado mesmo quando outro degrau salva a manchete.
@@ -109,7 +110,7 @@ def roteiro(respostas_por_modelo):
 
 def test_cadeia_padrao_poe_o_segundo_gemini_por_ultimo():
     src = Path(llm_take.__file__).read_text(encoding="utf-8")
-    assert '"LLM_CHAIN", "gemini,mistral,zai,gemini_b"' in src
+    assert '"LLM_CHAIN", "gemini,zai,gemini_b"' in src
     assert llm_take.PROVIDERS["gemini_b"]["style"] == "gemini"
     assert M2 != M1
 
@@ -228,3 +229,12 @@ def test_traducao_sem_chave_dedicada_continua_como_antes(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "kt")
     monkeypatch.delenv("CLIPPING_TRANSLATE_CHAIN", raising=False)
     assert [c["key"] for c in build._translate_chain()] == ["kz", "kt"]
+
+
+def test_mistral_fora_da_cadeia_e_dos_workflows():
+    src = Path(llm_take.__file__).read_text(encoding="utf-8")
+    padrao = src.split('os.environ.get("LLM_CHAIN", "', 1)[1].split('"', 1)[0]
+    assert "mistral" not in padrao.split(",")
+    raiz = Path(llm_take.__file__).resolve().parent.parent / ".github" / "workflows"
+    for wf in ("hunt-loop.yml", "takes_watchdog.yml"):
+        assert "MISTRAL_API_KEY" not in (raiz / wf).read_text(encoding="utf-8")
