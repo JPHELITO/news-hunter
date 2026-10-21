@@ -68,6 +68,10 @@ jobs:
           # 2026-08-03: reforço grátis/sem-cartão que sucede a Cerebras (paga a partir de 17/ago).
           # Dormente até o secret ZAI_API_KEY existir (chave vazia = provedor pulado no CHAIN — nada quebra).
           ZAI_API_KEY:          ${{ secrets.ZAI_API_KEY }}
+          # 2026-10-21: o "resumo da última hora" da Home (hunter/digest.py) usa o projeto Gemini do
+          # CLIPPING (500/dia, quase ocioso) — assim não divide a cota com os takes. Sem o secret, ele cai
+          # para o projeto dos takes só se a classificação do dia estiver abaixo de 80% do teto.
+          CLIPPING_TRANSLATE_KEY: ${{ secrets.CLIPPING_TRANSLATE_KEY }}
           # Para disparar o pulse_daily.yml (ver o bloco "Market Pulse" dentro do loop).
           GH_TOKEN:             ${{ secrets.GITHUB_TOKEN }}
         run: |

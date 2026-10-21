@@ -129,6 +129,14 @@ def main() -> None:
     except Exception as e:
         log.warning("LLM shadow: passo falhou (não-fatal): %s", e)
 
+    # Resumo da última hora (coluna ao lado do feed da Home): no máximo 1 chamada curta de IA por
+    # hora fechada, 7h–20h + a madrugada às 7h10. Mesma trava dos takes e NÃO-FATAL. Ver hunter/digest.py.
+    try:
+        from hunter.digest import run_digest
+        run_digest()
+    except Exception as e:
+        log.warning("Resumo da hora: passo falhou (não-fatal): %s", e)
+
     # Atualiza cotações, commodities e indicadores macro
     try:
         from hunter.prices import (update_quotes, update_commodities, update_macro,
