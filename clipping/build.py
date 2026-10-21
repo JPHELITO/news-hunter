@@ -783,13 +783,12 @@ def _translate_call(cfg: dict, title: str, para_texts: list[str], source_lang: s
         out = json.loads(raw)
     except Exception:                                # modelos "thinking" (GLM) podem embrulhar o JSON
         try:
-            from hunter.llm_take import _json_candidates
-            for cand in _json_candidates(raw):
-                if isinstance(cand, dict) and cand.get("title"):
-                    out = cand
-                    break
+            from hunter.llm_take import _parse_json_dict
+            out = _parse_json_dict(raw, "title")
         except Exception:
             out = None
+        if isinstance(out, dict):
+            log.info("clipping: tradução %s embrulhou o JSON — lido mesmo assim", cfg["name"])
     if not isinstance(out, dict):
         log.warning("clipping: tradução %s devolveu JSON inválido", cfg["name"])
         return None

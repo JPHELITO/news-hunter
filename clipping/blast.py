@@ -262,12 +262,14 @@ def _chamar(cfg: dict, prompt: str):
         out = json.loads(raw)
     except Exception:                       # modelos "thinking" embrulham o JSON
         try:
-            from hunter.llm_take import _json_candidates
-            out = next((c for c in _json_candidates(raw)
-                        if isinstance(c, dict) and "destaques" in c), None)
+            from hunter.llm_take import _parse_json_dict
+            out = _parse_json_dict(raw, "destaques")
         except Exception:
             out = None
+        if isinstance(out, dict):
+            log.info("blast: %s embrulhou o JSON — lido mesmo assim", cfg["rotulo"])
     if not isinstance(out, dict):
+        log.warning("blast: %s devolveu JSON inválido", cfg["rotulo"])
         return None
     destaques = [str(d).strip().rstrip(";.").strip()
                  for d in (out.get("destaques") or []) if str(d).strip()]

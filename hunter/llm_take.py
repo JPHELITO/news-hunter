@@ -284,6 +284,26 @@ def _json_candidates(raw):
         yield blk
 
 
+def _parse_json_dict(raw, key):
+    """O objeto JSON da resposta que traz `key` (blast e tradução do clipping). Tolera as
+    embalagens de _json_candidates: cercas ```json, texto em volta, rascunho antes da resposta
+    (vale o ÚLTIMO objeto). Com <think>…</think>, só conta o que vem DEPOIS do último </think>:
+    o raciocínio é rascunho e costuma repetir o modelo do prompt ({"destaques": ["...", "..."]}),
+    que não pode virar resposta. None se nada servir — nunca levanta (quem chama vai à próxima IA)."""
+    if not isinstance(raw, str):
+        return None
+    if "</think>" in raw:
+        raw = raw.rsplit("</think>", 1)[-1]
+    for cand in _json_candidates(raw):
+        try:
+            d = json.loads(cand)
+        except Exception:
+            continue
+        if isinstance(d, dict) and key in d:
+            return d
+    return None
+
+
 def _parse_json_take(raw):
     for cand in _json_candidates(raw):
         try:
