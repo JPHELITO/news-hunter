@@ -18,6 +18,7 @@ Sem modelos de ML, sem chamadas externas — 100% auditável.
 """
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from typing import Any
@@ -762,6 +763,56 @@ def _gate_is_tight(source: str) -> bool:
 # pares de terras raras (hunter/asx_announcements.py), pela mesma razão.
 _ALWAYS_INCLUDE_SOURCES = frozenset({"s&p platts", "fastmarkets", "cvm", "asx"})
 
+# Fontes INSTITUCIONAIS (agência reguladora / associação): quase tudo é nota administrativa —
+# curso de formação, nota à imprensa, encontro, edital de contêineres. Medido em 30 dias
+# (26/10/2026): 101 itens, 100% "no take" da IA. Decisão do usuário (26/10): SÓ essas três
+# saem, e só quando não há NENHUM sinal de mercado no texto — empresa coberta, player da
+# indústria, tópico/palavra de produto coberto ou termo regulatório/econômico (barragem,
+# licença, CFEM, resolução, portaria, faturamento, exportação, porto, movimentação…).
+# "mineração" sozinha NÃO protege (é o nome do setor, aparece em todo evento/prêmio).
+# A notícia barrada continua gravada no banco (include_in_report=false,
+# exclusion_reason='institutional_admin') → dá para auditar e reverter.
+# Chave de desligar sem mexer no código: INSTITUTIONAL_FILTER=0.
+_INSTITUTIONAL_SOURCES = frozenset({"anm", "ibram", "antaq"})
+_INST_ANCHOR_TOPICS = frozenset([
+    "iron_ore", "pellets", "sinter", "met_coal", "scrap", "dri", "hrc", "crc", "rebar", "wire_rod",
+    "structural", "billet", "slab", "plate", "flat_steel", "pig_iron", "steel_industry", "furnace",
+    "closure", "pulp", "paper", "tissue", "containerboard", "occ", "newsprint", "copper", "gold",
+    "silver", "nickel", "rare_earths", "macro", "tariffs", "utilization",
+])
+# Texto normalizado (sem acento): licença→licenca, resolução→resolucao, exportação→exportacao…
+# FORTE = sempre segura a notícia: termo regulatório/fiscal ou produto coberto.
+_INST_HARD_RE = re.compile(
+    r"\b(barragens?|licen[cs]\w*|cfem|royalt\w*|resolu\w*|portarias?|normas?|regulament\w*|outorga\w*|"
+    r"leilao de areas|disponibilidade de areas|embargo\w*|interdi\w*|multas?|greves?|paralisa\w*|"
+    r"tarifas?|antidumping|salvaguarda\w*|steel|acos?|siderurg\w*|minerio|pellets?|carvao|celulose|papel|"
+    r"cobre|ouro|niquel|terras raras)\b",
+    re.I,
+)
+# FRACA = segura só quando o título NÃO é de evento/curso/prêmio/associação (a ANTAQ escreve
+# "portuário" em toda nota; "investimentos" aparece em qualquer debate).
+_INST_SOFT_RE = re.compile(
+    r"\b(producao mineral|setor mineral|industria mineral|mineradoras?|faturamento|exporta\w*|importa\w*|"
+    r"arrecada\w*|investimentos?|balanco|trimestre|movimenta\w*|portos?|portuari\w*|navios?|fretes?|"
+    r"dragagem|hidrovia\w*|ferrovia\w*|china|pmi)\b",
+    re.I,
+)
+_INST_EVENT_RE = re.compile(
+    r"\b(encontro|reuniao|oficina|workshop|seminario|webinar|palestra|painel|debate|evento|feira|expo|exposic\w*|exposibram|"
+    r"congresso|missao tecnica|escola|estudantes|turmas?|capacita\w*|aprendizagem|cursos?|vagas|associad\w*|"
+    r"protocolo de intencoes|convida|premio\w*|premia\w*|reconhece|nota a imprensa|participa|apresenta novo|"
+    r"lanca plataforma|calendario|prorroga prazo|contribuicoes|indisponive\w*|suspensao temporaria)\b",
+    re.I,
+)
+
+
+def _is_institutional_source(source: str) -> bool:
+    return (source or "").strip().lower() in _INSTITUTIONAL_SOURCES
+
+
+def _institutional_filter_on() -> bool:
+    return os.environ.get("INSTITUTIONAL_FILTER", "1").strip() != "0"
+
 
 def _is_curated_source(source: str) -> bool:
     """True se a fonte é curada → toda notícia entra, exceto Rationale."""
@@ -814,6 +865,16 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     # de varejo, não é research setorial. Snippet de "economia" fazia esses entrarem.
     if _PERSONAL_FINANCE_RE.search(norm) and not covered:
         return True, "personal_finance"
+
+    # 2d. Fonte institucional (ANM/IBRAM/ANTAQ): nota administrativa sem NENHUM sinal de
+    #     mercado → fora (ver _INSTITUTIONAL_SOURCES). Qualquer sinal — coberta, player, tópico
+    #     de produto coberto, termo regulatório/econômico — mantém a notícia.
+    if _is_institutional_source(source) and _institutional_filter_on():
+        forte = (covered or (set(topics) & _INST_ANCHOR_TOPICS) or detect_industry_players(text)
+                 or _INST_HARD_RE.search(norm))
+        fraca = _INST_SOFT_RE.search(norm) and not _INST_EVENT_RE.search(norm)
+        if not forte and not fraca:
+            return True, "institutional_admin"
 
     # 3. Sem tópicos, sem empresa coberta E sem player de indústria → baixa relevância.
     #    PORTÃO AFROUXADO (2026-06-25): só EXCLUI nas fontes de baixo aproveitamento
