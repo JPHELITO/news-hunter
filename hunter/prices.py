@@ -309,6 +309,18 @@ def fetch_brapi(tickers: Iterable[str]) -> dict[str, dict]:
     return out
 
 
+def _janela_do_pregao(meta: dict) -> list[int] | None:
+    """[abre, fecha] do pregão regular em `meta.currentTradingPeriod.regular` (epoch, s).
+
+    None se o Yahoo não mandar a janela ou mandar algo sem sentido (fecha <= abre)."""
+    reg = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+    try:
+        abre, fecha = int(reg["start"]), int(reg["end"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return [abre, fecha] if fecha > abre else None
+
+
 def _fetch_yahoo_chart(symbol: str, range_: str | None = None,
                        interval: str | None = None) -> dict | None:
     """Yahoo v8 chart endpoint — não exige auth. Retorna price + change.
@@ -356,6 +368,12 @@ def _fetch_yahoo_chart(symbol: str, range_: str | None = None,
                 # Market Pulse para descartar mercado em feriado, que devolve o fechamento
                 # anterior como se fosse de hoje. Aditivo: nenhum caller antigo lê esta chave.
                 "quote_time": meta.get("regularMarketTime"),
+                # janela [abre, fecha] (epoch) do pregão regular "de hoje" no calendário da
+                # bolsa. Já vem com o horário de verão de cada país e com os FERIADOS: medido
+                # em 26/10/2026 (feriado nacional na Áustria), Viena devolvia o pregão de
+                # sexta, enquanto o B3 — aberto, mas ainda sem negócio no Yahoo — devolvia o
+                # de segunda. É o que o selo "aberto/fechado" do heatmap usa.
+                "session": _janela_do_pregao(meta),
             }
             if range_ and interval:
                 if _e_diario(interval):
@@ -467,6 +485,14 @@ def update_quotes() -> int:
 
     Pede range=1d&interval=5m: a MESMA chamada traz o preço atual (meta) E a série
     intradiária do dia (sparkline) — zero chamadas extras. change_pct/abs seguem do meta.
+
+    O `intraday` também leva o pregão do papel: `traded_at` (epoch do último negócio) e
+    `session` ([abre, fecha] de hoje). A home lê só essas duas chaves na consulta leve
+    (`traded_at:intraday->traded_at`) para escrever no cartão a DATA do preço e se a bolsa
+    está aberta — sem coluna nova (nada de SQL) e sem baixar a série. Por isso o objeto é
+    gravado mesmo SEM barras (`pts: []`): no começo do pregão o Yahoo ainda não tem
+    negócio do dia (o B3 levou mais de 40 min em 26/10/2026) e é justamente quando o
+    cartão precisa dizer "bolsa aberta, preço ainda de sexta".
     """
     yahoo_syms = [q[5] for q in QUOTES_LIST]
     data = fetch_yahoo(yahoo_syms, range_="1d", interval="5m")
@@ -475,7 +501,8 @@ def update_quotes() -> int:
         d = data.get(qsym)
         if not d or d.get("price") is None:
             continue
-        intraday = {"prev": d.get("prev"), "pts": d["series"]} if d.get("series") else None
+        intraday = {"prev": d.get("prev"), "pts": d.get("series") or [],
+                    "traded_at": d.get("quote_time"), "session": d.get("session")}
         rows.append({
             "ticker":     ticker,
             "name":       name,
