@@ -54,6 +54,8 @@ SECTOR_KEYWORDS = {
         "lithium", "lítio", "cobalt", "cobalto",
         "rare earth", "terras raras", "critical minerals",
         "rare earths", "NdPr", "neodímio", "neodymium", "argila iônica", "ionic clay",
+        "rare-earth", "tierras raras", "Pr-Nd", "monazite", "monazita", "yttrium", "ítrio",
+        "terbium", "térbio", "dysprosium", "disprósio", "praseodymium",
         "gold", "ouro", "silver", "prata",
         # mercado mineração
         "mineração", "mineradora", "mining", "minerais", "setor mineral",
@@ -68,6 +70,7 @@ SECTOR_KEYWORDS = {
         "Samarco", "MRN", "Kinross", "Sigma Lithium", "Southern Copper",
         "Grupo México", "Antofagasta", "Glencore", "First Quantum",
         "Aclara", "Viridis", "Lynas", "MP Materials", "Serra Verde",   # terras raras (2026-10-23)
+        "Iluka", "Arafura", "Meteoric Resources", "Neo Performance", "Vulcan Elements", "Noveon", "Ucore",
     },
     "pp": {
         # produtos celulose

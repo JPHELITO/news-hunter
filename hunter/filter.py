@@ -33,6 +33,11 @@ SOURCE_FILTER_RULES: dict[str, dict] = {
     "CVM": {
         "pass_through": True,
     },
+    # Anúncios da ASX (hunter/asx_announcements.py): Viridis + pares de terras raras, já filtrados
+    # na origem (só os sensíveis a preço das sete empresas). Fonte primária como a CVM: aceita tudo.
+    "ASX": {
+        "pass_through": True,
+    },
     # SMM (metal.com): site SÓ de metais → "cobre"/"ouro" soltos são sempre o metal. Fora dela
     # são falso amigo ("o seguro cobre", "medalha de ouro"), por isso não estão em ALL_KEYWORDS.
     # Medido em 29/09/2026: 19 matérias de cobre publicadas, só 4 entraram; de ouro, 15 e 2

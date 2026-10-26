@@ -49,6 +49,7 @@ COMPANIES_INTL = [
     # Terras raras — cobertura formal desde 2026-10-23 (Aclara ARA.TO, Viridis VMM.AX) + pares não cobertos
     "Aclara", "Aclara Resources", "Viridis", "Viridis Mining",
     "Lynas", "MP Materials", "Serra Verde", "Brazilian Rare Earths", "Meteoric Resources",
+    "Iluka", "Arafura", "USA Rare Earth", "Neo Performance", "Vulcan Elements", "Noveon", "Ucore",
     "CMPC", "Empresas CMPC", "Softys",
     # COPEC/Arauco estavam AUSENTES — manchete de coberta sem outra keyword era
     # descartada antes de classificar (bug achado na auditoria 2026-06-25).
@@ -106,6 +107,11 @@ STEEL_PRODUCTS = [
     # "rare earths" no plural não casa com "rare earth" (o filtro exige palavra inteira) — 2026-10-23
     "rare earths", "NdPr", "neodymium", "neodímio", "praseodymium", "praseodímio",
     "dysprosium", "disprósio", "ionic clay", "argila iônica", "rare earth magnet", "ímãs de terras raras",
+    # A forma com hífen não casa "rare earth" (palavra inteira) — 2026-10-26: "GT Voice: Rare-earth metal
+    # recycling…" (Global Times) foi descartada só por isso. "Pr-Nd", monazita e ítrio derrubaram 3 das 6
+    # matérias de terras raras que a SMM publicou e o robô perdeu em outubro/2026.
+    "rare-earth", "rare-earths", "Pr-Nd", "monazite", "monazita", "yttrium", "ítrio",
+    "terbium", "térbio", "tierras raras",
     "critical minerals", "minerais críticos",
     "bauxite", "bauxita",
     "ferro-liga", "ferroalloy",

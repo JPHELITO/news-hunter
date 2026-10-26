@@ -38,12 +38,18 @@ _TIMEOUT = 15
 # "metal" (singular) e "gold" entraram em 2026-09-30: a coluna "China's metal-heavy commodity
 # imports…" e "Gold on track for monthly decline…" (Aura) ficavam de fora. "gold" também é
 # medalha e desfile de moda → /sports/ e /lifestyle/ são descartadas em _is_relevant_url.
+# Terras raras entraram em 2026-10-26 (Aclara/Viridis cobertas): o endereço da Reuters quase nunca traz
+# "metal"/"mining" nessas matérias — numa amostra de 19, 16 ficavam de fora ("lynas-rare-earths-takeover-
+# talks", "mp-materials-stops-china-bound-rare-earth-shipments-over-tariffs"). "meteoric" sozinho NÃO entra:
+# é o "meteoric-rise" de qualquer ação; a empresa vem como "meteoric-resources".
 _RELEVANT_KW = re.compile(
     r"\b("
     r"iron-ore|copper|steel|mining|metals|metal|gold|aluminium|aluminum|nickel|"
     r"coking-coal|met-coal|coal|zinc|manganese|pellet|scrap|pulp|"
     r"vale-sa|bhp|rio-tinto|anglo-american|fortescue|glencore|"
-    r"gerdau|usiminas|csn|suzano|klabin|ternium|arcelormittal|nucor"
+    r"gerdau|usiminas|csn|suzano|klabin|ternium|arcelormittal|nucor|"
+    r"rare-earths?|critical-minerals?|neodymium|dysprosium|terbium|ndpr|"
+    r"lynas|mp-materials|aclara|viridis|iluka|arafura|serra-verde|meteoric-resources"
     r")\b",
     re.I,
 )

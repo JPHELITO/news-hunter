@@ -60,7 +60,9 @@ COV = {"VALE": "VALE3", "CSN": "CSNA3", "CMIN": "CMIN3", "GERDAU": "GGBR4", "USI
        "SUZANO": "SUZB3", "KLABIN": "KLBN11", "IRANI": "RANI3", "CMPC": "CMPC", "COPEC": "COPEC",
        "ACLARA": "ARA", "VIRIDIS": "VMM"}   # terras raras (cobertura formal desde 2026-10-23)
 ALL_TICKERS = set(COV.values())
-TIER1 = ("platts", "fastmarkets", "valor", "cvm", "b3", "reuters", "bloomberg")
+# "asx" e "aclara resources" (2026-10-26): anúncio da bolsa australiana e comunicado no site da Aclara
+# são fonte primária, como os da CVM.
+TIER1 = ("platts", "fastmarkets", "valor", "cvm", "b3", "reuters", "bloomberg", "asx", "aclara resources")
 _STOP = set("""a an the of to in on for at by with from and or as is are be its it this that after amid over
 o a os as de da do das dos em no na nos nas por para com e ou que se um uma ao aos à às sobre após diz""".split())
 

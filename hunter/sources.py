@@ -27,6 +27,10 @@ SOURCES = [
     # feed geral perdia coisas como "Trump expected to attend event with mining execs amid
     # critical minerals push". On-topic p/ a cobertura (base metals/minerais críticos).
     {"label": "Mining.com",            "url": "https://www.mining.com/category/critical-minerals/feed/", "filter": False},
+    # 2026-10-26 (terras raras, Aclara/Viridis cobertas): a página de commodity completa o feed de
+    # minerais críticos — medido: 28 das 36 matérias já entravam por ele, as outras 8 em 26 dias não
+    # (ex.: "Rinehart-backed Arafura expands US rare earths deal by 70%").
+    {"label": "Mining.com",            "url": "https://www.mining.com/commodity/rare-earth/feed/", "filter": False},
 
     # ══ BRASIL — Imprensa econômica (RSS oficiais) ════════════════════════════
     {"label": "Valor Econômico",       "url": "https://pox.globo.com/rss/valor/empresas",         "filter": True},
@@ -68,4 +72,14 @@ SOURCES = [
     {"label": "Papnews",               "url": "https://www.papnews.com/feed/",                        "filter": False},  # P&P global/Europa (já cita nomes BR)
     {"label": "SCMP China",            "url": "https://www.scmp.com/rss/318421/feed",                 "filter": True},   # China economia/demanda (amplo → keyword)
     {"label": "Australian Mining",     "url": "https://www.australianmining.com.au/feed/",            "filter": True},   # mineração AU: Rio/BHP/FMG (amplo → keyword)
+
+    # ══ TERRAS RARAS — Aclara (ARA.TO) e Viridis (VMM.AX), cobertas desde 2026-10-23 ════════
+    # Varredura de 26/10/2026, cada uma medida pelo caminho do robô (coleta → filtro → classificador)
+    # e cruzada com o banco. Feeds de TEMA → aceita-tudo (são estreitos e cabem na cota das IAs).
+    # "Fastmarkets Insights" e não "Fastmarkets": este nome já é o terminal logado de celulose — o
+    # site carimba tudo que se chama "Fastmarkets" como P&P e o classificador o trata como curado.
+    {"label": "Fastmarkets Insights",  "url": "https://www.fastmarkets.com/insights/category/commodity/rare-earths/feed/", "filter": False},  # ~1,6/semana, 90% TR, texto aberto
+    {"label": "Northern Miner",        "url": "https://www.northernminer.com/?s=rare+earth&feed=rss2", "filter": False},  # ~0,8/dia, matéria do mesmo dia
+    {"label": "Financial Times",       "url": "https://www.ft.com/rare-earths?format=rss",           "filter": False},  # ~1/semana, só título + linha fina
+    {"label": "Poços Já",              "url": "https://pocosja.com.br/tag/terras-raras/feed/",        "filter": False},  # Poços de Caldas: licença, comitê, movimentos
 ]

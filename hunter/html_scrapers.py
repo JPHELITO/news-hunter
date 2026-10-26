@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -25,6 +25,7 @@ try:
 except ImportError:
     BS4_OK = False
 
+from .config import WINDOW_HOURS
 from .fetcher import RawArticle
 
 log = logging.getLogger(__name__)
@@ -125,6 +126,21 @@ HTML_SOURCES = [
         "needs_filter": False,                 # fonte setorial de P&P (EN)
         "max_links": 25,                       # home lista o ano todo (newest-first) → pega só as recentes
     },
+    {
+        # Aclara (TSX: ARA, coberta desde 2026-10-23) — comunicados no próprio site (Webflow, sem RSS
+        # nem sitemap). Domínio real: aclara-re.com (o aclara-resources.com não existe mais). Cada card
+        # tem a data (DD/MM/AAAA, sem hora), o título e o link do PDF; o mesmo card aparece 2× no HTML
+        # e o 2º, invisível, aponta para "#" (cai no filtro de URL). A página lista o arquivo INTEIRO
+        # (~140 comunicados): é a data do card que impede a 1ª coleta de jogá-lo no topo do feed.
+        "label": "Aclara Resources",
+        "page_url": "https://aclara-re.com/news",
+        "domain": "aclara-re.com",
+        "selector": "a.news-item-box",
+        "title_selector": ".news-item-title",
+        "date_selector": ".text-block-66",
+        "needs_filter": False,
+        "max_links": 20,
+    },
 ]
 
 
@@ -169,6 +185,23 @@ def _canonical_url(href: str) -> str:
         return href
     p = urlparse(href)
     return f"{p.scheme}://{p.netloc}/pt/newscontent/{m.group(1)}"
+
+
+_CARD_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
+
+
+def _parse_card_date(text: str) -> Optional[datetime]:
+    """Data DD/MM/AAAA de um card (sem hora) → meia-noite UTC; None se não houver ou for inválida.
+
+    Sem hora, vale a convenção dos sitemaps que só trazem o dia (Notícias de Mineração): meia-noite UTC.
+    """
+    m = _CARD_DATE_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)), tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _use_page_charset(r: requests.Response) -> None:
@@ -252,6 +285,16 @@ def _scrape_source(src: dict) -> list[RawArticle]:
         if not title or len(title) < 12:
             continue
 
+        # Data do card (fontes com date_selector): com ela vale a mesma janela dos feeds RSS — a home
+        # ordena por found_at, e sem a janela a 1ª coleta jogaria o arquivo inteiro da página no topo
+        # do feed como se fosse novidade.
+        published = None
+        if src.get("date_selector"):
+            el = a.select_one(src["date_selector"])
+            published = _parse_card_date(el.get_text(" ", strip=True) if el else "")
+            if published and published < now_utc - timedelta(hours=WINDOW_HOURS):
+                continue
+
         # Dedup local por chave canônica (mesma matéria pode vir 2-3× com encodings
         # diferentes — ex.: SMM por id; ver _canonical_key).
         key = _canonical_key(href)
@@ -272,7 +315,7 @@ def _scrape_source(src: dict) -> list[RawArticle]:
             source_name=label,
             title=title,
             snippet="",                   # scrapers HTML não pegam corpo
-            published_at=None,            # data não disponível na home
+            published_at=published,       # só quem tem date_selector; nas outras a home não traz data
             found_at=now_utc,
             needs_filter=src.get("needs_filter", True),
         ))

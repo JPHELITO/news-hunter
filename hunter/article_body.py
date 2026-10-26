@@ -75,6 +75,30 @@ _CVM_EXIBIR_PDF = "https://www.rad.cvm.gov.br/ENETWEB/frmExibirArquivoIPEExterno
 _CVM_PROTO_RE = re.compile(r"[?&]ID=(\d+)")
 
 
+def _pdf_text(pdf: bytes, pages: int = 3) -> str:
+    """Texto das primeiras páginas de um PDF (PyMuPDF), com os espaços normalizados."""
+    import fitz  # PyMuPDF
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    text = "\n".join(doc[i].get_text() for i in range(min(pages, doc.page_count)))
+    body = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", body).strip()
+
+
+def _pdf_body(pdf: bytes, method: str = "pdf"):
+    """Comunicado em PDF (site da Aclara, anúncios da ASX) → (body|None, meta), como o resto do módulo.
+
+    Sem isto o `requests.get(...).text` de um PDF vira lixo binário, o trafilatura devolve vazio e a IA
+    lê só o título — justamente nos comunicados das próprias cobertas.
+    """
+    try:
+        body = _pdf_text(pdf)
+    except Exception as e:  # noqa: BLE001
+        return None, {"ok": False, "method": method, "chars": 0, "reason": f"pdf: {e}"}
+    if len(body) < MIN_VALID:
+        return None, {"ok": False, "method": method, "chars": len(body), "reason": "pdf sem texto (imagem?)"}
+    return body[:MAX_CHARS], {"ok": True, "method": method, "chars": len(body), "reason": "ok"}
+
+
 def _fetch_cvm_body(url: str, timeout: int = 60):
     m = _CVM_PROTO_RE.search(url or "")
     if not m:
@@ -82,7 +106,6 @@ def _fetch_cvm_body(url: str, timeout: int = 60):
     try:
         import base64
         import json
-        import fitz  # PyMuPDF
         r = requests.post(_CVM_EXIBIR_PDF, headers={**UA, "Content-Type": "application/json; charset=utf-8",
                                                     "Accept": "application/json"},
                           data=json.dumps({"codigoInstituicao": "2", "numeroProtocolo": m.group(1),
@@ -93,10 +116,7 @@ def _fetch_cvm_body(url: str, timeout: int = 60):
         pdf = base64.b64decode(d)
         if not pdf.startswith(b"%PDF"):
             return None, {"ok": False, "method": "cvm_pdf", "chars": 0, "reason": "cvm: resposta não é pdf"}
-        doc = fitz.open(stream=pdf, filetype="pdf")
-        text = "\n".join(doc[i].get_text() for i in range(min(3, doc.page_count)))
-        body = re.sub(r"[ \t]+", " ", text)
-        body = re.sub(r"\n{3,}", "\n\n", body).strip()
+        body = _pdf_text(pdf)
     except Exception as e:  # noqa: BLE001
         return None, {"ok": False, "method": "cvm_pdf", "chars": 0, "reason": f"cvm: {e}"}
     if len(body) < MIN_VALID:
@@ -120,7 +140,10 @@ def fetch_body(url: str, source: str | None = None, timeout: int = 12):
         return None, {"ok": False, "method": None, "chars": 0, "reason": "paywall"}
 
     try:
-        html = requests.get(url, headers=UA, timeout=timeout).text or ""
+        resp = requests.get(url, headers=UA, timeout=timeout)
+        if resp.content[:4] == b"%PDF" or "pdf" in resp.headers.get("Content-Type", "").lower():
+            return _pdf_body(resp.content)
+        html = resp.text or ""
     except Exception:
         html = ""
     body = _extract(html)

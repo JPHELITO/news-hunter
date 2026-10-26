@@ -117,6 +117,8 @@ INDUSTRY_PLAYERS: dict[str, str] = {
     "lynas": "steel_mining", "mp materials": "steel_mining", "serra verde": "steel_mining",
     "brazilian rare earths": "steel_mining", "meteoric resources": "steel_mining",
     "iluka": "steel_mining", "arafura": "steel_mining",
+    "usa rare earth": "steel_mining", "neo performance": "steel_mining", "vulcan elements": "steel_mining",
+    "noveon": "steel_mining", "ucore": "steel_mining",
     # Pulp & Paper (não cobertos)
     "kimberly-clark": "pulp_paper", "kimberly clark": "pulp_paper",
     "bracell": "pulp_paper", "celulosa argentina": "pulp_paper",
@@ -167,8 +169,9 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(aluminum|aluminium|aluminio|bauxite|bauxita)\b",               "aluminum"),
     (r"\b(zinc|zinco)\b",                                                 "zinc"),
     # Terras raras (Aclara/Viridis, cobertas desde 2026-10-23). Texto normalizado: sem acento.
-    (r"\b(rare.?earths?|terras.?raras|ndpr|neodymium|neodimio|praseodymium|praseodimio|dysprosium|disprosio|"
-     r"terbium|terbio|ionic.?clay|argila.?ionica|monazite|monazita|rare.?earth.?(oxides?|magnets?|elements?))\b", "rare_earths"),
+    (r"\b(rare.?earths?|terras.?raras|tierras.?raras|ndpr|pr-?nd|neodymium|neodimio|praseodymium|praseodimio|"
+     r"dysprosium|disprosio|terbium|terbio|yttrium|itrio|ionic.?clay|argila.?ionica|monazite|monazita|"
+     r"rare.?earth.?(oxides?|magnets?|elements?))\b", "rare_earths"),
     # Market concepts
     (r"\b(demand|demanda|consumo|consumption)\b",                         "demand"),
     (r"\b(supply|oferta)\b",                                              "supply"),
@@ -755,8 +758,9 @@ def _gate_is_tight(source: str) -> bool:
 # (2026-08-03: Fastmarkets entrou a pedido do usuário — "não precisa ter filtro"; Platts
 # já seguia essa regra, mas o classificador ainda vazava algumas exclusões de conteúdo.)
 # 2026-09-02: "cvm" = comunicados oficiais das cobertas (fato relevante etc., via Market Watch) —
-# fonte PRIMÁRIA; entra sempre.
-_ALWAYS_INCLUDE_SOURCES = frozenset({"s&p platts", "fastmarkets", "cvm"})
+# fonte PRIMÁRIA; entra sempre. 2026-10-26: "asx" = anúncios sensíveis a preço da Viridis e dos
+# pares de terras raras (hunter/asx_announcements.py), pela mesma razão.
+_ALWAYS_INCLUDE_SOURCES = frozenset({"s&p platts", "fastmarkets", "cvm", "asx"})
 
 
 def _is_curated_source(source: str) -> bool:
@@ -795,8 +799,10 @@ def should_exclude_news(text: str, metadata: dict) -> tuple[bool, str]:
     topics = detect_topics(text)
     covered = detect_covered_companies(text)
 
-    # 2. Conteúdo fora de escopo (cripto leve/esporte/política) sem empresa coberta
-    if _OFF_TOPIC_RE.search(norm) and not covered:
+    # 2. Conteúdo fora de escopo (cripto leve/esporte/política) sem empresa coberta.
+    #    Terras raras ficam de fora desta regra (2026-10-26): com a reeleição do Lula o tema virou política,
+    #    e "Lula's Brazil win puts rare earths in Trump's crosshairs" caía só por citar "election" no resumo.
+    if _OFF_TOPIC_RE.search(norm) and not covered and "rare_earths" not in topics:
         return True, "irrelevant_region"
 
     # 2b. Notícia policial/crime (commodity ou cidade só de carona) sem empresa coberta

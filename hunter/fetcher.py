@@ -309,6 +309,16 @@ def fetch_all() -> list[RawArticle]:
     except Exception as e:
         log.warning("CVM filings falhou: %s", e)
 
+    # 1e) Anúncios da ASX (Viridis + pares de terras raras, só os sensíveis a preço) — fonte
+    #     primária como a CVM; [] se o JSON da ASX mudar ou cair. Nunca derruba o hunt.
+    try:
+        from .asx_announcements import collect_asx_announcements
+        asx_items = collect_asx_announcements()
+        all_articles.extend(asx_items)
+        log.info("ASX: %d anúncios", len(asx_items))
+    except Exception as e:
+        log.warning("ASX falhou: %s", e)
+
     # 2) Feeds RSS
     with ThreadPoolExecutor(max_workers=6) as ex:
         futures = {ex.submit(_fetch_one, src): src for src in SOURCES}
