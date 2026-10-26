@@ -53,6 +53,7 @@ SECTOR_KEYWORDS = {
         "zinc", "zinco", "lead", "manganese", "manganês",
         "lithium", "lítio", "cobalt", "cobalto",
         "rare earth", "terras raras", "critical minerals",
+        "rare earths", "NdPr", "neodímio", "neodymium", "argila iônica", "ionic clay",
         "gold", "ouro", "silver", "prata",
         # mercado mineração
         "mineração", "mineradora", "mining", "minerais", "setor mineral",
@@ -66,6 +67,7 @@ SECTOR_KEYWORDS = {
         "Anglo American", "Simandou", "CMIN", "AURA", "Aura Minerals",
         "Samarco", "MRN", "Kinross", "Sigma Lithium", "Southern Copper",
         "Grupo México", "Antofagasta", "Glencore", "First Quantum",
+        "Aclara", "Viridis", "Lynas", "MP Materials", "Serra Verde",   # terras raras (2026-10-23)
     },
     "pp": {
         # produtos celulose
@@ -127,6 +129,9 @@ TICKER_MAP = {
     "CMPC": "CMPC.SN", "Empresas CMPC": "CMPC.SN",
     "Copec": "COPEC.SN", "Empresas Copec": "COPEC.SN",
     "Grupo México": "GMEXICOB.MX", "Grupo Mexico": "GMEXICOB.MX",
+    # Toronto / ASX — terras raras (cobertura formal desde 2026-10-23)
+    "Aclara": "ARA.TO", "Aclara Resources": "ARA.TO",
+    "Viridis": "VMM.AX", "Viridis Mining": "VMM.AX",
 }
 
 # ───────────────────────────────────────────────────────────────────────────

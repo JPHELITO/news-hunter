@@ -46,6 +46,9 @@ COMPANIES_INTL = [
     "Southern Copper", "SCCO",
     "Grupo Mexico", "GMexico", "Ferromex", "Buenavista",
     "Tia Maria",
+    # Terras raras — cobertura formal desde 2026-10-23 (Aclara ARA.TO, Viridis VMM.AX) + pares não cobertos
+    "Aclara", "Aclara Resources", "Viridis", "Viridis Mining",
+    "Lynas", "MP Materials", "Serra Verde", "Brazilian Rare Earths", "Meteoric Resources",
     "CMPC", "Empresas CMPC", "Softys",
     # COPEC/Arauco estavam AUSENTES — manchete de coberta sem outra keyword era
     # descartada antes de classificar (bug achado na auditoria 2026-06-25).
@@ -100,6 +103,9 @@ STEEL_PRODUCTS = [
     "cobalt price", "cobalt prices", "cobalto",
     "lithium price", "lithium prices", "lítio",
     "rare earth", "terras raras",
+    # "rare earths" no plural não casa com "rare earth" (o filtro exige palavra inteira) — 2026-10-23
+    "rare earths", "NdPr", "neodymium", "neodímio", "praseodymium", "praseodímio",
+    "dysprosium", "disprósio", "ionic clay", "argila iônica", "rare earth magnet", "ímãs de terras raras",
     "critical minerals", "minerais críticos",
     "bauxite", "bauxita",
     "ferro-liga", "ferroalloy",

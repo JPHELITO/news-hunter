@@ -57,7 +57,8 @@ TAKES_BUDGET_SHARE = 0.80                 # projeto dos takes só entra abaixo d
 # As cobertas como o classificador grava em take_covered_companies → ticker (o mesmo mapa da Home, _PULSE_CO)
 COV = {"VALE": "VALE3", "CSN": "CSNA3", "CMIN": "CMIN3", "GERDAU": "GGBR4", "USIMINAS": "USIM5",
        "TERNIUM": "TX", "AURA": "AURA33", "SOUTHERN COPPER": "SCCO", "GRUPO MEXICO": "GMEXICOB",
-       "SUZANO": "SUZB3", "KLABIN": "KLBN11", "IRANI": "RANI3", "CMPC": "CMPC", "COPEC": "COPEC"}
+       "SUZANO": "SUZB3", "KLABIN": "KLBN11", "IRANI": "RANI3", "CMPC": "CMPC", "COPEC": "COPEC",
+       "ACLARA": "ARA", "VIRIDIS": "VMM"}   # terras raras (cobertura formal desde 2026-10-23)
 ALL_TICKERS = set(COV.values())
 TIER1 = ("platts", "fastmarkets", "valor", "cvm", "b3", "reuters", "bloomberg")
 _STOP = set("""a an the of to in on for at by with from and or as is are be its it this that after amid over

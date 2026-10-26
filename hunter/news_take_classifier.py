@@ -82,6 +82,20 @@ COVERED_COMPANY_ALIASES: dict[str, list[str]] = {
         "vale", "vale3", "vale sa", "vale s.a", "vale mining",
         "vale do rio doce",
     ],
+    # Terras raras — cobertura formal desde 2026-10-23: desenvolvedoras pré-produção de argila iônica.
+    # "aclara" também é verbo em espanhol ("Codelco aclara que…") → só conta como NOME PRÓPRIO (ver
+    # _PROPER_NOUN_RE). Projetos só na forma qualificada: "colossus" sozinho é o supercomputador da xAI,
+    # "carina" é nome de gente, "penco" é cidade chilena. Tickers como saem no texto normalizado
+    # ("TSX: ARA" → "tsx ara").
+    "ACLARA": [
+        "aclara", "aclara resources", "aclara resources inc", "tsx ara",
+        "modulo carina", "carina module", "modulo penco", "penco module", "proyecto penco",
+    ],
+    "VIRIDIS": [
+        "viridis", "viridis mining", "viridis mining minerals", "viridis mining and minerals",
+        "viridis mining e minerals", "viridis resources", "asx vmm",
+        "projeto colossus", "colossus project", "colossus rare earth", "colossus rare earths",
+    ],
 }
 
 # Players da indústria que NÃO são da cobertura, mas cujas notícias o analista
@@ -99,6 +113,10 @@ INDUSTRY_PLAYERS: dict[str, str] = {
     "arcelormittal": "steel_mining", "arcelor mittal": "steel_mining",
     "baowu": "steel_mining", "nippon steel": "steel_mining", "posco": "steel_mining",
     "tata steel": "steel_mining", "hbis": "steel_mining", "simandou": "steel_mining",
+    # Terras raras — pares NÃO cobertos de Aclara/Viridis (entram e herdam o setor; sem take próprio)
+    "lynas": "steel_mining", "mp materials": "steel_mining", "serra verde": "steel_mining",
+    "brazilian rare earths": "steel_mining", "meteoric resources": "steel_mining",
+    "iluka": "steel_mining", "arafura": "steel_mining",
     # Pulp & Paper (não cobertos)
     "kimberly-clark": "pulp_paper", "kimberly clark": "pulp_paper",
     "bracell": "pulp_paper", "celulosa argentina": "pulp_paper",
@@ -148,6 +166,9 @@ _TOPIC_RAW: list[tuple[str, str]] = [
     (r"\b(nickel|niquel)\b",                                              "nickel"),
     (r"\b(aluminum|aluminium|aluminio|bauxite|bauxita)\b",               "aluminum"),
     (r"\b(zinc|zinco)\b",                                                 "zinc"),
+    # Terras raras (Aclara/Viridis, cobertas desde 2026-10-23). Texto normalizado: sem acento.
+    (r"\b(rare.?earths?|terras.?raras|ndpr|neodymium|neodimio|praseodymium|praseodimio|dysprosium|disprosio|"
+     r"terbium|terbio|ionic.?clay|argila.?ionica|monazite|monazita|rare.?earth.?(oxides?|magnets?|elements?))\b", "rare_earths"),
     # Market concepts
     (r"\b(demand|demanda|consumo|consumption)\b",                         "demand"),
     (r"\b(supply|oferta)\b",                                              "supply"),
@@ -425,7 +446,7 @@ def normalize_text(text: str) -> str:
 # Contam como a EMPRESA só escritos como NOME PRÓPRIO no texto original (ver _PROPER_NOUN_RE).
 # (O ticker "tx" da Ternium foi REMOVIDO da lista de aliases — colide com "TX" =
 #  Texas e o contexto setorial não desambigua em notícia de aço dos EUA.)
-_AMBIGUOUS_ALIAS_WORDS = frozenset({"vale", "aura"})
+_AMBIGUOUS_ALIAS_WORDS = frozenset({"vale", "aura", "aclara"})
 
 # NOME PRÓPRIO no texto ORIGINAL — maiúscula preservada, que é como a empresa é escrita (2026-10-20).
 # A regra anterior ("vale" + qualquer palavra do setor em qualquer ponto do texto) errava dos dois lados,
@@ -447,10 +468,14 @@ _VALE_NOT_NEXT = (r"d[oa]s?|de|del|a\s+pena|tudo|lembrar|destacar|ressaltar|cita
 _PROPER_NOUN_RE: dict[str, re.Pattern] = {
     "vale": re.compile(r"(?<![\w.'’])(?:Vale|VALE)(?!\w)(?!\s+(?i:" + _VALE_NOT_NEXT + r")\b)"),
     "aura": re.compile(r"(?<![\w.'’])(?:Aura|AURA)(?!\w)(?!\s+(?i:d[oa]s?|de|of)\b)"),
+    # "aclara" = verbo em espanhol ("Codelco aclara que…"): só Aclara/ACLARA como nome próprio e nunca
+    # seguido do que vem depois do verbo (que/a/el/la/su…).
+    "aclara": re.compile(r"(?<![\w.'’])(?:Aclara|ACLARA)(?!\w)(?!\s+(?i:que|a|al|el|la|lo|los|las|su|sus|como|si|en|por|sobre)\b)"),
 }
 _PROPER_NOUN_NOT_AFTER: dict[str, re.Pattern] = {
     "vale": re.compile(r"(?:^|[^\w])(?:o|um|no|num|pelo|ao|do|dum|os|nos|pelos|aos|dos)\s+$", re.I),
     "aura": re.compile(r"(?:^|[^\w])(?:uma|numa|an)\s+$", re.I),
+    "aclara": re.compile(r"(?!x)x"),   # nada a vetar antes do nome
 }
 
 
@@ -820,7 +845,7 @@ _STEEL_TOPICS = frozenset([
 ])
 _MINING_TOPICS = frozenset([
     "iron_ore", "pellets", "copper", "gold", "silver", "nickel", "aluminum",
-    "zinc", "sinter", "mining",
+    "zinc", "sinter", "mining", "rare_earths",
 ])
 _PP_TOPICS = frozenset([
     "pulp", "paper", "tissue", "containerboard", "occ", "newsprint",
@@ -828,7 +853,7 @@ _PP_TOPICS = frozenset([
 _COPPER_GOLD_TOPICS = frozenset(["copper", "gold", "silver", "nickel", "aluminum", "zinc"])
 
 _STEEL_COMPANIES = frozenset(["GERDAU", "TERNIUM", "USIMINAS", "CSN"])
-_MINING_COMPANIES = frozenset(["VALE", "CMIN", "SOUTHERN COPPER", "GRUPO MEXICO", "AURA"])
+_MINING_COMPANIES = frozenset(["VALE", "CMIN", "SOUTHERN COPPER", "GRUPO MEXICO", "AURA", "ACLARA", "VIRIDIS"])
 _PP_COMPANIES     = frozenset(["SUZANO", "IRANI", "CMPC", "KLABIN", "COPEC"])
 
 
