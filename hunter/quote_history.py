@@ -47,6 +47,17 @@ QUATRO ARMADILHAS DO YAHOO, TODAS MEDIDAS (não reintroduzir)
    do conserto e do vigia (`fechamento_da_sessao`), então a série se cura sozinha em vez
    de esperar alguém rodar o script.
 
+5. **Índice SEM barra diária nenhuma** (achado em 28/10/2026, ao trazer o benchmark do
+   Chile para o heatmap relativo). Em 01/09/2026 a Bolsa de Santiago passou os índices da
+   S&P para a MSCI: o `^IPSA` morreu (404) e o `SPIPSA.SN` parou em 31/08. O sucessor,
+   `MXIPSAPC.SN` (MSCI IPSA, sem dividendos), tem cotação e 5 em 5 min normais, mas
+   `interval=1d` devolve SÓ a barra de hoje — em qualquer janela, até em period1/period2.
+   A série horária existe desde o lançamento (01/09). Para os símbolos de
+   `DIARIO_PELO_HORARIO`, `fetch_full`/`fetch_recent` montam o diário pelas barras de 1 h
+   (`_diario_pelo_horario`). Sem isso a série inteira teria 1 ponto (o `update_quote_history`
+   descarta < 2 e re-tentaria todo ciclo, gastando a cota de séries inteiras), e o append
+   diário gravaria como "fechamento" o valor do meio do pregão, sem correção no dia seguinte.
+
 ECONOMIA QUE ISTO TRAZ (medido)
 -------------------------------
 A manutenção antiga re-baixava a série toda (`1y` + `max`) de cada papel, todo dia:
@@ -207,8 +218,44 @@ def _splits(res: dict | None) -> list[int]:
     return sorted(out)
 
 
+# Símbolos cujo diário o Yahoo NÃO entrega (armadilha 5): a série sai das barras de 1 h.
+DIARIO_PELO_HORARIO = {"MXIPSAPC.SN"}      # MSCI IPSA (Chile), sucessor do ^IPSA em 01/09/2026
+_HORARIO_MAX_DIAS = 730                     # o Yahoo não serve interval=1h além disso
+_PREGAO_GAP_S = 6 * 3600                    # buraco maior que isso entre candles = outro pregão
+
+
+def _diario_pelo_horario(symbol: str, dias: int) -> list[list]:
+    """[[epoch_do_1º_candle, último_valor], ...] — um ponto por pregão, da série HORÁRIA.
+
+    Pregão = candles seguidos sem buraco de mais de 6 h. Não usa a data UTC (em bolsa a
+    leste o pregão cruza a meia-noite UTC — ver `fechamento_da_sessao`) nem o fuso da bolsa
+    (dispensa tabela de horário de verão). O epoch é o do 1º candle, a abertura: é o carimbo
+    que o Yahoo dá à barra diária, e é por ele que a costura (`merge`) e a home casam o
+    índice com as ações da mesma bolsa. O valor é o último candle, com ou sem volume —
+    índice não tem volume. O pregão de hoje entra com o valor do momento e é trocado pelo
+    definitivo no dia seguinte, como a barra diária ao vivo de qualquer papel."""
+    n = min(max(1, int(dias)), _HORARIO_MAX_DIAS)
+    res = _chart(symbol, {"range": f"{n}d", "interval": "1h"}, timeout=30)
+    if not res:
+        return []
+    ts = res.get("timestamp") or []
+    closes = (((res.get("indicators") or {}).get("quote") or [{}])[0].get("close")) or []
+    velas = sorted((int(t), round(float(c), 4)) for t, c in zip(ts, closes) if c is not None)
+    out: list[list] = []
+    ultimo = None
+    for t, c in velas:
+        if ultimo is None or t - ultimo > _PREGAO_GAP_S:
+            out.append([t, c])               # abre um pregão novo
+        else:
+            out[-1][1] = c                   # mesmo pregão: o valor anda, o carimbo fica
+        ultimo = t
+    return out
+
+
 def fetch_full(symbol: str) -> list[list]:
     """Série diária COMPLETA. period1/period2 — NUNCA range=max (ver docstring do módulo)."""
+    if symbol in DIARIO_PELO_HORARIO:
+        return _diario_pelo_horario(symbol, _HORARIO_MAX_DIAS)
     res = _chart(symbol, {"period1": 0, "period2": int(time.time()), "interval": "1d"})
     return _closes(res, symbol)
 
@@ -220,6 +267,8 @@ def fetch_recent(symbol: str, days: int = 7) -> tuple[list[list], list[int]]:
     horária (armadilha 4 da docstring do módulo). Como a costura é por dia e o ponto novo
     vence, isso também SUBSTITUI o preço do meio do pregão que a rodada anterior gravou."""
     n = max(1, int(days))
+    if symbol in DIARIO_PELO_HORARIO:        # armadilha 5: índice não tem split
+        return _diario_pelo_horario(symbol, n + 3), []
     res = _chart(symbol, {"range": f"{n}d", "interval": "1d", "events": "div,split"}, timeout=15)
     pontos = _closes(res, symbol)
     fantasmas = barras_fantasma(res)

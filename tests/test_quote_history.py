@@ -183,6 +183,98 @@ class TestFetchRecentReconstroiFantasma:
         assert qh.fetch_recent("CMPC.SN")[0] == [[D1, 1049.0]]   # = o comportamento antigo
 
 
+# ─────────── índice sem barra diária: o diário sai da série horária ───────────
+class TestDiarioPeloHorario:
+    """MSCI IPSA (MXIPSAPC.SN), 28/10/2026: interval=1d devolve SÓ a barra de hoje, em
+    qualquer janela; a série de 1 h existe desde o lançamento (01/09/2026). Armadilha 5."""
+
+    # Dois pregões da SGO (12:30–20:00 UTC) com candles de hora em hora — índice: volume 0.
+    P1 = D1 - 3600                                   # 12:30 UTC do dia 10
+    P2 = D2 - 3600                                   # 12:30 UTC do dia 11
+
+    def _velas(self, *pregoes):
+        ts, cs = [], []
+        for abre, valores in pregoes:
+            for i, v in enumerate(valores):
+                ts.append(abre + i * 3600)
+                cs.append(v)
+        return {"timestamp": ts, "indicators": {"quote": [{"close": cs, "volume": [0] * len(ts)}]}}
+
+    def _yahoo(self, monkeypatch, res):
+        pedidos = []
+
+        def fake_chart(symbol, params, timeout=30):
+            pedidos.append(dict(params))
+            return res
+
+        monkeypatch.setattr(qh, "_chart", fake_chart)
+        return pedidos
+
+    def test_um_ponto_por_pregao_carimbo_da_abertura_valor_do_ultimo(self, monkeypatch):
+        res = self._velas((self.P1, [5400.0, 5410.0, 5395.5]), (self.P2, [5380.0, None, 5346.97]))
+        self._yahoo(monkeypatch, res)
+        assert qh._diario_pelo_horario("MXIPSAPC.SN", 10) == [[self.P1, 5395.5], [self.P2, 5346.97]]
+
+    def test_pregao_que_cruza_a_meia_noite_utc_e_um_so(self, monkeypatch):
+        # ASX: 23:00 → 05:12 UTC. Agrupar pela data UTC partiria o pregão em dois.
+        abre = 10 * DAY + 23 * 3600
+        res = self._velas((abre, [8800.0, 8810.0, 8820.0, 8830.0, 8840.0, 8847.3]))
+        self._yahoo(monkeypatch, res)
+        assert qh._diario_pelo_horario("X", 10) == [[abre, 8847.3]]
+
+    def test_carimbo_casa_com_a_barra_diaria_da_mesma_bolsa(self, monkeypatch):
+        # a costura e a home comparam POR DIA: o índice tem de cair no mesmo dia das ações
+        res = self._velas((self.P1, [1.0, 2.0]), (self.P2, [3.0]))
+        self._yahoo(monkeypatch, res)
+        assert [qh._day(t) for t, _ in qh._diario_pelo_horario("MXIPSAPC.SN", 10)] == [10, 11]
+
+    def test_fetch_full_pede_o_horario_inteiro_e_nunca_o_diario(self, monkeypatch):
+        pedidos = self._yahoo(monkeypatch, self._velas((self.P1, [1.0]), (self.P2, [2.0])))
+        assert len(qh.fetch_full("MXIPSAPC.SN")) == 2       # < 2 o robô descartaria a série
+        assert pedidos == [{"range": "730d", "interval": "1h"}]
+
+    def test_fetch_recent_janela_com_folga_e_sem_split(self, monkeypatch):
+        pedidos = self._yahoo(monkeypatch, self._velas((self.P2, [5401.84])))
+        assert qh.fetch_recent("MXIPSAPC.SN", days=7) == ([[self.P2, 5401.84]], [])
+        assert pedidos == [{"range": "10d", "interval": "1h"}]
+
+    def test_horario_fora_do_ar_devolve_vazio(self, monkeypatch):
+        self._yahoo(monkeypatch, None)
+        assert qh.fetch_recent("MXIPSAPC.SN") == ([], [])
+        assert qh.fetch_full("MXIPSAPC.SN") == []
+
+    def test_outros_simbolos_seguem_no_diario(self, monkeypatch):
+        pedidos = self._yahoo(monkeypatch, _payload([D1, D2], [1.0, 2.0]))
+        qh.fetch_full("^GSPTSE")
+        assert pedidos[0].get("interval") == "1d" and "period1" in pedidos[0]
+
+
+# ─────────── benchmarks do heatmap relativo: um índice por bolsa ───────────
+class TestBenchmarksDasBolsas:
+    """O front escolhe o benchmark pelo `exchange` do papel (BENCH_BY_EXCH no index.html):
+    o índice tem de estar no QUOTES_LIST com o MESMO código de bolsa das ações."""
+
+    ESPERADO = {"IBOV": "B3", "SPX": "US", "SPTSX": "TSX", "ASX200": "ASX",
+                "MEXBOL": "BMV", "IPSA": "BCS", "FTSE100": "LSE", "OMXH25": "HEL"}
+
+    def test_cada_benchmark_existe_como_indice_na_bolsa_certa(self):
+        lista = {q[0]: q for q in prices.QUOTES_LIST}
+        for tk, bolsa in self.ESPERADO.items():
+            assert tk in lista, tk
+            assert lista[tk][2] == "index" and lista[tk][3] == bolsa, lista[tk]
+
+    def test_toda_bolsa_com_acao_tem_benchmark(self):
+        bolsas = {q[3] for q in prices.QUOTES_LIST if q[2] != "index"}
+        # AMS (MT.AS) é insumo do blast das 06h e não aparece no heatmap; NASDAQ/NYSE → SPX
+        sem = bolsas - set(self.ESPERADO.values()) - {"NYSE", "NASDAQ", "AMS"}
+        assert not sem, sem
+
+    def test_ipsa_e_o_da_msci_pelo_horario(self):
+        # o ^IPSA da S&P morreu em 01/09/2026 (404 no Yahoo) — não voltar para ele
+        lista = {q[0]: q for q in prices.QUOTES_LIST}
+        assert lista["IPSA"][5] == "MXIPSAPC.SN" and "MXIPSAPC.SN" in qh.DIARIO_PELO_HORARIO
+
+
 # ───────────── decisão do dia a dia: append x re-puxar a série inteira ─────────────
 class _Espiao:
     """Substitui o módulo quote_history dentro do update_quote_history."""

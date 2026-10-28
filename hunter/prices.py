@@ -150,6 +150,21 @@ QUOTES_LIST = [
     ("NASDAQ",      "Nasdaq Composite",  "index",       "US",    "yahoo", "^IXIC"),
     ("MATB11.SA",   "IMAT Materiais (B3)","index",      "B3",    "yahoo", "MATB11.SA"),
     ("GDX",         "Gold Miners ETF",   "index",       "US",    "yahoo", "GDX"),
+    # ── Benchmarks das outras bolsas (2026-10-28) ────────────────────────────────
+    # Para o modo RELATIVO do heatmap: cada papel contra o índice principal da bolsa onde
+    # AQUELA linha negocia (B3 → IBOV, NYSE/Nasdaq → SPX; os 6 abaixo cobrem o resto). O
+    # `exchange` é o MESMO código das ações da bolsa — é por ele que o front escolhe o
+    # benchmark (BENCH_BY_EXCH no index.html) e acerta fuso/selo de pregão.
+    # Chile: em 01/09/2026 o IPSA passou da S&P para a MSCI — o ^IPSA morreu (404), o
+    # SPIPSA.SN parou em 31/08 e o MXIPSAPC.SN (MSCI IPSA sem dividendos = retorno de preço,
+    # como o das ações) não tem barra diária no Yahoo: o histórico sai da série horária,
+    # só desde 01/09 (DIARIO_PELO_HORARIO em hunter/quote_history.py, armadilha 5).
+    ("SPTSX",       "S&P/TSX Composite", "index",       "TSX",   "yahoo", "^GSPTSE"),
+    ("ASX200",      "S&P/ASX 200",       "index",       "ASX",   "yahoo", "^AXJO"),
+    ("MEXBOL",      "S&P/BMV IPC",       "index",       "BMV",   "yahoo", "^MXX"),
+    ("IPSA",        "MSCI IPSA",         "index",       "BCS",   "yahoo", "MXIPSAPC.SN"),
+    ("FTSE100",     "FTSE 100",          "index",       "LSE",   "yahoo", "^FTSE"),
+    ("OMXH25",      "OMX Helsinki 25",   "index",       "HEL",   "yahoo", "^OMXH25"),
 ]
 
 # Commodities Yahoo — benchmark global, atualiza a cada 5min (fonte LIVRE, ao contrário
