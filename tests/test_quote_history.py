@@ -18,6 +18,7 @@ O que estes testes TRAVAM, e por quê:
 Rodar: python -m pytest tests/test_quote_history.py -v
 """
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -229,9 +230,16 @@ class TestDiarioPeloHorario:
         assert [qh._day(t) for t, _ in qh._diario_pelo_horario("MXIPSAPC.SN", 10)] == [10, 11]
 
     def test_fetch_full_pede_o_horario_inteiro_e_nunca_o_diario(self, monkeypatch):
-        pedidos = self._yahoo(monkeypatch, self._velas((self.P1, [1.0]), (self.P2, [2.0])))
+        pedidos = []
+
+        def fake_chart(symbol, params, timeout=30):
+            pedidos.append((symbol, dict(params)))
+            return self._velas((self.P1, [1.0]), (self.P2, [2.0]))
+
+        monkeypatch.setattr(qh, "_chart", fake_chart)
         assert len(qh.fetch_full("MXIPSAPC.SN")) == 2       # < 2 o robô descartaria a série
-        assert pedidos == [{"range": "730d", "interval": "1h"}]
+        do_indice = [p for s, p in pedidos if s == "MXIPSAPC.SN"]
+        assert do_indice == [{"range": "730d", "interval": "1h"}]   # o ÍNDICE nunca pelo diário
 
     def test_fetch_recent_janela_com_folga_e_sem_split(self, monkeypatch):
         pedidos = self._yahoo(monkeypatch, self._velas((self.P2, [5401.84])))
@@ -247,6 +255,82 @@ class TestDiarioPeloHorario:
         pedidos = self._yahoo(monkeypatch, _payload([D1, D2], [1.0, 2.0]))
         qh.fetch_full("^GSPTSE")
         assert pedidos[0].get("interval") == "1d" and "period1" in pedidos[0]
+
+
+# ─────────── a PONTE: o passado do IPSA antes de 01/09 vem do ETF IT NOW ───────────
+class TestPonteHistorica:
+    """Decisão do usuário (28/10/2026): antes do 1º dado do MSCI IPSA, os RETORNOS do ETF IT NOW
+    IPSA, na escala do índice (mediana da razão nos primeiros pregões em comum)."""
+
+    @staticmethod
+    def _dias(pares):                         # [(dia, valor)] -> [[epoch 12:30 UTC do dia, valor]]
+        return [[d * DAY + 45000, v] for d, v in pares]
+
+    def test_emenda_na_escala_do_indice_e_o_indice_vence_na_sobreposicao(self):
+        indice = self._dias([(10, 100.0), (11, 102.0), (12, 101.0)])
+        ponte = self._dias([(5, 50.0), (8, 49.0), (10, 50.0), (11, 51.0), (12, 50.5)])
+        assert qh._emendar(indice, ponte) == self._dias([(5, 100.0), (8, 98.0)]) + indice
+
+    def test_preserva_os_retornos_do_substituto(self):
+        indice = self._dias([(10, 5733.7), (11, 5700.0), (12, 5690.0)])
+        ponte = self._dias([(3, 5000.0), (4, 5100.0), (10, 5263.0), (11, 5232.0), (12, 5223.0)])
+        out = qh._emendar(indice, ponte)
+        assert abs(out[1][1] / out[0][1] - 5100.0 / 5000.0) < 1e-6
+
+    def test_escala_pela_mediana_um_negocio_torto_nao_move(self):
+        # 3º pregão em comum com o ETF parado num preço velho (ilíquido): razão 3,0 — ignorada
+        indice = self._dias([(10, 100.0), (11, 100.0), (12, 300.0), (13, 100.0), (14, 100.0)])
+        ponte = self._dias([(9, 49.0), (10, 50.0), (11, 50.0), (12, 100.0), (13, 50.0), (14, 50.0)])
+        assert qh._emendar(indice, ponte)[0] == self._dias([(9, 98.0)])[0]
+
+    def test_usa_so_os_primeiros_pregoes_em_comum(self):
+        indice = self._dias([(10, 100.0), (11, 100.0), (12, 100.0), (13, 300.0), (14, 300.0)])
+        ponte = self._dias([(9, 10.0), (10, 50.0), (11, 50.0), (12, 50.0), (13, 50.0), (14, 50.0)])
+        assert qh._emendar(indice, ponte, n=3)[0][1] == 20.0          # k = 2, não 6
+
+    def test_sobreposicao_curta_fica_sem_ponte(self):
+        indice = self._dias([(10, 100.0), (11, 101.0)])
+        ponte = self._dias([(5, 50.0), (10, 50.0), (11, 50.5)])
+        assert qh._emendar(indice, ponte) == indice                  # 2 pregões em comum < 3
+
+    def test_sem_substituto_ou_sem_indice(self):
+        indice = self._dias([(10, 100.0)])
+        assert qh._emendar(indice, []) == indice
+        assert qh._emendar([], self._dias([(5, 1.0)])) == []
+
+    def test_serie_do_substituto_reconstroi_o_carimbo_recente(self, monkeypatch):
+        hoje = int(time.time()) // DAY
+        real = (hoje - 9) * DAY + 45000
+        carimbo = (hoje - 8) * DAY + 45000
+        diario = _barras([(real, 4900.0, 4950.0, 4890.0, 4940.0, 1200),
+                          (carimbo, 4940.0, 4940.0, 4940.0, 4940.0, 0)])      # feed morto da SGO
+        horario = _barras([(carimbo + 3600, 4950.0, 4960.0, 4945.0, 4955.0, 300),
+                           (carimbo + 7200, 4955.0, 4975.0, 4950.0, 4971.5, 280)])
+
+        def fake_chart(symbol, params, timeout=30):
+            return diario if params.get("interval") == "1d" else horario
+
+        monkeypatch.setattr(qh, "_chart", fake_chart)
+        assert qh._serie_ponte("CFMITNIPSA.SN") == [[real, 4940.0], [carimbo, 4971.5]]
+
+    def test_fetch_full_do_ipsa_vem_emendado(self, monkeypatch):
+        hoje = int(time.time()) // DAY
+        abre = lambda d: (hoje - d) * DAY + 45000
+        etf = _barras([(abre(400), 1, 1, 1, 4000.0, 9), (abre(5), 1, 1, 1, 5000.0, 9),
+                       (abre(4), 1, 1, 1, 5050.0, 9), (abre(3), 1, 1, 1, 5000.0, 9)])
+        msci = {"timestamp": [abre(5), abre(4), abre(3)],
+                "indicators": {"quote": [{"close": [5500.0, 5555.0, 5500.0], "volume": [0, 0, 0]}]}}
+
+        def fake_chart(symbol, params, timeout=30):
+            return msci if symbol == "MXIPSAPC.SN" else etf
+
+        monkeypatch.setattr(qh, "_chart", fake_chart)
+        out = qh.fetch_full("MXIPSAPC.SN")
+        assert out[0] == [abre(400), 4400.0] and out[1:] == [[abre(5), 5500.0], [abre(4), 5555.0], [abre(3), 5500.0]]
+
+    def test_so_o_ipsa_tem_ponte(self):
+        assert qh.PONTE_HISTORICA == {"MXIPSAPC.SN": "CFMITNIPSA.SN"}
+        assert set(qh.PONTE_HISTORICA) <= qh.DIARIO_PELO_HORARIO
 
 
 # ─────────── benchmarks do heatmap relativo: um índice por bolsa ───────────

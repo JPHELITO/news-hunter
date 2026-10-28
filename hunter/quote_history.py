@@ -57,6 +57,13 @@ QUATRO ARMADILHAS DO YAHOO, TODAS MEDIDAS (não reintroduzir)
    (`_diario_pelo_horario`). Sem isso a série inteira teria 1 ponto (o `update_quote_history`
    descarta < 2 e re-tentaria todo ciclo, gastando a cota de séries inteiras), e o append
    diário gravaria como "fechamento" o valor do meio do pregão, sem correção no dia seguinte.
+   **E o passado antes de 01/09?** A MSCI continuou o MESMO índice (versão com dividendos:
+   S&P fechou 31/08 em 11.315,26, MSCI abriu 01/09 em 11.358,97), mas nenhuma fonte livre tem
+   o histórico antigo do IPSA. Por decisão do usuário (28/10/2026), o trecho anterior vem do
+   ETF IT NOW IPSA (`PONTE_HISTORICA`): os RETORNOS do ETF, na escala do índice pela mediana
+   da razão índice/ETF nos primeiros pregões em comum (`_emendar`). Medido: razão 1,089 com
+   desvio de 0,3% em 40 pregões; o ETF distribui dividendos (352 eventos) → comporta-se como
+   índice de PREÇO, como as ações. É aproximação, não o IPSA oficial antes de setembro.
 
 ECONOMIA QUE ISTO TRAZ (medido)
 -------------------------------
@@ -68,6 +75,7 @@ from __future__ import annotations
 
 import logging
 import os
+import statistics
 import time
 
 import requests
@@ -252,10 +260,50 @@ def _diario_pelo_horario(symbol: str, dias: int) -> list[list]:
     return out
 
 
+# Índice cujo passado ANTES do 1º dado vem de um substituto negociado na MESMA bolsa (armadilha 5):
+# MSCI IPSA ← ETF IT NOW IPSA (decisão do usuário, 28/10/2026). Só entra na série inteira (`fetch_full`);
+# o dia a dia segue do próprio índice.
+PONTE_HISTORICA = {"MXIPSAPC.SN": "CFMITNIPSA.SN"}
+_PONTE_PREGOES = 10        # pregões em comum usados para achar a escala (mediana: um negócio torto não move)
+
+
+def _serie_ponte(symbol: str) -> list[list]:
+    """Diário completo do substituto: fechamentos reais + sessões CARIMBADAS dos últimos 2 anos
+    reconstruídas pela série horária (o feed diário da SGO morreu em jul/2026 — armadilha 3/4)."""
+    res = _chart(symbol, {"period1": 0, "period2": int(time.time()), "interval": "1d"})
+    pontos = _closes(res, symbol)
+    recentes = [f for f in barras_fantasma(res) if f >= time.time() - (_HORARIO_MAX_DIAS - 5) * DAY]
+    if recentes:
+        tem = {_day(t) for t, _ in pontos}
+        novos = [p for p in _reconstruir_fantasmas(symbol, recentes, _HORARIO_MAX_DIAS - 3)
+                 if _day(p[0]) not in tem]
+        pontos = sorted(pontos + novos, key=lambda p: p[0])
+    return pontos
+
+
+def _emendar(indice: list[list], ponte: list[list], n: int = _PONTE_PREGOES) -> list[list]:
+    """Índice + o substituto ANTES do 1º ponto do índice, na escala do índice.
+
+    Escala = mediana de índice/substituto nos `n` primeiros pregões em comum (casados por dia).
+    Multiplicar por uma constante preserva os RETORNOS do substituto — é eles que a ponte empresta.
+    Menos de 3 pregões em comum → sem ponte (melhor buraco honesto do que escala chutada)."""
+    if not indice or not ponte:
+        return indice
+    por_dia = {_day(t): v for t, v in ponte}
+    razoes = [v / por_dia[_day(t)] for t, v in indice if por_dia.get(_day(t))][:n]
+    if len(razoes) < 3:
+        return indice
+    k = statistics.median(razoes)
+    d0 = _day(indice[0][0])
+    return [[int(t), round(v * k, 4)] for t, v in ponte if _day(t) < d0] + indice
+
+
 def fetch_full(symbol: str) -> list[list]:
     """Série diária COMPLETA. period1/period2 — NUNCA range=max (ver docstring do módulo)."""
     if symbol in DIARIO_PELO_HORARIO:
-        return _diario_pelo_horario(symbol, _HORARIO_MAX_DIAS)
+        serie = _diario_pelo_horario(symbol, _HORARIO_MAX_DIAS)
+        ponte = PONTE_HISTORICA.get(symbol)
+        return _emendar(serie, _serie_ponte(ponte)) if ponte and serie else serie
     res = _chart(symbol, {"period1": 0, "period2": int(time.time()), "interval": "1d"})
     return _closes(res, symbol)
 
