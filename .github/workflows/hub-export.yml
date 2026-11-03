@@ -1,0 +1,67 @@
+name: Hub export — envio manual ao Feeder (Commodities Datahouse)
+# ─────────────────────────────────────────────────────────────────────────────
+# Manda à mão os arquivos públicos da seção Commodities Datahouse do hub de dashboards do
+# Itaú (hub_export/) ao Dashboard Data Feeder, que os publica no Mindassets.
+#
+# O envio NORMAL é o fim de cada ciclo do hunt-loop (hunt.py, com HUB_EXPORT_ENABLED=1).
+# Este botão existe para o canário do WP1.4 e para reenviar depois de um conserto.
+# Runner novo = sem estado: cada arquivo é comparado com a cópia PUBLICADA e só vai o que
+# mudou; `force` manda todos os pedidos mesmo iguais.
+#
+# SEM AGENDAMENTO de propósito (o relógio confiável é o hunt-loop; o cron do GitHub atrasa).
+# As entradas passam por variável de ambiente, nunca direto no script (evita injeção).
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "Arquivos: all, ou lista (config,live,intraday,quotes-daily)"
+        type: string
+        default: all
+      force:
+        description: "Ignorar hash e cadência (envia mesmo sem mudança)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Exportar e enviar ao Feeder
+        env:
+          SUPABASE_URL:                ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:        ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DASHBOARD_FEEDER_URL:        ${{ vars.DASHBOARD_FEEDER_URL }}
+          DASHBOARD_FEEDER_PROJECT_ID: ${{ vars.DASHBOARD_FEEDER_PROJECT_ID }}
+          DASHBOARD_FEEDER_API_KEY:    ${{ secrets.DASHBOARD_FEEDER_API_KEY }}
+          PYTHONIOENCODING:            utf-8
+          HUB_FILES:                   ${{ inputs.files }}
+          HUB_FORCE:                   ${{ inputs.force }}
+        run: |
+          set -- --only "${HUB_FILES:-all}"
+          if [ "$HUB_FORCE" = "true" ]; then set -- "$@" --force; fi
+          echo "rodando: python -m hub_export $*"
+          python -m hub_export "$@"

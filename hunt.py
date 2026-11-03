@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -208,6 +209,16 @@ def main() -> None:
                             ", ".join(mudos))
         except Exception as e:
             log.warning("source_health: falha ao registrar: %s", e)
+
+    # Hub de dashboards do Itaú (hub_export/): monta os arquivos públicos com as linhas que o bloco
+    # de preços acabou de gravar e manda ao Feeder só o que mudou. Desligado por padrão (variável
+    # HUB_EXPORT_ENABLED do repositório) e NÃO-FATAL; o loop do Playwright não exporta.
+    if os.getenv("HUB_EXPORT_ENABLED") == "1" and not args.playwright:
+        try:
+            from hub_export.run import run_cycle
+            run_cycle()
+        except Exception as e:
+            log.warning("hub_export: falhou (não-fatal): %s", e)
 
     log.info("=== News Hunter done ===")
 

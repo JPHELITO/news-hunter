@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "flags": {
+    "heatmap": true,
+    "commodities": true,
+    "market": false,
+    "news_feed": false
+  },
+  "exchanges": {
+    "B3": {
+      "name": "B3",
+      "tz": "America/Sao_Paulo",
+      "currency": "BRL"
+    },
+    "NYSE": {
+      "name": "NYSE",
+      "tz": "America/New_York",
+      "currency": "USD"
+    },
+    "NASDAQ": {
+      "name": "Nasdaq",
+      "tz": "America/New_York",
+      "currency": "USD"
+    },
+    "US": {
+      "name": "US market",
+      "tz": "America/New_York",
+      "currency": "USD"
+    },
+    "TSX": {
+      "name": "TSX",
+      "tz": "America/Toronto",
+      "currency": "CAD"
+    },
+    "ASX": {
+      "name": "ASX",
+      "tz": "Australia/Sydney",
+      "currency": "AUD"
+    },
+    "BMV": {
+      "name": "Mexico",
+      "tz": "America/Mexico_City",
+      "currency": "MXN"
+    },
+    "BCS": {
+      "name": "Santiago",
+      "tz": "America/Santiago",
+      "currency": "CLP"
+    },
+    "LSE": {
+      "name": "LSE",
+      "tz": "Europe/London",
+      "currency": "GBp"
+    },
+    "HEL": {
+      "name": "Helsinki",
+      "tz": "Europe/Helsinki",
+      "currency": "EUR"
+    },
+    "AMS": {
+      "name": "AMS",
+      "tz": "Europe/Amsterdam",
+      "currency": null
+    },
+    "CME": {
+      "name": "CME",
+      "tz": "America/Chicago",
+      "currency": null
+    }
+  },
+  "heatmap": {
+    "max": 20,
+    "groups": [
+      {
+        "id": "coverage",
+        "label": {
+          "pt-br": "Nossa cobertura",
+          "en-us": "Our coverage"
+        },
+        "tickers": ["VALE", "SUZB3.SA"]
+      },
+      {
+        "id": "steel",
+        "label": {
+          "pt-br": "Aço",
+          "en-us": "Steel"
+        },
+        "tickers": ["CSNA3.SA", "GGBR4.SA", "MT", "NUE", "TX", "USIM5.SA", "CMC", "GOAU4.SA", "STLD"]
+      },
+      {
+        "id": "iron_ore",
+        "label": {
+          "pt-br": "Minério de ferro",
+          "en-us": "Iron Ore"
+        },
+        "tickers": ["VALE", "CMIN3.SA", "FMG.AX", "RIO", "BHP", "AAL.L", "CAP.SN", "BRAP3.SA"]
+      },
+      {
+        "id": "gold",
+        "label": {
+          "pt-br": "Ouro",
+          "en-us": "Gold"
+        },
+        "tickers": ["AUGO", "ARIS", "BVN", "AEM", "HOC.L"]
+      },
+      {
+        "id": "copper",
+        "label": {
+          "pt-br": "Cobre",
+          "en-us": "Copper"
+        },
+        "tickers": ["ERO", "SCCO", "GMEXICOB.MX", "CS.TO", "HBM.TO", "LUN.TO"]
+      },
+      {
+        "id": "rare_earths",
+        "label": {
+          "pt-br": "Terras raras",
+          "en-us": "Rare Earths"
+        },
+        "tickers": ["MEI.AX", "VMM.AX", "ARA.TO"]
+      },
+      {
+        "id": "pp",
+        "label": {
+          "pt-br": "Papel e celulose",
+          "en-us": "P&P"
+        },
+        "tickers": ["SW", "IP", "SUZB3.SA", "KLBN11.SA", "RANI3.SA", "CMPC.SN", "COPEC.SN", "UPM.HE", "STERV.HE"]
+      },
+      {
+        "id": "index",
+        "label": {
+          "pt-br": "Índices",
+          "en-us": "Index"
+        },
+        "tickers": ["GDX", "SPX", "MATB11.SA", "NASDAQ", "IBOV", "SPTSX", "ASX200", "MEXBOL", "IPSA", "FTSE100", "OMXH25"]
+      }
+    ],
+    "coverage": ["VALE", "SUZB3.SA"],
+    "hidden": ["GGB", "B"],
+    "benchmarkByExchange": {
+      "B3": "IBOV",
+      "NYSE": "SPX",
+      "NASDAQ": "SPX",
+      "US": "SPX",
+      "TSX": "SPTSX",
+      "ASX": "ASX200",
+      "BMV": "MEXBOL",
+      "BCS": "IPSA",
+      "LSE": "FTSE100",
+      "HEL": "OMXH25"
+    },
+    "benchmarkLabels": {
+      "IBOV": "IBOV",
+      "SPX": "S&P 500",
+      "SPTSX": "S&P/TSX",
+      "ASX200": "ASX 200",
+      "MEXBOL": "IPC",
+      "IPSA": "IPSA",
+      "FTSE100": "FTSE 100",
+      "OMXH25": "OMXH25"
+    }
+  },
+  "commodityGroups": [
+    {
+      "id": "2054d74f-5aec-4abf-b749-9370605c889c",
+      "title": "Base & Precious Metals",
+      "codes": ["GOLD", "COPPER"]
+    },
+    {
+      "id": "77474b40-f8b1-4181-bc24-10a6413d5894",
+      "title": "Iron Ore + Pellet",
+      "codes": ["IRON_ORE", "IOPRM00"]
+    }
+  ]
+}

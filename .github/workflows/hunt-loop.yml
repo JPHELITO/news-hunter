@@ -71,6 +71,13 @@ jobs:
           # CLIPPING (500/dia, quase ocioso) — assim não divide a cota com os takes. Sem o secret, ele cai
           # para o projeto dos takes só se a classificação do dia estiver abaixo de 80% do teto.
           CLIPPING_TRANSLATE_KEY: ${{ secrets.CLIPPING_TRANSLATE_KEY }}
+          # 2026-11-03: exportador do hub de dashboards do Itaú (hub_export/, fim do hunt.py). DESLIGADO
+          # por padrão: só roda com a variável do repositório HUB_EXPORT_ENABLED=1 (ligar/desligar = mudar
+          # a variável e reiniciar o loop, sem commit). Envia ao Feeder só o que mudou; nunca derruba o ciclo.
+          HUB_EXPORT_ENABLED:          ${{ vars.HUB_EXPORT_ENABLED || '0' }}
+          DASHBOARD_FEEDER_URL:        ${{ vars.DASHBOARD_FEEDER_URL }}
+          DASHBOARD_FEEDER_PROJECT_ID: ${{ vars.DASHBOARD_FEEDER_PROJECT_ID }}
+          DASHBOARD_FEEDER_API_KEY:    ${{ secrets.DASHBOARD_FEEDER_API_KEY }}
           # Para disparar o pulse_daily.yml (ver o bloco "Market Pulse" dentro do loop).
           GH_TOKEN:             ${{ secrets.GITHUB_TOKEN }}
         run: |

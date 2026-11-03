@@ -1,0 +1,968 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "quotes": {
+    "updatedAt": "2026-11-03T18:04:03Z",
+    "items": [
+      {
+        "ticker": "IBOV",
+        "name": "Ibovespa",
+        "exchange": "B3",
+        "price": 128450.12,
+        "changePct": 0.52,
+        "changeAbs": 664.3,
+        "prevClose": 127785.82,
+        "tradedAt": 1793729041,
+        "session": [1793710800, 1793736000],
+        "updatedAt": "2026-11-03T18:04:01Z"
+      },
+      {
+        "ticker": "VALE3.SA",
+        "name": "Vale",
+        "exchange": "B3",
+        "price": 61.23,
+        "changePct": 1.234,
+        "changeAbs": 0.75,
+        "prevClose": 60.48,
+        "tradedAt": 1793729041,
+        "session": [1793710800, 1793736000],
+        "updatedAt": "2026-11-03T18:04:01Z"
+      },
+      {
+        "ticker": "CSNA3.SA",
+        "name": "CSN",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "CMIN3.SA",
+        "name": "CSN Mineração",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "GGBR4.SA",
+        "name": "Gerdau",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "USIM5.SA",
+        "name": "Usiminas",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "KLBN11.SA",
+        "name": "Klabin",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "SUZB3.SA",
+        "name": "Suzano",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "RANI3.SA",
+        "name": "Irani",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "AURA33.SA",
+        "name": "Aura Minerals",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "SCCO",
+        "name": "Southern Copper",
+        "exchange": "NYSE",
+        "price": 112.4,
+        "changePct": -0.85,
+        "changeAbs": -0.96,
+        "prevClose": 113.36,
+        "tradedAt": 1793729100,
+        "session": [1793716200, 1793739600],
+        "updatedAt": "2026-11-03T18:04:01Z"
+      },
+      {
+        "ticker": "TX",
+        "name": "Ternium",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "CMPC.SN",
+        "name": "CMPC",
+        "exchange": "BCS",
+        "price": 1350.0,
+        "changePct": -0.3,
+        "changeAbs": -4.0,
+        "prevClose": 1354.0,
+        "tradedAt": 1793725000,
+        "session": [1793709000, 1793732400],
+        "updatedAt": "2026-11-03T17:49:00Z"
+      },
+      {
+        "ticker": "COPEC.SN",
+        "name": "Copec",
+        "exchange": "BCS",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "GMEXICOB.MX",
+        "name": "Grupo México",
+        "exchange": "BMV",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "GGB",
+        "name": "Gerdau (NYSE)",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "MT",
+        "name": "ArcelorMittal",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "MT.AS",
+        "name": "ArcelorMittal (AMS)",
+        "exchange": "AMS",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "NUE",
+        "name": "Nucor",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "CMC",
+        "name": "Commercial Metals",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "GOAU4.SA",
+        "name": "Metalúrgica Gerdau",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "STLD",
+        "name": "Steel Dynamics",
+        "exchange": "NASDAQ",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "VALE",
+        "name": "Vale (NYSE)",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "FMG.AX",
+        "name": "Fortescue",
+        "exchange": "ASX",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "RIO",
+        "name": "Rio Tinto",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "BHP",
+        "name": "BHP Group",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "AAL.L",
+        "name": "Anglo American",
+        "exchange": "LSE",
+        "price": 2380.5,
+        "changePct": 0.4,
+        "changeAbs": 9.5,
+        "prevClose": 2371.0,
+        "tradedAt": 1793723400,
+        "session": [1793692800, 1793723400],
+        "updatedAt": "2026-11-03T18:04:03Z"
+      },
+      {
+        "ticker": "RIO.L",
+        "name": "Rio Tinto (LSE)",
+        "exchange": "LSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "BHP.AX",
+        "name": "BHP Group (ASX)",
+        "exchange": "ASX",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "CAP.SN",
+        "name": "CAP S.A.",
+        "exchange": "BCS",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "BRAP3.SA",
+        "name": "Bradespar",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "AUGO",
+        "name": "Aura Minerals (Nasdaq)",
+        "exchange": "NASDAQ",
+        "price": 24.1,
+        "changePct": 2.1,
+        "changeAbs": 0.5,
+        "prevClose": 23.6,
+        "tradedAt": 1793729000,
+        "session": null,
+        "updatedAt": "2026-11-03T18:04:02Z"
+      },
+      {
+        "ticker": "ARIS",
+        "name": "Aris Mining",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "BVN",
+        "name": "Buenaventura",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "AEM",
+        "name": "Agnico Eagle",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "B",
+        "name": "Barrick Mining",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "HOC.L",
+        "name": "Hochschild Mining",
+        "exchange": "LSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "ERO",
+        "name": "Ero Copper",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "CS.TO",
+        "name": "Capstone Copper",
+        "exchange": "TSX",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "HBM.TO",
+        "name": "Hudbay Minerals",
+        "exchange": "TSX",
+        "price": 25.4,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": 1793729050,
+        "session": [1793716200, 1793739600],
+        "updatedAt": "2026-11-03T18:04:03Z"
+      },
+      {
+        "ticker": "LUN.TO",
+        "name": "Lundin Mining",
+        "exchange": "TSX",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "GLEN.L",
+        "name": "Glencore",
+        "exchange": "LSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "MEI.AX",
+        "name": "Meteoric Resources",
+        "exchange": "ASX",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "VMM.AX",
+        "name": "Viridis Mining",
+        "exchange": "ASX",
+        "price": 0.62,
+        "changePct": 3.33,
+        "changeAbs": 0.02,
+        "prevClose": 0.6,
+        "tradedAt": 1793682000,
+        "session": [1793746800, 1793768400],
+        "updatedAt": "2026-11-03T18:04:03Z"
+      },
+      {
+        "ticker": "ARA.TO",
+        "name": "Aclara Resources",
+        "exchange": "TSX",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "IP",
+        "name": "Intl Paper",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "UPM.HE",
+        "name": "UPM-Kymmene",
+        "exchange": "HEL",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "SW",
+        "name": "Smurfit WestRock",
+        "exchange": "NYSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "STERV.HE",
+        "name": "Stora Enso",
+        "exchange": "HEL",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "SPX",
+        "name": "S&P 500",
+        "exchange": "US",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "SP500_FUT",
+        "name": "S&P 500 Futures",
+        "exchange": "CME",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "NASDAQ",
+        "name": "Nasdaq Composite",
+        "exchange": "US",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "MATB11.SA",
+        "name": "IMAT Materiais (B3)",
+        "exchange": "B3",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "GDX",
+        "name": "Gold Miners ETF",
+        "exchange": "US",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "SPTSX",
+        "name": "S&P/TSX Composite",
+        "exchange": "TSX",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "ASX200",
+        "name": "S&P/ASX 200",
+        "exchange": "ASX",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "MEXBOL",
+        "name": "S&P/BMV IPC",
+        "exchange": "BMV",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "IPSA",
+        "name": "MSCI IPSA",
+        "exchange": "BCS",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "FTSE100",
+        "name": "FTSE 100",
+        "exchange": "LSE",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      },
+      {
+        "ticker": "OMXH25",
+        "name": "OMX Helsinki 25",
+        "exchange": "HEL",
+        "price": null,
+        "changePct": null,
+        "changeAbs": null,
+        "prevClose": null,
+        "tradedAt": null,
+        "session": null,
+        "updatedAt": null
+      }
+    ]
+  },
+  "commodities": {
+    "updatedAt": "2026-11-03T18:04:05Z",
+    "items": [
+      {
+        "code": "COPPER",
+        "name": "Copper",
+        "unit": "USD/lb",
+        "price": 5.1234,
+        "changePct": 0.8,
+        "assessedAt": "2026-11-03",
+        "updatedAt": "2026-11-03T18:04:05Z",
+        "spark": {
+          "asof": "2026-11-03",
+          "v": 2,
+          "ph": 0,
+          "d": {
+            "c": -0.4,
+            "s": [0, 250, 1000, 600],
+            "b": 2
+          },
+          "w": {
+            "c": 1.2,
+            "s": [100, 0, 400, 1000, 600],
+            "b": 0
+          },
+          "m": {
+            "c": null,
+            "s": [500, 500, 1000],
+            "b": 0
+          },
+          "ytd": {
+            "c": 12.5,
+            "s": [0, 1000],
+            "b": 0
+          },
+          "y": {
+            "c": -3.0,
+            "s": [1000, 0, 300],
+            "b": 0
+          }
+        }
+      },
+      {
+        "code": "HRC_CHINA",
+        "name": "HRC China",
+        "unit": "USD/mt",
+        "price": 455.0,
+        "changePct": null,
+        "assessedAt": "2026-10-31",
+        "updatedAt": "2026-11-03T17:32:39Z",
+        "spark": null
+      },
+      {
+        "code": "IRON_ORE",
+        "name": "IO Fines 61%",
+        "unit": "USD/dmt",
+        "price": 99.05,
+        "changePct": -0.4,
+        "assessedAt": "2026-11-02",
+        "updatedAt": "2026-11-03T17:32:39Z",
+        "spark": {
+          "asof": "2026-11-02",
+          "v": 2,
+          "d": {
+            "c": -0.4,
+            "s": [0, 250, 1000, 600],
+            "b": 2
+          },
+          "w": {
+            "c": 1.2,
+            "s": [100, 0, 400, 1000, 600],
+            "b": 0
+          },
+          "m": {
+            "c": null,
+            "s": [500, 500, 1000],
+            "b": 0
+          },
+          "ytd": {
+            "c": 12.5,
+            "s": [0, 1000],
+            "b": 0
+          },
+          "y": {
+            "c": -3.0,
+            "s": [1000, 0, 300],
+            "b": 0
+          }
+        }
+      },
+      {
+        "code": "PULP_BHKP_CHINA",
+        "name": "BHKP China Net",
+        "unit": "USD/t",
+        "price": 560.0,
+        "changePct": 0.0,
+        "assessedAt": "2026-10-30",
+        "updatedAt": "2026-11-03T11:00:00Z",
+        "spark": {
+          "asof": "2026-10-30",
+          "v": 2,
+          "d": {
+            "c": -0.4,
+            "s": [0, 250, 1000, 600],
+            "b": 2
+          },
+          "w": {
+            "c": 1.2,
+            "s": [100, 0, 400, 1000, 600],
+            "b": 0
+          },
+          "m": {
+            "c": null,
+            "s": [500, 500, 1000],
+            "b": 0
+          },
+          "ytd": {
+            "c": 12.5,
+            "s": [0, 1000],
+            "b": 0
+          },
+          "y": {
+            "c": -3.0,
+            "s": [1000, 0, 300],
+            "b": 0
+          }
+        }
+      }
+    ]
+  },
+  "macro": {
+    "updatedAt": "2026-11-03T18:04:11Z",
+    "items": [
+      {
+        "code": "USD_BRL",
+        "name": "USD/BRL",
+        "unit": "R$",
+        "value": 5.4948,
+        "changePct": 1.071,
+        "updatedAt": "2026-11-03T18:04:11Z"
+      },
+      {
+        "code": "USD_CAD",
+        "name": "USD/CAD",
+        "unit": "C$",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "USD_AUD",
+        "name": "USD/AUD",
+        "unit": "A$",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "USD_EUR",
+        "name": "USD/EUR",
+        "unit": "€",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "USD_CNY",
+        "name": "USD/CNY",
+        "unit": "¥",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "USD_MXN",
+        "name": "USD/MXN",
+        "unit": "MX$",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "USD_CLP",
+        "name": "USD/CLP",
+        "unit": "CLP$",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "USD_PEN",
+        "name": "USD/PEN",
+        "unit": "S/",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "US10Y",
+        "name": "US 10Y Yield",
+        "unit": "%",
+        "value": 4.123,
+        "changePct": null,
+        "updatedAt": "2026-11-03T18:04:11Z"
+      },
+      {
+        "code": "SELIC",
+        "name": "SELIC Target",
+        "unit": "%",
+        "value": 15.0,
+        "changePct": 0.0,
+        "updatedAt": "2026-11-03T09:00:00Z"
+      },
+      {
+        "code": "CDI",
+        "name": "CDI Rate",
+        "unit": "%",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "IPCA_12M",
+        "name": "IPCA 12m",
+        "unit": "%",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      },
+      {
+        "code": "PIB_QOQ",
+        "name": "BR GDP QoQ",
+        "unit": "%",
+        "value": null,
+        "changePct": null,
+        "updatedAt": null
+      }
+    ]
+  }
+}

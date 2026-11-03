@@ -495,6 +495,13 @@ def _supa_upsert(table: str, rows: list[dict]) -> int:
 # ───────────────────────────────────────────────────────────────────────────
 # Public update functions
 # ───────────────────────────────────────────────────────────────────────────
+# Memória do ciclo para o exportador do hub (hub_export/, 2026-11-03): (instante epoch, linhas)
+# que update_quotes/update_macro acabaram de montar. Quem roda no MESMO processo (o fim do hunt.py)
+# lê daqui em vez de reler o Supabase. Só guarda — não muda nada no que as funções gravam.
+LAST_QUOTE_ROWS: tuple[float, list[dict]] | None = None
+LAST_MACRO_ROWS: tuple[float, list[dict]] | None = None
+
+
 def update_quotes() -> int:
     """Atualiza cotações das 14 empresas via Yahoo. Retorna número de rows.
 
@@ -529,6 +536,8 @@ def update_quotes() -> int:
             "intraday":   intraday,
             "updated_at": _now_iso(),
         })
+    global LAST_QUOTE_ROWS
+    LAST_QUOTE_ROWS = (time.time(), rows)
     return _supa_upsert("quotes", rows)
 
 
@@ -1622,6 +1631,8 @@ def update_macro() -> int:
             "change_pct": d.get("change_pct"),
             "updated_at": _now_iso(),
         })
+    global LAST_MACRO_ROWS
+    LAST_MACRO_ROWS = (time.time(), rows)
     return _supa_upsert("macro_indicators", rows)
 
 
