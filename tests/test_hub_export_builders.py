@@ -7,16 +7,19 @@ nome ou forma diferente vira "dado indisponível" na tela do cliente. O que este
   2) o /admin do heatmap aplicado como o `applyHeatmapConfig` do site: oculto sai de TODOS os
      grupos (o B some do Ouro E do Cobre) e vai para `hidden`; a cobertura segue o `sort_order`
      do /admin, só com papéis conhecidos; sem cobertura no /admin → o grupo constante;
-  3) `hub_k` manda em `k` nas flags, e nenhuma `hub_*` aparece no arquivo;
+  3) flags = LISTA BRANCA dos blocos de cliente (as internas do site nunca saem); `hub_k` manda
+     em `k`, e nenhuma `hub_*` aparece no arquivo; `commodityGroups[].id` é texto;
   4) nulo nunca vira 0 (e o zero legítimo continua zero), `session` inválida vira null;
   5) papel que faltou na memória do ciclo sai com o último valor do ESTADO — sem ler o banco;
   6) os mapas constantes batem com o QUOTES_LIST (toda bolsa mapeada, todo papel dos grupos existe);
   7) os dois caminhos (memória do ciclo + estado, no loop; banco inteiro, no CLI) dão o MESMO
-     arquivo quando o mundo é o mesmo.
+     arquivo quando o mundo é o mesmo;
+  8) o quotes-daily.json leva só os últimos 400 dias (a cauda mensal fica no banco).
 """
 from __future__ import annotations
 
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -43,7 +46,8 @@ def test_config_forma_exata():
     assert list(c) == ["schemaVersion", "generatedAt", "flags", "exchanges", "heatmap",
                        "commodityGroups"]
     assert c["schemaVersion"] == 1 and c["generatedAt"] == F.GENERATED
-    assert c["flags"] == {"heatmap": True, "commodities": True, "market": False, "news_feed": False}
+    assert c["flags"] == {"heatmap": True, "commodities": True, "market": False, "news_feed": False,
+                          "quarterly": True}
     hm = c["heatmap"]
     assert list(hm) == ["max", "groups", "coverage", "hidden", "benchmarkByExchange",
                         "benchmarkLabels"]
@@ -63,6 +67,11 @@ def test_config_forma_exata():
                                      "ASX200": "ASX 200", "MEXBOL": "IPC", "IPSA": "IPSA",
                                      "FTSE100": "FTSE 100", "OMXH25": "OMXH25"}
     assert "sectorIndex" not in hm
+    assert all(isinstance(g["id"], str) for g in c["commodityGroups"])
+    assert config._commodity_groups([
+        {"id": 7, "title": "Numérico", "codes": ["X"], "sort_order": 1, "is_visible": True},
+        {"id": None, "title": "Sem id", "codes": [], "sort_order": 2, "is_visible": True},
+    ]) == [{"id": "7", "title": "Numérico", "codes": ["X"]}]  # id sempre texto; sem id fica fora
     assert c["commodityGroups"] == [
         {"id": "2054d74f-5aec-4abf-b749-9370605c889c", "title": "Base & Precious Metals",
          "codes": ["GOLD", "COPPER"]},
@@ -119,7 +128,29 @@ def test_flags_hub_mandam_e_somem():
     src, _ = hunt_sources()
     flags = config.build(src)["flags"]
     assert flags["market"] is False                           # hub_market=false venceu market=true
+    assert flags["quarterly"] is True                         # hub_quarterly=true venceu false
     assert not [k for k in flags if k.startswith("hub_")] and "orphan" not in flags
+
+
+def test_flags_so_da_lista_branca_de_blocos_de_cliente():
+    """As internas do site (clipinator, research_team, tutorial…) nunca chegam ao Mindassets —
+    nem com `hub_` na frente. Flag nova no /admin só sai se entrar na lista (de propósito)."""
+    assert config.CLIENT_FLAGS == (
+        "heatmap", "commodities", "news_feed", "market_pulse", "home_digest", "exec_calendar",
+        "stock_guide", "stock_guide_sensitivity", "stock_guide_peers", "market", "market_watch",
+        "quarterly", "data_page", "whats_new", "sector_steel", "sector_pp", "pred_model")
+    src, _ = hunt_sources()
+    flags = config.build(src)["flags"]
+    for interna in ("clipinator", "research_team", "tutorial"):
+        assert interna not in flags
+    assert set(flags) <= set(config.CLIENT_FLAGS)
+    # todas as 19 do banco de verdade (03/11/2026): saem as 17 de cliente, ficam fora as 2 internas
+    reais = [{"key": k, "enabled": True} for k in
+             ("quarterly", "sector_steel", "sector_pp", "market", "market_pulse", "home_digest",
+              "commodities", "news_feed", "research_team", "heatmap", "pred_model", "stock_guide",
+              "stock_guide_sensitivity", "stock_guide_peers", "exec_calendar", "market_watch",
+              "data_page", "whats_new", "clipinator")]
+    assert set(config._flags(reais)) == set(config.CLIENT_FLAGS)
 
 
 # ── live.json ─────────────────────────────────────────────────────────────────────────────────
@@ -218,10 +249,30 @@ def test_quotes_daily_forma_exata():
     d = quotes_daily.build(src)
     assert list(d) == ["schemaVersion", "generatedAt", "series"]
     assert d["series"]["VALE3.SA"] == {"updatedAt": "2026-11-02T23:59:02Z",
-                                       "pts": [[1793365200, 59.9], [1793451600, 60.1],
-                                               [1793624400, 60.48]]}
+                                       "pts": [[1759323600, 56.0], [1793365200, 59.9],
+                                               [1793451600, 60.1], [1793624400, 60.48]]}
     assert d["series"]["AUGO"] == {"updatedAt": "2026-11-02T23:50:00Z", "pts": []}
     assert list(d["series"]) == [t for t in QUOTES_ORDER if t in d["series"]]
+
+
+def test_quotes_daily_so_os_ultimos_400_dias():
+    """A cauda mensal (desde 1970 no banco real: 56% do arquivo) não vai; o corte é na montagem
+    e o hash enxerga o arquivo cortado — a janela que anda vira mudança, e tudo bem."""
+    src, _ = hunt_sources()
+    d = quotes_daily.build(src)
+    corte = int(F.NOW.timestamp()) - 400 * 86400
+    assert all(p[0] >= corte for s in d["series"].values() for p in s["pts"])
+    vale = d["series"]["VALE3.SA"]["pts"]
+    assert [1577970000, 40.0] not in vale                      # 2020: cauda mensal
+    assert [1759168800, 55.0] not in vale                      # 5 min antes do corte
+    assert vale[0] == [1759323600, 56.0]                       # 01/10/2025: dentro
+    assert d["series"]["IBOV"]["pts"][0] == [1793365200, 127100.0]
+    assert src.daily()["VALE3.SA"]["pts"][0] == [1577970000, 40.0]   # o cache guarda tudo
+    # três dias depois o ponto de 01/10/2025 sai da janela: o conteúdo (e o hash) muda
+    src3, _ = hunt_sources(now=F.NOW + timedelta(days=3))
+    d3 = quotes_daily.build(src3)
+    assert d3["series"]["VALE3.SA"]["pts"][0] == [1793365200, 59.9]
+    assert content_hash(d3) != content_hash(d)
 
 
 # ── coerência e equivalência ──────────────────────────────────────────────────────────────────

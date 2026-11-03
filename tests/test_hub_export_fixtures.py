@@ -14,7 +14,9 @@ na memória do ciclo:
   • commodities com e sem `spark`, e um `spark` com chave de depuração que NÃO pode vazar;
   • /admin do heatmap com papel oculto (GGB e B), cobertura em ordem própria, símbolo
     desconhecido (ignorado) e um oculto marcado como cobertura (fica oculto);
-  • flags com `hub_market` mandando no `market` e um `hub_` órfão;
+  • flags com `hub_market` mandando no `market`, um `hub_` órfão e as internas do site
+    (clipinator, research_team, tutorial) que a lista branca barra;
+  • o diário com a cauda mensal antiga e pontos dos dois lados do corte de 400 dias;
   • grupos de commodities visíveis fora de ordem e um invisível.
 
 Nada aqui fala com a rede: o `FakeHTTP` faz o papel do `requests.Session` para o Supabase (um
@@ -76,12 +78,16 @@ QUOTES = [
        "2026-11-03T18:04:01.123456+00:00",
        {"prev": 127785.82, "pts": [[1793710800, 127800.5], [1793711100, 128100.25]],
         "traded_at": 1793729041, "session": B3_SESS},
-       [[1793365200, 127100.0], [1793624400, 127785.82]], "2026-11-03T00:29:08.879604+00:00"),
+       [[1577970000, 115000.0], [1793365200, 127100.0], [1793624400, 127785.82]],
+       "2026-11-03T00:29:08.879604+00:00"),
     _q("VALE3.SA", "Vale", "iron_ore", "B3", 61.23, 1.234, 0.75,
        "2026-11-03T18:04:01.123457+00:00",
        {"prev": 60.48, "pts": [[1793710800, 60.5], [1793711100, 60.7], [1793711400, 61.23]],
         "traded_at": 1793729041, "session": B3_SESS},
-       [[1793365200, 59.9], [1793451600, 60.1], [1793624400, 60.48]],
+       # cauda mensal de 2020 e um ponto 5 min ANTES do corte de 400 dias: os dois ficam fora do
+       # quotes-daily.json; o de 01/10/2025 fica dentro
+       [[1577970000, 40.0], [1759168800, 55.0], [1759323600, 56.0],
+        [1793365200, 59.9], [1793451600, 60.1], [1793624400, 60.48]],
        "2026-11-02T23:59:02.685735+00:00"),
     _q("SCCO", "Southern Copper", "copper", "NYSE", 112.4, -0.85, -0.96,
        "2026-11-03T18:04:01.5+00:00",
@@ -166,6 +172,13 @@ FLAGS = [
     {"key": "hub_market", "enabled": False},     # o hub manda: market → false
     {"key": "news_feed", "enabled": False},
     {"key": "hub_orphan", "enabled": True},      # sem "orphan" no /admin: não aparece
+    {"key": "quarterly", "enabled": False},
+    {"key": "hub_quarterly", "enabled": True},   # o hub manda: quarterly → true
+    # internas do site: fora da lista branca, nunca saem (nem com hub_)
+    {"key": "clipinator", "enabled": True},
+    {"key": "research_team", "enabled": True},
+    {"key": "hub_research_team", "enabled": True},
+    {"key": "tutorial", "enabled": False},
 ]
 
 HEATMAP_ADMIN = [

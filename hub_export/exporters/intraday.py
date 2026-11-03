@@ -1,4 +1,4 @@
-"""intraday.json (HOT, ≤ 120 KB) — PLANO Apêndice B.3.
+"""intraday.json (HOT, conteúdo gzip com nome .json, ≤ 150 KB bruto) — PLANO Apêndice B.3.
 
 `series[ticker] = {prev, pts}` com `pts` = `quotes.intraday.pts` tal qual (`[[epoch_s, fechamento],
 …]`, início de cada vela de 5 min; pode ser `[]` — no começo do pregão o Yahoo ainda não tem

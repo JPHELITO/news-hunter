@@ -1,14 +1,16 @@
 """Cadência de cada arquivo (PLANO §2.5) e a pulsação do `live.json`.
 
 Um arquivo está "na vez" quando `agora − último build ≥ cadência` (HOT = todo ciclo do loop).
-A pulsação é outra coisa: o `live.json` vai mesmo SEM mudança quando o último envio tem 15 min
+A pulsação é outra coisa: o `live.json` vai mesmo SEM mudança quando o último envio tem 10 min
 ou mais — o selo "aberta/fechada" do heatmap considera o preço velho depois de 30 min sem
-`updatedAt` novo, e num pregão parado (ou fim de semana) o hash não muda nunca.
+`updatedAt` novo, e num pregão parado (ou fim de semana) o hash não muda nunca. 10 min (e não
+15) deixa folga para os 5–7 min de publicação do Mindassets + os 2 min de releitura do hub
+(decisão do orquestrador, 03/11/2026).
 
 Folga de 60 s nas duas contas: o loop bate a cada ~300 s, mas o fim do hunt.py (onde o
 exportador roda) escorrega alguns segundos de um ciclo para o outro. Sem folga, um WARM de
-900 s virava 20 min sempre que o terceiro ciclo chegasse 1 s adiantado — e a pulsação de
-15 min, somada aos 5–7 min de publicação, encostaria nos 30 min do selo.
+900 s virava 20 min sempre que o terceiro ciclo chegasse 1 s adiantado (e a pulsação de 10 min
+viraria 15).
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ HOT = 0           # todo ciclo (~5 min)
 WARM = 900        # 15 min
 COLD = 3600       # 60 min
 DAILY = 86400     # 1×/dia
-PULSE_LIVE = 900  # o live.json vai ao menos a cada 15 min
+PULSE_LIVE = 600  # o live.json vai ao menos a cada 10 min
 SLACK_S = 60      # tolerância do relógio do loop (ver docstring)
 
 

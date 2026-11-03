@@ -1,8 +1,11 @@
 """config.json (WARM, ≤ 20 KB) — PLANO Apêndice B.1.
 
-flags       do RPC `get_dashboard_flags` → `{chave: ligada}`. Para cada chave `k`, se existir
-            `hub_k`, vale o `hub_k` (assim o hub pode se separar do site sem código: basta criar
-            a flag `hub_…` no /admin); as `hub_*` não aparecem no arquivo.
+flags       do RPC `get_dashboard_flags` → `{chave: ligada}`, só as chaves da LISTA BRANCA dos
+            blocos de cliente (CLIENT_FLAGS); as internas do site (clipinator, research_team,
+            tutorial…) não saem. Para cada chave `k` da lista, se existir `hub_k`, vale o `hub_k`
+            (assim o hub pode se separar do site sem código: basta criar a flag `hub_…` no
+            /admin); as `hub_*` não aparecem no arquivo. Flag da lista que não existe no /admin
+            fica ausente (o hub decide o padrão; nunca inventamos um valor).
 exchanges   mapa constante (reference.EXCHANGES) para cada bolsa do QUOTES_LIST.
 heatmap     grupos constantes do site + a configuração do /admin aplicada como o
             `applyHeatmapConfig` do index.html: oculto sai de TODOS os grupos e vai para
@@ -16,11 +19,18 @@ import logging
 
 from hunter import prices
 
-from ..encode import FORBIDDEN_KEYS
 from .reference import (BENCH_BY_EXCH, BENCH_LABEL, EXCHANGES, FALLBACK_TZ, G_COVERAGE,
                         HEATMAP_GROUPS, HM_MAX)
 
 log = logging.getLogger(__name__)
+
+# Flags de BLOCO de cliente que o hub respeita (decisão de 03/11/2026, PLANO Apêndice B.1).
+# Flag nova no /admin só chega ao arquivo público se entrar aqui — de propósito: as chaves
+# internas do site (clipinator, research_team, tutorial…) não têm o que fazer no Mindassets.
+CLIENT_FLAGS = ("heatmap", "commodities", "news_feed", "market_pulse", "home_digest",
+                "exec_calendar", "stock_guide", "stock_guide_sensitivity", "stock_guide_peers",
+                "market", "market_watch", "quarterly", "data_page", "whats_new", "sector_steel",
+                "sector_pp", "pred_model")
 
 
 def _flags(rows: list[dict]) -> dict[str, bool]:
@@ -34,15 +44,8 @@ def _flags(rows: list[dict]) -> dict[str, bool]:
             hub[k[4:]] = v
         else:
             base[k] = v
-    out = {}
-    for k, v in base.items():
-        # a chave da flag é o ÚNICO nome de campo que vem do /admin: nome proibido no arquivo
-        # público (FORBIDDEN_KEYS) fica de fora em vez de barrar o config.json inteiro
-        if k.lower() in FORBIDDEN_KEYS:
-            log.warning("config: flag %r tem nome proibido em arquivo público — fica de fora", k)
-            continue
-        out[k] = hub.get(k, v)
-    return out
+    # na ordem do /admin (sort_order, chave), só as da lista branca; hub_k só vale para elas
+    return {k: hub.get(k, v) for k, v in base.items() if k in CLIENT_FLAGS}
 
 
 def _exchanges() -> dict[str, dict]:
@@ -92,10 +95,10 @@ def _commodity_groups(rows: list[dict]) -> list[dict]:
         return (so if isinstance(so, int) and not isinstance(so, bool) else 0, str(r.get("title") or ""))
     out = []
     for r in sorted((r for r in rows if r.get("is_visible") is True), key=order):
-        title, codes = r.get("title"), r.get("codes")
-        if not isinstance(title, str) or not title:
+        title, codes, gid = r.get("title"), r.get("codes"), r.get("id")
+        if not isinstance(title, str) or not title or gid in (None, ""):
             continue
-        out.append({"id": r.get("id"), "title": title,
+        out.append({"id": str(gid), "title": title,          # id é TEXTO (UUID do banco)
                     "codes": [c for c in codes if isinstance(c, str) and c]
                     if isinstance(codes, list) else []})
     return out

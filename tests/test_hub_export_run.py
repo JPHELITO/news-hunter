@@ -79,18 +79,36 @@ def test_na_vez_e_mudou_envia_igual_pula(tmp_path):
     assert sorted(http.uploads) == ["intraday.json", "live.json"]
 
 
-def test_quotes_daily_vai_em_gzip_e_os_outros_em_texto(tmp_path):
+def test_registro_bate_com_o_contrato():
+    """Cadência, gzip, pulsação, meta de tamanho e tipo de cada arquivo (PLANO §2.5, 03/11/2026)."""
+    tabela = {n: (s.cadence, s.gzip, s.pulse, s.max_bytes, s.content_type) for n, s in FILES.items()}
+    assert tabela == {
+        "config.json":       (900, False, None, 20 * 1024, "application/json"),
+        "live.json":         (0, True, 600, 80 * 1024, "application/gzip"),
+        "intraday.json":     (0, True, None, 150 * 1024, "application/gzip"),
+        "quotes-daily.json": (3600, True, None, 350 * 1024, "application/gzip"),
+    }
+
+
+def test_live_intraday_e_quotes_daily_em_gzip_config_em_texto(tmp_path):
+    """O Mindassets não comprime na entrega: quem precisa ir pequeno vai comprimido EM REPOUSO,
+    com o nome .json (o hub reconhece pelos bytes 1f 8b), gzip determinístico."""
     http = F.FakeHTTP()
     run(http, tmp_path / "st.json")
     up = http.uploads
-    assert up["quotes-daily.json"][:2] == b"\x1f\x8b"
-    assert json.loads(gzip.decompress(up["quotes-daily.json"]))["schemaVersion"] == 1
-    for n in ("config.json", "live.json", "intraday.json"):
-        assert up[n].startswith(b'{"schemaVersion":1,"generatedAt":"2026-11-03T18:05:12Z"')
+    for n in ("live.json", "intraday.json", "quotes-daily.json"):
+        assert up[n][:2] == b"\x1f\x8b" and up[n][4:8] == b"\x00\x00\x00\x00", n   # mtime=0
+        corpo = gzip.decompress(up[n])
+        assert corpo.startswith(b'{"schemaVersion":1,"generatedAt":"2026-11-03T18:05:12Z"'), n
+    assert up["config.json"].startswith(b'{"schemaVersion":1,"generatedAt":"2026-11-03T18:05:12Z"')
     tipos = {json.loads(c.data)["name"]: json.loads(c.data)["contentType"]
              for c in http.feeder_calls() if c.method == "POST" and c.url.endswith("/uploads")}
-    assert tipos == {"config.json": "application/json", "live.json": "application/json",
-                     "intraday.json": "application/json", "quotes-daily.json": "application/gzip"}
+    assert tipos == {"config.json": "application/json", "live.json": "application/gzip",
+                     "intraday.json": "application/gzip", "quotes-daily.json": "application/gzip"}
+    puts = {c.url.split("/bucket/")[1].split("?")[0]: c.headers for c in http.feeder_calls()
+            if c.method == "PUT"}
+    assert puts["live.json"] == {"content-type": "application/gzip"}
+    assert puts["config.json"] == {"content-type": "application/json"}
 
 
 # ── erro num arquivo ──────────────────────────────────────────────────────────────────────────
@@ -149,7 +167,8 @@ def test_partida_a_frio_le_so_quem_a_memoria_nao_trouxe_e_uma_vez(tmp_path):
     assert len(leituras) == 1
     pedidos = leituras[0].params["ticker"]
     assert F.MISSING_IN_CYCLE in pedidos and "VALE3.SA" not in pedidos
-    q = {i["ticker"]: i for i in json.loads(http.uploads["live.json"])["quotes"]["items"]}
+    q = {i["ticker"]: i for i in
+         json.loads(gzip.decompress(http.uploads["live.json"]))["quotes"]["items"]}
     assert q["CMPC.SN"]["price"] == 1350.0
     http = F.FakeHTTP()
     run(http, p, only="live")
@@ -325,8 +344,10 @@ def test_out_grava_exatamente_os_bytes_que_seriam_enviados(tmp_path):
     for n in FILES:
         assert (out / n).read_bytes() == enviados.uploads[n], n
     assert http.feeder_calls() == [] and S.load(tmp_path / "b.json")["files"] == {}
-    assert res["quotes-daily.json"].bytes == res["quotes-daily.json"].gz_bytes
-    assert res["quotes-daily.json"].raw_bytes > res["quotes-daily.json"].bytes
+    for n in ("live.json", "intraday.json", "quotes-daily.json"):
+        assert res[n].bytes == res[n].gz_bytes, n                 # vai comprimido
+        assert (out / n).read_bytes()[:2] == b"\x1f\x8b", n
+    assert res["config.json"].bytes == res["config.json"].raw_bytes   # vai em texto
 
 
 # ── configuração / CLI ───────────────────────────────────────────────────────────────────────

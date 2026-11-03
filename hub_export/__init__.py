@@ -9,9 +9,11 @@ públicos lidos pela seção `commoditiesDatahouse` do hub e os envia ao Dashboa
 
 Onda 1a (contrato: PLANO.md, Apêndice B — research-dashboards-migracao):
     config.json        WARM (15 min)   flags do /admin, bolsas, grupos do heatmap, grupos de commodities
-    live.json          HOT  (ciclo)    cotações, commodities (com o risquinho), macro — pulsação de 15 min
+    live.json          HOT  (ciclo)    cotações, commodities (com o risquinho), macro — pulsação de 10 min
     intraday.json      HOT  (ciclo)    curva do dia por papel
-    quotes-daily.json  COLD (60 min)   série diária leve por papel — conteúdo GZIP com nome .json
+    quotes-daily.json  COLD (60 min)   série diária por papel, só os últimos 400 dias
+  live, intraday e quotes-daily vão com conteúdo GZIP e nome .json (o hub reconhece pelos bytes);
+  o config.json vai em texto.
 
 USO
   No loop: o fim de cada ciclo do hunt.py chama `run_cycle()` quando HUB_EXPORT_ENABLED=1 (variável

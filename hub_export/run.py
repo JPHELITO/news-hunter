@@ -6,7 +6,7 @@ Por arquivo, nesta ordem (HOT primeiro — se o orçamento acabar, quem espera �
   1. na vez? (cadência; `--force` ignora) — fora da vez nem monta, nem lê o banco;
   2. monta (campo a campo), codifica (JSON compacto; gzip se marcado) e calcula o hash do
      conteúdo sem `generatedAt`/`updatedAt`;
-  3. decide: hash diferente do último ENVIO → envia; igual → só a pulsação do live.json (15 min)
+  3. decide: hash diferente do último ENVIO → envia; igual → só a pulsação do live.json (10 min)
      manda reenviar; sem envio no estado (runner novo) → compara com a cópia PUBLICADA
      (igual = registra e não envia);
   4. envia (initialize → PUT → complete) e grava hash/enviado em/revisão.

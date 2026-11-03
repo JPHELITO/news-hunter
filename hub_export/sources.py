@@ -262,8 +262,9 @@ class Sources:
 
     def _seed_daily(self) -> dict[str, dict]:
         """Partida a frio do cache diário a partir do quotes-daily.json PUBLICADO (é o nosso
-        próprio arquivo: `pts` = quotes.daily tal qual, `updatedAt` = daily_updated_at já
-        normalizado). Quem estiver com carimbo diferente no banco é relido logo em seguida."""
+        próprio arquivo: `pts` = quotes.daily dos últimos 400 dias, `updatedAt` = daily_updated_at
+        já normalizado). A cópia vem cortada, mas basta: o arquivo também sai cortado, e a janela
+        só anda para a frente. Quem estiver com carimbo diferente no banco é relido em seguida."""
         if self.published is None:
             return {}
         doc = self.published.get("quotes-daily.json")

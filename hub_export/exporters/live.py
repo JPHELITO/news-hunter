@@ -1,4 +1,5 @@
-"""live.json (HOT + pulsação de 15 min, ≤ 80 KB) — PLANO Apêndice B.2.
+"""live.json (HOT + pulsação de 10 min, conteúdo gzip com nome .json, ≤ 80 KB bruto) —
+PLANO Apêndice B.2.
 
 quotes       TODOS os instrumentos do QUOTES_LIST, na ordem dele (inclusive os que nenhum grupo
              do heatmap usa); sem `pts` (a curva do dia vai no intraday.json). `prevClose` =

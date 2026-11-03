@@ -5,7 +5,8 @@
     "heatmap": true,
     "commodities": true,
     "market": false,
-    "news_feed": false
+    "news_feed": false,
+    "quarterly": true
   },
   "exchanges": {
     "B3": {
