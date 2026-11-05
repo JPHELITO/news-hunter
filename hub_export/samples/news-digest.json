@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-11-03T17:10:31Z",
+  "windows": [
+    {
+      "slotStart": "2026-11-03T16:00:00Z",
+      "slotEnd": "2026-11-03T17:00:00Z",
+      "kind": "hour",
+      "status": "ok",
+      "summary": "Iron ore fell in Dalian while copper hit a record; Vale (VALE3) cited.",
+      "createdAt": "2026-11-03T17:10:31Z",
+      "items": [
+        {
+          "url": "https://www.metal.com/newscontent/103581234",
+          "title": "Iron ore futures fall in Dalian",
+          "source": "SMM, Reuters",
+          "take": "-",
+          "tickers": ["VALE3", "CSNA3"],
+          "at": "2026-11-03T16:21:09Z"
+        }
+      ]
+    },
+    {
+      "slotStart": "2026-11-03T15:00:00Z",
+      "slotEnd": "2026-11-03T16:00:00Z",
+      "kind": "hour",
+      "status": "quiet",
+      "summary": null,
+      "createdAt": "2026-11-03T16:10:05Z",
+      "items": []
+    },
+    {
+      "slotStart": "2026-11-03T14:00:00Z",
+      "slotEnd": "2026-11-03T15:00:00Z",
+      "kind": "hour",
+      "status": "list",
+      "summary": null,
+      "createdAt": "2026-11-03T15:40:00Z",
+      "items": [
+        {
+          "url": null,
+          "title": "Hostile",
+          "source": "X",
+          "take": "+",
+          "tickers": [],
+          "at": "2026-11-03T14:30:00Z"
+        },
+        {
+          "url": "https://valor.globo.com/empresas/noticia/2026/10/30/suzano-reajuste.ghtml",
+          "title": "Valor note",
+          "source": "Valor Econômico",
+          "take": null,
+          "tickers": [],
+          "at": "2026-11-03T14:40:00Z"
+        }
+      ]
+    },
+    {
+      "slotStart": "2026-11-02T23:00:00Z",
+      "slotEnd": "2026-11-03T10:00:00Z",
+      "kind": "overnight",
+      "status": "ok",
+      "summary": "Overnight: CVM filing from Vale (VALE3).",
+      "createdAt": "2026-11-03T10:10:00Z",
+      "items": [
+        {
+          "url": "https://www.rad.cvm.gov.br/ENETWEB/frmExibirArquivoIPEExterno.aspx?ID=1234567",
+          "title": "Vale: Fato Relevante",
+          "source": "CVM",
+          "take": "=",
+          "tickers": ["VALE3"],
+          "at": "2026-11-02T22:05:00Z"
+        }
+      ]
+    }
+  ]
+}

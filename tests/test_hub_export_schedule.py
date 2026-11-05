@@ -61,7 +61,7 @@ def test_pulsacao():
 def ciclo(http, path, minutos, **kw):
     kw.setdefault("memory", F.memory())
     return {r.name: r.action for r in run_cycle(env=F.env(), http=http, now=at(minutos),
-                                                  state_file=path, **kw)}
+                                                  state_file=path, **F.run_kw(**kw))}
 
 
 def test_cadencia_no_ciclo(tmp_path):
@@ -71,13 +71,22 @@ def test_cadencia_no_ciclo(tmp_path):
     http = F.FakeHTTP()
     acoes = ciclo(http, p, 5)
     assert acoes == {"live.json": "igual", "intraday.json": "igual",
-                     "config.json": "fora da vez", "quotes-daily.json": "fora da vez"}
+                     "news-latest.json": "igual", "news-digest.json": "igual",
+                     "config.json": "fora da vez", "calendar.json": "fora da vez",
+                     "quotes-daily.json": "fora da vez", "reports.json": "fora da vez",
+                     "news-week-2026-w44.json": "fora da vez",
+                     "news-week-2026-w45.json": "fora da vez", "news-index.json": "fora da vez"}
     assert not http.supa_calls("rpc/get_dashboard_flags")      # fora da vez nem lê
     assert not [c for c in http.supa_calls("quotes") if "daily" in c.params["select"]]
+    assert not http.supa_calls("rpc/get_recent_reports_v3")
+    assert not http.supa_calls("exec_calendar_events")
+    assert len(http.supa_calls("news_articles")) == 1           # só o incremental
     acoes = ciclo(F.FakeHTTP(), p, 15)
     assert acoes["config.json"] == "igual" and acoes["quotes-daily.json"] == "fora da vez"
+    assert acoes["calendar.json"] == "igual" and acoes["reports.json"] == "fora da vez"
     acoes = ciclo(F.FakeHTTP(), p, 60)
-    assert acoes["quotes-daily.json"] == "igual"
+    assert acoes["quotes-daily.json"] == "igual" and acoes["reports.json"] == "igual"
+    assert acoes["news-week-2026-w45.json"] == "igual"
 
 
 def test_live_reenviado_depois_de_10_min_mesmo_sem_mudanca(tmp_path):
@@ -87,7 +96,7 @@ def test_live_reenviado_depois_de_10_min_mesmo_sem_mudanca(tmp_path):
     assert acoes["live.json"] == "igual" and acoes["intraday.json"] == "igual"
     http = F.FakeHTTP()
     res = {r.name: r for r in run_cycle(env=F.env(), http=http, now=at(10), memory=F.memory(),
-                                         state_file=p)}
+                                         state_file=p, **F.run_kw())}
     assert res["live.json"].action == "enviado" and res["live.json"].reason == "pulsação"
     assert res["intraday.json"].action == "igual"              # o intraday não pulsa
     assert list(http.uploads) == ["live.json"]
@@ -100,4 +109,5 @@ def test_force_ignora_cadencia_e_hash(tmp_path):
     ciclo(F.FakeHTTP(), p, 0)
     http = F.FakeHTTP()
     acoes = ciclo(http, p, 1, force=True)
-    assert set(acoes.values()) == {"enviado"} and len(http.uploads) == 4
+    from hub_export.registry import FILES
+    assert set(acoes.values()) == {"enviado"} and len(http.uploads) == len(FILES) + 2  # + 44 e 45

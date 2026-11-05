@@ -12,6 +12,11 @@ heatmap     grupos constantes do site + a configuração do /admin aplicada como
             `hidden`; `coverage` = linhas `in_coverage` por `sort_order` (e símbolo), só os
             papéis conhecidos; sem nenhuma → o grupo constante. O grupo `coverage` recebe essa lista.
 commodityGroups  do RPC `get_commodity_groups`, só os visíveis, por `sort_order`.
+coveredCompanies (Onda 1b, Apêndice E.8; aditivo, `schemaVersion` continua 1) as 16 empresas do
+            classificador de notícias, na ordem do `_PULSE_CO` do site: `{code, ticker, quote,
+            desk}` (constante em news_reference). Serve às etiquetas do feed, ao Market Pulse e ao
+            "All S&M"/"All P&P" dos relatórios. A chave é `code` (`token` é chave proibida).
+            `home_digest` e `exec_calendar` são fail-closed na tela (ausente = desligado).
 """
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ import logging
 
 from hunter import prices
 
+from .news_reference import covered_companies
 from .reference import (BENCH_BY_EXCH, BENCH_LABEL, EXCHANGES, FALLBACK_TZ, G_COVERAGE,
                         HEATMAP_GROUPS, HM_MAX)
 
@@ -112,4 +118,5 @@ def build(src) -> dict:
         "exchanges": _exchanges(),
         "heatmap": _heatmap(src.heatmap_admin()),
         "commodityGroups": _commodity_groups(src.commodity_groups()),
+        "coveredCompanies": covered_companies(),
     }

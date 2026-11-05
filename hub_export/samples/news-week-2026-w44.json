@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-11-03T08:00:00Z",
+  "week": "2026-w44",
+  "from": "2026-10-26",
+  "to": "2026-11-01",
+  "items": [
+    {
+      "id": "777927b79960",
+      "url": "https://www.example.org/sunday-note",
+      "title": "Sunday note",
+      "source": "—",
+      "domain": null,
+      "primary": false,
+      "publishedAt": "2026-11-01T17:00:00Z",
+      "foundAt": "2026-11-01T17:05:00Z",
+      "take": "no take",
+      "sector": null,
+      "desk": "nr",
+      "companies": [],
+      "topics": [],
+      "snippet": null
+    },
+    {
+      "id": "9e49cdb60f44",
+      "url": "https://valor.globo.com/empresas/noticia/2026/10/30/suzano-reajuste.ghtml",
+      "title": "Suzano anuncia reajuste da celulose",
+      "source": "Valor Econômico",
+      "domain": "valor.globo.com",
+      "primary": false,
+      "publishedAt": "2026-10-30T10:00:00Z",
+      "foundAt": "2026-10-30T10:20:00Z",
+      "take": "+",
+      "sector": "pp",
+      "desk": "pp",
+      "companies": ["SUZANO"],
+      "topics": ["pulp"],
+      "snippet": null
+    },
+    {
+      "id": "1fe1cdb3c42c",
+      "url": "https://www.reuters.com/markets/commodities/steel-tariffs-2026-10-27/",
+      "title": "Steel tariffs widen in the US",
+      "source": "Reuters",
+      "domain": "reuters.com",
+      "primary": false,
+      "publishedAt": "2026-10-27T08:00:00Z",
+      "foundAt": "2026-11-03T08:00:00Z",
+      "take": "-",
+      "sector": "steel",
+      "desk": "sm",
+      "companies": [],
+      "topics": ["tariffs"],
+      "snippet": null
+    }
+  ]
+}

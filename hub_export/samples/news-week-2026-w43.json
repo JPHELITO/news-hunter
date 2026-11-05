@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-10-21T10:30:00Z",
+  "week": "2026-w43",
+  "from": "2026-10-19",
+  "to": "2026-10-25",
+  "items": [
+    {
+      "id": "8d20b74995de",
+      "url": "https://www.steelorbis.com/steel-news/w43-rebar.htm",
+      "title": "Rebar prices fall in Turkey",
+      "source": "SteelOrbis",
+      "domain": "steelorbis.com",
+      "primary": false,
+      "publishedAt": "2026-10-21T10:00:00Z",
+      "foundAt": "2026-10-21T10:30:00Z",
+      "take": "-",
+      "sector": "steel",
+      "desk": "sm",
+      "companies": [],
+      "topics": ["rebar"],
+      "snippet": null
+    }
+  ]
+}

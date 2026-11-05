@@ -18,15 +18,31 @@ na memória do ciclo:
     (clipinator, research_team, tutorial) que a lista branca barra;
   • o diário com a cauda mensal antiga e pontos dos dois lados do corte de 400 dias;
   • grupos de commodities visíveis fora de ordem e um invisível.
+Onda 1b (o "agora" é terça 03/11/2026 18:05 UTC: semana corrente 2026-w45, anterior 2026-w44;
+janela do news-latest desde 01/11 18:00 UTC):
+  • notícias de fonte com apelido (SMM), Google News (rótulo = domínio), CVM (PRIMARY), as duas
+    PAGAS (Platts, Fastmarkets: trecho não pode sair), take pendente, descoberta tardia (semana
+    44 dentro do news-latest), datas esquisitas (no futuro e muito antiga), semana antiga (43),
+    domingo fora da janela, e as que nunca saem (fora do relatório, `javascript:`, link com
+    `token=`, sem título) — com as colunas internas (take do robô, modelo da IA…) que não vazam;
+  • o resumo da hora com `ok`, `quiet`, `list` (com link hostil) e a madrugada, com `model`,
+    `tokens_*` e `items[].score` que não podem sair;
+  • relatórios da RPC com link do SharePoint com token, sem link, sem data e sem nome;
+  • calendário com categoria inativa, janela de dado inativa, evento da B3, recorrente (com chave
+    de depuração na regra), oculto, antigo demais e links/descrição com endereço do Storage.
 
 Nada aqui fala com a rede: o `FakeHTTP` faz o papel do `requests.Session` para o Supabase (um
-mini-PostgREST: select com alias e `->>`, filtros `in.`/`eq.`, `order` e `limit`), para o Feeder
-(roteiro de respostas por etapa, com falhas sob encomenda) e para a cópia publicada no Mindassets.
+mini-PostgREST: select com alias e `->>`; filtros `eq./neq./gt./gte./lt./lte./is./in./like.`,
+`not.` e as árvores `or=(…)`/`and=(…)`; `order` com várias colunas, `limit`, `offset`; HEAD e
+`Prefer: count=exact` com `Content-Range`; RPC com argumentos; colunas e tipos conferidos onde o
+banco real recusaria), para o Feeder (roteiro de respostas por etapa, com falhas sob encomenda) e
+para a cópia publicada no Mindassets.
 """
 from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -174,6 +190,7 @@ FLAGS = [
     {"key": "hub_orphan", "enabled": True},      # sem "orphan" no /admin: não aparece
     {"key": "quarterly", "enabled": False},
     {"key": "hub_quarterly", "enabled": True},   # o hub manda: quarterly → true
+    {"key": "home_digest", "enabled": True},     # o resumo da hora é fail-closed: só com true
     # internas do site: fora da lista branca, nunca saem (nem com hub_)
     {"key": "clipinator", "enabled": True},
     {"key": "research_team", "enabled": True},
@@ -199,11 +216,224 @@ COMMODITY_GROUPS = [
 ]
 
 
+# ── Onda 1b: news_articles como o PostgREST devolve (com as colunas internas que não saem) ─────
+ARCHIVE_FIRST = "2026-w43"     # nos testes, o arquivo começa na semana 43 (no código: 2026-w23)
+WEEK_CUR, WEEK_PREV, WEEK_OLD = "2026-w45", "2026-w44", "2026-w43"
+WINDOW_START = "2026-11-01T18:00:00Z"
+
+
+def _n(url, title, source, domain, published, found, *, take=None, take_at=None, reason=None,
+       sector=None, companies=None, topics=None, snippet="", include=True):
+    return {"url": url, "domain": domain, "source_name": source, "title": title, "snippet": snippet,
+            "published_at": published, "found_at": found, "matched_keywords": ["minério"],
+            "sector": sector, "news_type": "price", "sentiment": 0.3, "tickers": ["VALE3"],
+            "take": "+", "take_reason": reason, "take_topics": topics,
+            "take_covered_companies": companies, "take_sector": "steel", "take_region": "br",
+            "take_confidence": 0.8, "take_matched_rules": "regra-interna",
+            "include_in_report": include,
+            "exclusion_reason": None if include else "institutional_admin",
+            "take_llm": take, "take_llm_model": "gemini-x" if take else None,
+            "take_llm_at": take_at, "take_llm_attempts": 1}
+
+
+U_SMM = "https://www.metal.com/newscontent/103581234"
+U_GNEWS = "https://news.google.com/rss/articles/CBMiCOPPER?oc=5"
+U_CVM = "https://www.rad.cvm.gov.br/ENETWEB/frmExibirArquivoIPEExterno.aspx?ID=1234567"
+U_PLATTS = "https://core.spglobal.com/#platts/insightsArticle?articleID=abc123&insightsType=News"
+U_FM = "https://dashboard.fastmarkets.com/a/98765"
+U_PREV = "https://valor.globo.com/empresas/noticia/2026/10/30/suzano-reajuste.ghtml"
+U_LATE = "https://www.reuters.com/markets/commodities/steel-tariffs-2026-10-27/"
+U_FUTURE = "https://www.mining.com/gold-results-future-date/"
+U_OLDPUB = "https://gmk.center/en/news/old-article/"
+U_W43 = "https://www.steelorbis.com/steel-news/w43-rebar.htm"
+U_SUNDAY = "https://www.example.org/sunday-note"
+
+NEWS = [
+    _n(U_SMM, "Iron ore futures fall in Dalian", "Shanghai Metals Market", "metal.com",
+       None, "2026-11-03T17:58:03.123456+00:00", take="-", take_at="2026-11-03T18:01:00.5+00:00",
+       reason="Coberta citada com queda de preço", sector="mining", companies="VALE; CSN",
+       topics="iron_ore; pellets",
+       snippet="<p>Iron ore <b>futures</b> fell</p>\n\n  in Dalian on   Tuesday"),
+    _n(U_GNEWS, "Copper hits a record on supply worries", "Google News", "www.mining.com",
+       "2026-11-03T12:00:00+00:00", "2026-11-03T12:30:00.25+00:00", take="+",
+       take_at="2026-11-03T12:31:00+00:00", sector="mining", topics="copper",
+       snippet="Copper rose " + "x" * 300),
+    _n(U_CVM, "Vale: Fato Relevante sobre a mina de Brucutu", "CVM", "rad.cvm.gov.br",
+       "2026-11-02T22:00:00+00:00", "2026-11-02T22:05:00+00:00", take="=",
+       take_at="2026-11-02T22:10:00+00:00", sector="mining", companies="VALE",
+       snippet="Comunicado " * 40),
+    _n(U_PLATTS, "Platts: China HRC holds steady", "S&P Platts", "core.spglobal.com",
+       "2026-11-03T09:00:00+00:00", "2026-11-03T09:10:00+00:00", take="no take",
+       take_at="2026-11-03T09:20:00+00:00", sector="steel",
+       snippet="Conteúdo pago do terminal da Platts que não pode ir ao arquivo público."),
+    _n(U_FM, "BHKP prices edge up in China", "Fastmarkets", "dashboard.fastmarkets.com",
+       None, "2026-11-02T14:00:00+00:00", sector="pp", companies="SUZANO",
+       snippet="Conteúdo pago da Fastmarkets."),
+    _n(U_PREV, "Suzano anuncia reajuste da celulose", "Valor Econômico", "valor.globo.com",
+       "2026-10-30T10:00:00+00:00", "2026-10-30T10:20:00+00:00", take="+",
+       take_at="2026-10-30T10:25:00+00:00", sector="pp", companies="SUZANO", topics="pulp"),
+    # descoberta tardia (7 dias depois: ainda não é data esquisita) → semana 44 E no news-latest
+    _n(U_LATE, "Steel tariffs widen in the US", None, "www.reuters.com",
+       "2026-10-27T08:00:00+00:00", "2026-11-03T08:00:00+00:00", take="-",
+       take_at="2026-11-03T08:05:00+00:00", sector="steel", topics="tariffs", reason="Tarifa"),
+    # datas esquisitas: no futuro (> found + 1 h) e antiga demais (< found − 8 d) → valem pelo found
+    _n(U_FUTURE, "Gold miner results (date in the future)", "Mining.com", "mining.com",
+       "2026-11-05T10:00:00+00:00", "2026-11-03T15:00:00+00:00", take="+",
+       take_at="2026-11-03T15:05:00+00:00", sector="mining", companies="AURA", topics="gold"),
+    _n(U_OLDPUB, "Old article found today", "GMK Center", "gmk.center",
+       "2026-09-01T00:00:00+00:00", "2026-11-02T09:00:00+00:00", take="=",
+       take_at="2026-11-02T09:05:00+00:00", sector="steel"),
+    # semana antiga (43)
+    _n(U_W43, "Rebar prices fall in Turkey", "SteelOrbis", "steelorbis.com",
+       "2026-10-21T10:00:00+00:00", "2026-10-21T10:30:00+00:00", take="-",
+       take_at="2026-10-21T10:40:00+00:00", sector="steel", topics="rebar"),
+    # domingo 01/11 17:00: semana 44, fora da janela do news-latest (rótulo sem domínio = "—")
+    _n(U_SUNDAY, "Sunday note", "Google Notícias", "", "2026-11-01T17:00:00+00:00",
+       "2026-11-01T17:05:00+00:00", take="no take", take_at="2026-11-01T17:10:00+00:00"),
+    # nunca saem: fora do relatório, link hostil, link com credencial, sem título
+    _n("https://www.bloomberg.com/crypto-rally", "Crypto rally", "Bloomberg.com", "bloomberg.com",
+       None, "2026-11-03T17:00:00+00:00", include=False, take="+",
+       take_at="2026-11-03T17:02:00+00:00"),
+    _n("javascript:alert(1)", "Hostile link", "Valor Econômico", "valor.globo.com", None,
+       "2026-11-03T16:00:00+00:00", take="+", take_at="2026-11-03T16:02:00+00:00"),
+    _n("https://cdn.example.com/a.pdf?token=SEGREDO-DO-LINK", "Signed link", "IBRAM", "ibram.org.br",
+       None, "2026-11-03T16:30:00+00:00", take="=", take_at="2026-11-03T16:32:00+00:00"),
+    _n("https://www.mining.com/no-title/", "   ", "Mining.com", "mining.com", None,
+       "2026-11-03T16:40:00+00:00"),
+]
+NEWS_COLUMNS = frozenset(NEWS[0])
+LATEST_URLS = [U_SMM, U_FUTURE, U_GNEWS, U_PLATTS, U_LATE, U_CVM, U_FM, U_OLDPUB]   # foundAt ↓
+WEEK_URLS = {WEEK_CUR: [U_SMM, U_FUTURE, U_GNEWS, U_PLATTS, U_CVM, U_FM, U_OLDPUB],
+             WEEK_PREV: [U_SUNDAY, U_PREV, U_LATE], WEEK_OLD: [U_W43]}
+
+DIGEST = [
+    {"slot_start": "2026-11-03T16:00:00+00:00", "slot_end": "2026-11-03T17:00:00+00:00",
+     "kind": "hour", "status": "ok",
+     "summary": "Iron ore fell in Dalian while copper hit a record; Vale (VALE3) cited.",
+     "items": [{"url": U_SMM, "title": "Iron ore futures fall in Dalian", "source": "SMM, Reuters",
+                "take": "-", "tickers": ["VALE3", "CSNA3"], "at": "2026-11-03T16:21:09.5+00:00",
+                "score": 7}],
+     "model": "gemini-3.1-flash-lite · clipping", "tokens_in": 320, "tokens_out": 48,
+     "created_at": "2026-11-03T17:10:31.123+00:00"},
+    {"slot_start": "2026-11-03T15:00:00+00:00", "slot_end": "2026-11-03T16:00:00+00:00",
+     "kind": "hour", "status": "quiet", "summary": None, "items": [], "model": None,
+     "tokens_in": None, "tokens_out": None, "created_at": "2026-11-03T16:10:05+00:00"},
+    {"slot_start": "2026-11-03T14:00:00+00:00", "slot_end": "2026-11-03T15:00:00+00:00",
+     "kind": "hour", "status": "list", "summary": None,
+     "items": [{"url": "javascript:alert(1)", "title": "Hostile", "source": "X", "take": "+",
+                "tickers": [], "at": "2026-11-03T14:30:00+00:00", "score": 3},
+               {"url": U_PREV, "title": "Valor note", "source": "Valor Econômico", "take": None,
+                "tickers": [], "at": "2026-11-03T14:40:00+00:00", "score": 2}],
+     "model": None, "tokens_in": None, "tokens_out": None,
+     "created_at": "2026-11-03T15:40:00+00:00"},
+    {"slot_start": "2026-11-02T23:00:00+00:00", "slot_end": "2026-11-03T10:00:00+00:00",
+     "kind": "overnight", "status": "ok", "summary": "Overnight: CVM filing from Vale (VALE3).",
+     "items": [{"url": U_CVM, "title": "Vale: Fato Relevante", "source": "CVM", "take": "=",
+                "tickers": ["VALE3"], "at": "2026-11-02T22:05:00+00:00", "score": 6}],
+     "model": "gemini-3.1-flash-lite · clipping", "tokens_in": 300, "tokens_out": 40,
+     "created_at": "2026-11-03T10:10:00+00:00"},
+]
+
+REPORTS = [
+    {"name": "Vale 3Q26: strong volumes", "sector": "SM",
+     "link": "https://www.itaubba.com.br/research/vale-3q26.pdf", "date": "2026-11-04",
+     "companies": ["VALE3"]},
+    {"name": "Suzano: pulp price preview", "sector": "PP",
+     "link": "https://tenant.sharepoint.com/:b:/s/research/Eabc?token=SEGREDO-DO-SHAREPOINT",
+     "date": "2026-11-03", "companies": ["SUZB3", "KLBN11"]},
+    {"name": "Macro: China steel demand", "sector": "NR", "link": None, "date": None,
+     "companies": []},
+    {"name": "  ", "sector": "SM", "link": "https://www.itaubba.com.br/x.pdf", "date": "2026-11-01",
+     "companies": []},
+]
+
+CAL_CATEGORIES = [
+    {"id": "c-earn", "name": "Earnings / Conf. Call", "color": "#1565C0", "kind": "earnings",
+     "sort_order": 10, "is_active": True, "updated_at": "2026-08-01T12:00:00+00:00",
+     "updated_by": "11111111-uuid-admin"},
+    {"id": "c-data", "name": "Data Release", "color": "#00838F", "kind": "data_release",
+     "sort_order": 20, "is_active": True, "updated_at": "2026-08-01T12:00:00+00:00",
+     "updated_by": "11111111-uuid-admin"},
+    {"id": "c-old", "name": "Retired", "color": "#999999", "kind": None, "sort_order": 5,
+     "is_active": False, "updated_at": "2026-08-01T12:00:00+00:00", "updated_by": None},
+]
+CAL_WINDOWS = [
+    {"id": "w-1", "source_key": "secex_steel", "label": "SECEX — Steel foreign trade",
+     "from_day": 1, "to_day": 10, "lag_months": 1, "note": "MDIC/Comex Stat (~4º dia útil).",
+     "is_active": True, "updated_at": "2026-08-01T12:00:00+00:00", "updated_by": "11111111"},
+    {"id": "w-2", "source_key": "gacc", "label": "GACC — China woodchips", "from_day": 18,
+     "to_day": 31, "lag_months": 1, "note": None, "is_active": False,
+     "updated_at": "2026-08-01T12:00:00+00:00", "updated_by": "11111111"},
+]
+
+
+def _ev(eid, title, start, *, cat="c-earn", end=None, all_day=True, start_time=None,
+        end_time=None, company=None, location=None, description=None, links=None,
+        recurrence=None, visible=True, source=None, updated_at="2026-10-01T23:20:00+00:00"):
+    return {"id": eid, "title": title, "category_id": cat, "start_date": start, "end_date": end,
+            "all_day": all_day, "start_time": start_time, "end_time": end_time, "company": company,
+            "location": location, "description": description, "links": links or [],
+            "recurrence": recurrence, "is_visible": visible, "source": source,
+            "external_id": f"b3:{company}:2026:ITR3" if source == "b3" else None, "ics_seq": 2,
+            "locked": False, "updated_at": updated_at, "updated_by": "11111111-uuid-admin"}
+
+
+CAL_EVENTS = [
+    _ev("e-1", "VALE3.SA | 3Q26 Earnings Release (B3)", "2026-10-23", all_day=False,
+        start_time="08:00:00", company="VALE3.SA", source="b3",
+        description="Detalhes em https://ri.vale.com/3q26 e o anexo "
+                    "https://abc.supabase.co/storage/v1/object/public/x.pdf",
+        links=[{"label": "Cronograma B3", "url": "https://www.b3.com.br/cronograma"},
+               {"label": "anexo", "url": "https://abc.supabase.co/storage/v1/object/public/x.pdf",
+                "email": "analista@itaubba.com"}]),
+    _ev("e-2", "SECEX monthly data", "2025-03-05", cat="c-data",
+        recurrence={"freq": "monthly", "interval": 1, "bymonthday": [5], "until": None,
+                    "_debug": {"token": "x"}}, updated_at="2026-09-10T12:00:00+00:00"),
+    _ev("e-3", "Hidden draft", "2026-11-10", visible=False),
+    _ev("e-4", "Too old", "2023-05-01"),
+    _ev("e-5", "IBBA Mining Day", "2027-03-10", cat="c-data", end="2027-03-11",
+        location="São Paulo", links=[{"label": "Inscrição", "url": "https://events.itaubba.com/mining"}],
+        updated_at="2026-11-02T13:00:00.5+00:00"),
+]
+
+
+def _rpc_reports(database, args):
+    return database["rpc_rows"]["reports"][:max(1, min(int(args.get("p_limit") or 10), 20))]
+
+
+def _rpc_categories(database, args):
+    return sorted(database["exec_calendar_categories"], key=lambda c: (c["sort_order"], c["name"]))
+
+
+def _rpc_windows(database, args):
+    return sorted((w for w in database["exec_calendar_data_windows"] if w["is_active"]),
+                  key=lambda w: (w["from_day"], w["label"]))
+
+
+def _rpc_events(database, args):
+    """O corpo de `get_exec_calendar_events(p_from, p_to)`: visíveis (a service key não é admin)
+    que cruzam o intervalo, mais TODOS os recorrentes, por início."""
+    lo, hi = args["p_from"], args["p_to"]
+    rows = [e for e in database["exec_calendar_events"] if e["is_visible"]
+            and (e["recurrence"] is not None
+                 or (e["start_date"] <= hi and (e["end_date"] or e["start_date"]) >= lo))]
+    return sorted(rows, key=lambda e: (e["start_date"], e["start_time"] or ""))
+
+
 def db() -> dict:
     return copy.deepcopy({"quotes": QUOTES, "macro_indicators": MACRO, "commodities": COMMODITIES,
+                          "news_articles": NEWS, "news_digest": DIGEST,
+                          "exec_calendar_events": CAL_EVENTS,
+                          "exec_calendar_categories": CAL_CATEGORIES,
+                          "exec_calendar_data_windows": CAL_WINDOWS,
+                          "rpc_rows": {"reports": REPORTS},
                           "rpc": {"get_dashboard_flags": FLAGS,
                                   "get_heatmap_tickers": HEATMAP_ADMIN,
-                                  "get_commodity_groups": COMMODITY_GROUPS}})
+                                  "get_commodity_groups": COMMODITY_GROUPS,
+                                  "get_recent_reports_v3": _rpc_reports,
+                                  "get_exec_calendar_categories": _rpc_categories,
+                                  "get_exec_calendar_data_windows": _rpc_windows,
+                                  "get_exec_calendar_events": _rpc_events}})
 
 
 # ── a memória do ciclo, como o update_quotes/update_macro monta ───────────────────────────────
@@ -287,30 +517,164 @@ def _project(row: dict, select: str) -> dict:
     return out
 
 
+# ── o mini-PostgREST ──────────────────────────────────────────────────────────────────────────
+# colunas timestamptz (o banco real recusa um literal que não é data: HTTP 400, código 22007)
+TIMESTAMP_COLS = frozenset({"published_at", "found_at", "take_llm_at", "slot_start", "slot_end",
+                            "created_at", "updated_at", "daily_updated_at"})
+_DT = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
+_PARAMS = ("select", "order", "limit", "offset")
+
+
+class PgError(Exception):
+    def __init__(self, status, code, message):
+        super().__init__(message)
+        self.status, self.code, self.message = status, code, message
+
+
+def _ts(v, col):
+    if isinstance(v, datetime):
+        return v
+    s = str(v)
+    if not _DT.match(s):
+        raise PgError(400, "22007",
+                      f'invalid input syntax for type timestamp with time zone: "{s}"')
+    return datetime.fromisoformat(s.replace("Z", "+00:00").replace(" ", "T"))
+
+
+def _split_top(s: str) -> list[str]:
+    """Separa por vírgula no nível de cima, respeitando parênteses e aspas (PostgREST)."""
+    out, cur, depth, quoted, i = [], "", 0, False, 0
+    while i < len(s):
+        c = s[i]
+        if quoted:
+            cur += c
+            if c == "\\" and i + 1 < len(s):
+                cur += s[i + 1]
+                i += 2
+                continue
+            if c == '"':
+                quoted = False
+        elif c == '"':
+            quoted, cur = True, cur + c
+        elif c == "(":
+            depth, cur = depth + 1, cur + c
+        elif c == ")":
+            depth, cur = depth - 1, cur + c
+        elif c == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += c
+        i += 1
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _unquote(v: str) -> str:
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] == '"':
+        return re.sub(r"\\(.)", r"\1", v[1:-1])
+    return v
+
+
+def _cmp(row: dict, col: str, spec: str) -> bool:
+    neg = spec.startswith("not.")
+    if neg:
+        spec = spec[4:]
+    op, _, raw = spec.partition(".")
+    val = row.get(col)
+    if op == "is":
+        res = {"null": val is None, "true": val is True, "false": val is False}[raw]
+    elif op == "in":
+        assert raw.startswith("(") and raw.endswith(")"), raw
+        values = [_unquote(x) for x in _split_top(raw[1:-1])]
+        res = val is not None and str(val) in values
+    elif op in ("eq", "neq", "gt", "gte", "lt", "lte"):
+        if col in TIMESTAMP_COLS:
+            b = _ts(raw, col)
+            a = _ts(val, col) if val is not None else None
+        elif isinstance(val, bool):
+            a, b = val, raw == "true"
+        elif isinstance(val, (int, float)):
+            a, b = val, float(raw)
+        else:
+            a, b = (None if val is None else str(val)), raw
+        if a is None:
+            res = False                                   # NULL não compara com nada
+        else:
+            res = {"eq": a == b, "neq": a != b, "gt": a > b, "gte": a >= b, "lt": a < b,
+                   "lte": a <= b}[op]
+    elif op in ("like", "ilike"):
+        pat = "^" + re.escape(raw).replace(r"\*", ".*") + "$"
+        res = val is not None and re.match(pat, str(val), re.I if op == "ilike" else 0) is not None
+    else:
+        raise AssertionError(f"filtro não suportado pelo falso: {col}={spec}")
+    return not res if neg else res
+
+
+def _tree(row: dict, term: str) -> bool:
+    term = term.strip()
+    neg = term.startswith("not.")
+    if neg:
+        term = term[4:]
+    for op in ("and", "or"):
+        if term.startswith(op + "(") and term.endswith(")"):
+            parts = [_tree(row, t) for t in _split_top(term[len(op) + 1:-1])]
+            res = all(parts) if op == "and" else any(parts)
+            return not res if neg else res
+    col, _, spec = term.partition(".")
+    res = _cmp(row, col, spec)
+    return not res if neg else res
+
+
 def _matches(row: dict, params: dict) -> bool:
     for k, v in params.items():
-        if k in ("select", "order", "limit"):
+        if k in _PARAMS:
             continue
-        if v.startswith("in.(") and v.endswith(")"):
-            values = [x.strip().strip('"') for x in v[4:-1].split(",")]
-            if str(row.get(k)) not in values:
+        if k in ("or", "and"):
+            if not _tree(row, k + v):
                 return False
-        elif v.startswith("eq."):
-            if str(row.get(k)) != v[3:]:
-                return False
-        else:
-            raise AssertionError(f"filtro não suportado pelo falso: {k}={v}")
+        elif not _cmp(row, k, v):
+            return False
     return True
 
 
+def _filter_cols(params: dict) -> set[str]:
+    cols = set()
+
+    def walk(term):
+        term = term.strip()
+        if term.startswith("not."):
+            term = term[4:]
+        for op in ("and", "or"):
+            if term.startswith(op + "(") and term.endswith(")"):
+                for t in _split_top(term[len(op) + 1:-1]):
+                    walk(t)
+                return
+        cols.add(term.partition(".")[0])
+    for k, v in params.items():
+        if k in _PARAMS:
+            continue
+        if k in ("or", "and"):
+            walk(k + v)
+        else:
+            cols.add(k)
+    return cols
+
+
 def _order(rows: list[dict], spec: str) -> list[dict]:
-    parts = spec.split(".")
-    col, desc, nullslast = parts[0], "desc" in parts, "nullslast" in parts
-    present = [r for r in rows if r.get(col) is not None]
-    absent = [r for r in rows if r.get(col) is None]
-    present.sort(key=lambda r: r[col], reverse=desc)
-    nulls_first = desc and not nullslast
-    return absent + present if nulls_first else present + absent
+    out = list(rows)
+    for part in reversed([p for p in spec.split(",") if p]):
+        bits = part.split(".")
+        col, desc = bits[0], "desc" in bits
+        nullslast = "nullslast" in bits or (not desc and "nullsfirst" not in bits)
+        present = [r for r in out if r.get(col) is not None]
+        absent = [r for r in out if r.get(col) is None]
+        key = (lambda r: _ts(r[col], col)) if col in TIMESTAMP_COLS else (lambda r: r[col])
+        present.sort(key=key, reverse=desc)
+        out = present + absent if nullslast else absent + present
+    return out
 
 
 @dataclass
@@ -349,14 +713,41 @@ class FakeHTTP:
             raise err
         if isinstance(err, int):
             return FakeResp(err, {"message": "erro falso"})
-        rows = (self.database["rpc"][name] if path.startswith("/rest/v1/rpc/")
-                else self.database[name])
+        try:
+            return self._postgrest(call, path, name)
+        except PgError as e:
+            return FakeResp(e.status, {"code": e.code, "message": e.message})
+
+    def _postgrest(self, call: Call, path: str, name: str):
+        is_rpc = path.startswith("/rest/v1/rpc/")
+        if is_rpc:
+            src = self.database["rpc"][name]
+            rows = src(self.database, json.loads(call.data or b"{}")) if callable(src) else src
+        else:
+            rows = self.database[name]
+            known = NEWS_COLUMNS if name == "news_articles" else None
+            if known is not None:
+                asked = {i.split(":", 1)[-1].split("->>")[0].strip()
+                         for i in call.params["select"].split(",")} | _filter_cols(call.params)
+                for col in sorted(asked - known):
+                    raise PgError(400, "42703", f"column {name}.{col} does not exist")
         rows = [r for r in rows if _matches(r, call.params)]
         if "order" in call.params:
             rows = _order(rows, call.params["order"])
+        total = len(rows)
+        off = int(call.params.get("offset") or 0)
+        rows = rows[off:]
         if "limit" in call.params:
             rows = rows[:int(call.params["limit"])]
-        return FakeResp(200, [_project(r, call.params["select"]) for r in rows])
+        headers = {}
+        if "count=exact" in (call.headers.get("Prefer") or ""):
+            headers["Content-Range"] = (f"{off}-{off + len(rows) - 1}/{total}" if rows
+                                        else f"*/{total}")
+        if call.method == "HEAD":
+            if headers:
+                headers["Content-Range"] = f"*/{total}"
+            return FakeResp(200, b"", headers=headers)
+        return FakeResp(200, [_project(r, call.params["select"]) for r in rows], headers=headers)
 
     # Feeder ───────────────────────────────────────────────────────────────────────────────
     def _next(self, step):
@@ -408,15 +799,29 @@ def connection_error():
     return requests.ConnectionError(f"HTTPSConnectionPool: falhou {PUT_HOST}/x?X-Amz-Signature=SIG")
 
 
-def make_sources(http=None, state=None, mem="default", published=None, now=NOW):
-    """Sources ligado ao banco falso. `mem="default"` = a memória do ciclo das fixtures."""
+def make_sources(http=None, state=None, mem="default", published=None, now=NOW, **kw):
+    """Sources ligado ao banco falso. `mem="default"` = a memória do ciclo das fixtures. O arquivo
+    de notícias começa em ARCHIVE_FIRST (semana 43), salvo pedido em contrário."""
     from hub_export.sources import Sources
     from hub_export.supa import SupaReader
     http = http or FakeHTTP()
     supa = SupaReader(SUPA_URL, SUPA_KEY, http=http)
     st = hub_state.empty_state() if state is None else state
+    kw.setdefault("first_week", ARCHIVE_FIRST)
     return Sources(supa, st, now=now, memory=memory() if mem == "default" else mem,
-                   published=published), http
+                   published=published, **kw), http
+
+
+def run_kw(**kw) -> dict:
+    """Os argumentos comuns do run_cycle nos testes (arquivo de notícias desde a semana 43)."""
+    kw.setdefault("first_week", ARCHIVE_FIRST)
+    return kw
+
+
+def week_names(results) -> list[str]:
+    """Os nomes semanais de uma lista de Results (ou de um dict nome → Result)."""
+    names = results if isinstance(results, dict) else [r.name for r in results]
+    return sorted(n for n in names if n.startswith("news-week-"))
 
 
 # ── os testes do próprio banco falso ─────────────────────────────────────────────────────────
@@ -443,3 +848,48 @@ def test_mini_postgrest_entende_alias_seta_filtro_e_ordem():
                      params={"select": "updated_at", "order": "updated_at.desc.nullslast",
                              "limit": "1"})
     assert r.json() == [{"updated_at": "2026-11-03T18:04:03.75+00:00"}]
+
+
+def test_fixtures_1b_cobrem_os_casos_do_brief():
+    by = {r["url"]: r for r in NEWS}
+    assert by[U_PLATTS]["source_name"] == "S&P Platts" and by[U_FM]["source_name"] == "Fastmarkets"
+    assert by[U_SMM]["published_at"] is None and by[U_FM]["take_llm"] is None      # pendente
+    assert any(not r["include_in_report"] for r in NEWS)
+    assert any(r["url"].startswith("javascript:") for r in NEWS)
+    assert any("token=" in r["url"] for r in NEWS)
+    assert {d["status"] for d in DIGEST} == {"ok", "quiet", "list"}
+    assert any(d["kind"] == "overnight" for d in DIGEST)
+    assert any(not c["is_active"] for c in CAL_CATEGORIES)
+    assert any(e["recurrence"] for e in CAL_EVENTS) and any(not e["is_visible"] for e in CAL_EVENTS)
+    assert sum(len(v) for v in WEEK_URLS.values()) == 11
+
+
+def test_mini_postgrest_entende_or_and_datas_contagem_e_rpc():
+    http = FakeHTTP()
+    sel = {"select": "url", "include_in_report": "eq.true",
+           "or": "(published_at.gte.2026-11-03T12:00:00Z,and(published_at.is.null,"
+                 "found_at.gte.2026-11-03T17:00:00Z))", "order": "url.asc"}
+    got = {r["url"] for r in http.request("GET", SUPA_URL + "/rest/v1/news_articles",
+                                          params=sel).json()}
+    assert got == {U_GNEWS, U_SMM, U_FUTURE}           # a de 17:00 fora do relatório não vem
+    r = http.request("HEAD", SUPA_URL + "/rest/v1/news_articles",
+                     params={"select": "url", "include_in_report": "eq.true"},
+                     headers={"Prefer": "count=exact"})
+    assert r.content == b"" and r.headers["Content-Range"] == "*/14"
+    r = http.request("GET", SUPA_URL + "/rest/v1/news_articles",
+                     params={"select": "url", "order": "found_at.desc,url.asc", "limit": "2",
+                             "offset": "1"}, headers={"Prefer": "count=exact"})
+    assert [x["url"] for x in r.json()] == ["https://www.bloomberg.com/crypto-rally",
+                                            "https://www.mining.com/no-title/"]    # 2ª e 3ª
+    assert r.headers["Content-Range"] == "1-2/15"
+    r = http.request("GET", SUPA_URL + "/rest/v1/news_articles",
+                     params={"select": "url", "found_at": "eq.nao-e-data"})
+    assert r.status_code == 400 and r.json()["code"] == "22007"
+    r = http.request("GET", SUPA_URL + "/rest/v1/news_articles", params={"select": "created_at"})
+    assert r.status_code == 400 and r.json()["code"] == "42703"
+    r = http.request("POST", SUPA_URL + "/rest/v1/rpc/get_recent_reports_v3",
+                     params={"select": "name"}, data=json.dumps({"p_limit": 2}).encode())
+    assert [x["name"] for x in r.json()] == ["Vale 3Q26: strong volumes", "Suzano: pulp price preview"]
+    r = http.request("GET", SUPA_URL + "/rest/v1/news_articles",
+                     params={"select": "url", "url": f'in.("{U_SMM}","{U_CVM}")'})
+    assert {x["url"] for x in r.json()} == {U_SMM, U_CVM}

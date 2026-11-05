@@ -33,7 +33,8 @@ from hub_export.run import run_cycle  # noqa: E402
 
 def run(http, path, **kw):
     kw.setdefault("memory", F.memory())
-    return {r.name: r for r in run_cycle(env=F.env(), http=http, now=F.NOW, state_file=path, **kw)}
+    return {r.name: r for r in run_cycle(env=F.env(), http=http, now=F.NOW, state_file=path,
+                                         **F.run_kw(**kw))}
 
 
 # ── disco ─────────────────────────────────────────────────────────────────────────────────────
@@ -151,7 +152,7 @@ def test_partida_a_frio_com_copia_velha_do_live_aciona_a_pulsacao(tmp_path):
     from datetime import timedelta
     primeiro = F.FakeHTTP()
     run_cycle(env=F.env(), http=primeiro, now=F.NOW - timedelta(minutes=20), memory=F.memory(),
-              state_file=tmp_path / "a.json")
+              state_file=tmp_path / "a.json", **F.run_kw())
     http = F.FakeHTTP(published=dict(primeiro.uploads))
     res = run(http, tmp_path / "b.json")
     assert res["live.json"].action == "enviado" and res["live.json"].reason == "pulsação"

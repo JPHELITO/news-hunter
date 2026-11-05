@@ -41,10 +41,14 @@ from hub_export.run import Result, run_cycle  # noqa: E402
 from hub_export.supa import SupaError, SupaReader  # noqa: E402
 
 
+FIRST_WEEKS = [f"news-week-{w}.json" for w in (F.WEEK_OLD, F.WEEK_PREV, F.WEEK_CUR)]
+ALL_FIRST = list(FILES) + FIRST_WEEKS          # o 1º ciclo: os fixos + carga da 43 + 44 e 45
+
+
 def run(http, path, **kw):
     kw.setdefault("memory", F.memory())
     kw.setdefault("now", F.NOW)
-    return {r.name: r for r in run_cycle(env=F.env(), http=http, state_file=path, **kw)}
+    return {r.name: r for r in run_cycle(env=F.env(), http=http, state_file=path, **F.run_kw(**kw))}
 
 
 def quote_price_reads(http):
@@ -57,8 +61,8 @@ def test_na_vez_e_mudou_envia_igual_pula(tmp_path):
     p = tmp_path / "st.json"
     http = F.FakeHTTP()
     res = run(http, p)
-    assert {n: r.action for n, r in res.items()} == {n: "enviado" for n in FILES}
-    assert sorted(http.uploads) == sorted(FILES)
+    assert {n: r.action for n, r in res.items()} == {n: "enviado" for n in ALL_FIRST}
+    assert sorted(http.uploads) == sorted(ALL_FIRST)
     st = S.load(p)
     for n, r in res.items():
         assert st["files"][n]["hash"] == r.hash and st["files"][n]["revision"] == r.revision
@@ -80,14 +84,27 @@ def test_na_vez_e_mudou_envia_igual_pula(tmp_path):
 
 
 def test_registro_bate_com_o_contrato():
-    """Cadência, gzip, pulsação, meta de tamanho e tipo de cada arquivo (PLANO §2.5, 03/11/2026)."""
+    """Cadência, gzip, pulsação, meta de tamanho e tipo de cada arquivo (PLANO §2.5, 03/11/2026,
+    e Apêndice E, 05/11/2026)."""
+    from hub_export.registry import ORDER, spec_for
     tabela = {n: (s.cadence, s.gzip, s.pulse, s.max_bytes, s.content_type) for n, s in FILES.items()}
     assert tabela == {
         "config.json":       (900, False, None, 20 * 1024, "application/json"),
         "live.json":         (0, True, 600, 80 * 1024, "application/gzip"),
         "intraday.json":     (0, True, None, 150 * 1024, "application/gzip"),
         "quotes-daily.json": (3600, True, None, 350 * 1024, "application/gzip"),
+        "news-latest.json":  (0, True, None, 300 * 1024, "application/gzip"),
+        "news-digest.json":  (0, True, None, 80 * 1024, "application/gzip"),
+        "calendar.json":     (900, True, None, 300 * 1024, "application/gzip"),
+        "reports.json":      (3600, False, None, 20 * 1024, "application/json"),
+        "news-index.json":   (3600, False, None, 20 * 1024, "application/json"),
     }
+    w = spec_for("news-week-2026-w53.json")                  # a família semanal
+    assert (w.cadence, w.gzip, w.pulse, w.max_bytes, w.content_type) == \
+        (3600, True, None, 1024 * 1024, "application/gzip")
+    assert ORDER.index("news-week") < ORDER.index("news-index.json")   # índice depois das semanas
+    with pytest.raises(KeyError):
+        spec_for("news-week-2026-W45.json")                  # maiúscula não é nome válido
 
 
 def test_live_intraday_e_quotes_daily_em_gzip_config_em_texto(tmp_path):
@@ -103,8 +120,11 @@ def test_live_intraday_e_quotes_daily_em_gzip_config_em_texto(tmp_path):
     assert up["config.json"].startswith(b'{"schemaVersion":1,"generatedAt":"2026-11-03T18:05:12Z"')
     tipos = {json.loads(c.data)["name"]: json.loads(c.data)["contentType"]
              for c in http.feeder_calls() if c.method == "POST" and c.url.endswith("/uploads")}
-    assert tipos == {"config.json": "application/json", "live.json": "application/gzip",
-                     "intraday.json": "application/gzip", "quotes-daily.json": "application/gzip"}
+    texto = {"config.json", "reports.json", "news-index.json"}
+    assert tipos == {n: "application/json" if n in texto else "application/gzip" for n in ALL_FIRST}
+    for n in ALL_FIRST:                                       # os novos também, determinísticos
+        corpo = up[n] if n in texto else gzip.decompress(up[n])
+        assert corpo.startswith(b'{"schemaVersion":1,"generatedAt":"2026-11-03T18:05:12Z"'), n
     puts = {c.url.split("/bucket/")[1].split("?")[0]: c.headers for c in http.feeder_calls()
             if c.method == "PUT"}
     assert puts["live.json"] == {"content-type": "application/gzip"}
@@ -339,15 +359,25 @@ def test_out_grava_exatamente_os_bytes_que_seriam_enviados(tmp_path):
     run(enviados, tmp_path / "a.json")
     out = tmp_path / "saida"
     http = F.FakeHTTP()
-    res = run(http, tmp_path / "b.json", mode="out", out_dir=out)
+    res = run(http, tmp_path / "b.json", mode="out", out_dir=out, weeks="all")
     assert {r.action for r in res.values()} == {"gravado"}
-    for n in FILES:
-        assert (out / n).read_bytes() == enviados.uploads[n], n
+    assert F.week_names(res) == sorted(FIRST_WEEKS)          # --weeks all = desde a 1ª semana
+    for n in ALL_FIRST:
+        if n != "news-index.json":
+            assert (out / n).read_bytes() == enviados.uploads[n], n
+    # o índice do --out lista as semanas gravadas NA PASTA (no envio: as já publicadas) — aqui
+    # são as mesmas, então ele também sai igual
+    assert (out / "news-index.json").read_bytes() == enviados.uploads["news-index.json"]
     assert http.feeder_calls() == [] and S.load(tmp_path / "b.json")["files"] == {}
-    for n in ("live.json", "intraday.json", "quotes-daily.json"):
+    for n in ("live.json", "intraday.json", "quotes-daily.json", "news-latest.json",
+              "news-digest.json", "calendar.json", *FIRST_WEEKS):
         assert res[n].bytes == res[n].gz_bytes, n                 # vai comprimido
         assert (out / n).read_bytes()[:2] == b"\x1f\x8b", n
-    assert res["config.json"].bytes == res["config.json"].raw_bytes   # vai em texto
+    for n in ("config.json", "reports.json", "news-index.json"):
+        assert res[n].bytes == res[n].raw_bytes, n               # vai em texto
+    # sem --weeks, o --out monta só a anterior e a corrente
+    res = run(F.FakeHTTP(), tmp_path / "c.json", mode="out", out_dir=tmp_path / "s2")
+    assert F.week_names(res) == sorted(FIRST_WEEKS[1:])
 
 
 # ── configuração / CLI ───────────────────────────────────────────────────────────────────────
@@ -360,18 +390,23 @@ def test_sem_variaveis_do_feeder_o_passo_do_loop_nao_faz_nada(tmp_path, caplog):
 
 
 def test_resolve_nomes():
-    assert resolve(None) == resolve("all") == resolve("ALL") == list(FILES)
+    from hub_export.registry import ORDER
+    assert resolve(None) == resolve("all") == resolve("ALL") == ORDER
+    assert set(ORDER) == set(FILES) | {"news-week"}
     assert resolve("config,live") == ["config.json", "live.json"]
     assert resolve("quotes-daily.json, intraday") == ["quotes-daily.json", "intraday.json"]
-    with pytest.raises(ValueError, match="desconhecido"):
-        resolve("news")
+    assert resolve("news-week,news-week-2026-w53,news-index") == \
+        ["news-week", "news-week-2026-w53.json", "news-index.json"]
+    for ruim in ("news", "news-week-2026-W45", "news-week-2025-w53", "news-week-2026-45"):
+        with pytest.raises(ValueError, match="desconhecido"):
+            resolve(ruim)
 
 
 def test_log_do_ciclo_sem_segredo_mesmo_com_erro(tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
     http = F.FakeHTTP(supa_error={"commodities": requests.ConnectionError(
         f"{F.SUPA_URL}/rest/v1/commodities?apikey={F.SUPA_KEY}")},
-        feeder_script={"PUT": [F.connection_error()] * 8})
+        feeder_script={"PUT": [F.connection_error()] * 40})
     feeder = FeederClient(F.FEEDER_URL, F.PROJECT_ID, F.FEEDER_KEY, http=http, retry_wait=0,
                           sleep=lambda s: None)
     res = run(http, tmp_path / "st.json", feeder=feeder)

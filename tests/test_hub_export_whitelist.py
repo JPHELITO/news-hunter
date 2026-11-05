@@ -46,8 +46,12 @@ def _sujo(obj):
 
 def mundo_sujo():
     http = F.FakeHTTP()
-    for nome in ("quotes", "commodities", "macro_indicators"):
+    # Onda 1b também: as linhas de notícia, o resumo (inclusive os itens jsonb), os relatórios e
+    # o calendário (inclusive a regra de recorrência e os links) vêm com as chaves proibidas
+    for nome in ("quotes", "commodities", "macro_indicators", "news_articles", "news_digest",
+                 "exec_calendar_events", "exec_calendar_categories", "exec_calendar_data_windows"):
         http.database[nome] = _sujo(http.database[nome])
+    http.database["rpc_rows"]["reports"] = _sujo(http.database["rpc_rows"]["reports"])
     for fn in ("get_heatmap_tickers", "get_commodity_groups"):   # nas flags, "key" é a coluna
         http.database["rpc"][fn] = _sujo(http.database["rpc"][fn])
     http.database["rpc"]["get_dashboard_flags"] += [{"key": k, "enabled": True}
@@ -57,9 +61,14 @@ def mundo_sujo():
 
 
 def payloads(http, mem, state=None):
+    from hub_export import weeks as W
+    from hub_export.registry import spec_for
     src, _ = F.make_sources(http=http, mem=mem,
                             state=F.previous_state() if state is None else state)
-    return {name: spec.builder(src) for name, spec in FILES.items()}
+    out = {name: spec.builder(src) for name, spec in FILES.items()}
+    for lab in (F.WEEK_OLD, F.WEEK_PREV, F.WEEK_CUR):
+        out[W.file_name(lab)] = spec_for(W.file_name(lab)).builder(src)
+    return out
 
 
 def _strings(obj):
@@ -114,7 +123,7 @@ def test_run_recusa_publicar_payload_com_chave_proibida(tmp_path, monkeypatch):
     monkeypatch.setitem(registry.FILES, "intraday.json", vazado)
     http = F.FakeHTTP()
     res = {r.name: r for r in run_cycle(env=F.env(), http=http, now=F.NOW, memory=F.memory(),
-                                         state_file=tmp_path / "st.json")}
+                                         state_file=tmp_path / "st.json", **F.run_kw())}
     assert res["intraday.json"].action == "erro" and "chave proibida" in res["intraday.json"].reason
     assert "intraday.json" not in http.uploads
     assert res["live.json"].action == "enviado"               # os outros seguem

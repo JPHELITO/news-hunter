@@ -3,6 +3,8 @@
 ONDE: `$RUNNER_TEMP/hub_export_state.json` no GitHub Actions (o runner esvazia a pasta a cada
 job, ~6 h — molde do `digest_done.json` do resumo da hora e da memória de takes do sync.py);
 fora dele, `$HUB_EXPORT_STATE_DIR` ou a pasta temporária do sistema. Sem tabela nova no Supabase.
+As notícias têm um arquivo PRÓPRIO ao lado (`hub_export_state_news.json`, ver news.py): o cache
+delas é grande e só é lido nas execuções que montam um arquivo de notícias.
 
 O QUE GUARDA:
   files       por arquivo: hash do último ENVIO, quando foi enviado, revisão do Feeder, quando
@@ -12,7 +14,11 @@ O QUE GUARDA:
   macro       idem para os indicadores macro;
   commodities as linhas leves da última leitura (reserva se o banco falhar num ciclo);
   spark       cache do `commodities.spark` por código (só rebaixa quem mudou);
-  daily       cache do `quotes.daily` por papel (só rebaixa quem mudou).
+  daily       cache do `quotes.daily` por papel (só rebaixa quem mudou);
+  flags       a última leitura das flags do /admin (o news-digest.json é fail-closed na
+              `home_digest` e é HOT: lê a flag no máximo a cada 15 min, junto com o config);
+  digest      as últimas janelas do resumo da hora (imutáveis: lidas só nas janelas de gravação);
+  calendar    a sonda (contagem + max(updated_at)), a última leitura completa e o calendário.
 
 Arquivo ilegível/corrompido = começar do zero (nunca derruba o ciclo).
 
@@ -55,29 +61,35 @@ def empty_state() -> dict:
             "macro": {"rows": {}, "probe": None, "checked": []},
             "commodities": {"rows": []},
             "spark": {},
-            "daily": {"rows": {}, "probe": None}}
+            "daily": {"rows": {}, "probe": None},
+            "flags": {"at": None, "rows": []},
+            "digest": {"rows": [], "seeded": False, "readAt": None},
+            "calendar": {"probe": None, "fullAt": None, "metaAt": None, "range": None,
+                         "categories": [], "windows": [], "events": None}}
 
 
-def load(path: Path) -> dict:
-    """Lê o estado. Ausente → vazio; ilegível, de outra versão ou com forma errada → vazio + aviso."""
+def load(path: Path, empty=empty_state, version: int = STATE_VERSION) -> dict:
+    """Lê o estado. Ausente → vazio; ilegível, de outra versão ou com forma errada → vazio + aviso.
+    Seção que falta (ou com o tipo errado) é completada pela vazia — estado de uma versão anterior
+    do exportador continua valendo sem trocar a versão."""
     try:
         raw = Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
-        return empty_state()
+        return empty()
     except OSError as e:
         log.warning("estado ilegível (%s) — começando do zero", type(e).__name__)
-        return empty_state()
+        return empty()
     try:
         data = json.loads(raw)
     except ValueError:
         log.warning("estado corrompido — começando do zero")
-        return empty_state()
-    if not isinstance(data, dict) or data.get("version") != STATE_VERSION:
+        return empty()
+    if not isinstance(data, dict) or data.get("version") != version:
         log.warning("estado de outra versão/forma — começando do zero")
-        return empty_state()
-    base = empty_state()
+        return empty()
+    base = empty()
     for k, v in base.items():
-        if not isinstance(data.get(k), type(v)):
+        if k not in data or (v is not None and not isinstance(data[k], type(v))):
             data[k] = v
     return data
 
@@ -98,7 +110,9 @@ def save(path: Path, state: dict) -> bool:
 
 
 class PublishedCopies:
-    """A cópia publicada de cada arquivo, baixada no máximo uma vez por execução."""
+    """A cópia publicada de cada arquivo, baixada no máximo uma vez por execução.
+    `status(nome)`: "ok", "ausente" (404), "fora do ar" (rede) ou "erro" — quem semeia cache
+    precisa distinguir "ainda não publicado" de "não deu para ver"."""
 
     def __init__(self, base: str | None = None, http=None, timeout: float = PUBLIC_TIMEOUT_S,
                  env=None):
@@ -107,6 +121,7 @@ class PublishedCopies:
         self.http = http or requests.Session()
         self.timeout = timeout
         self._docs: dict[str, dict | None] = {}
+        self._status: dict[str, str] = {}
         self._unreachable = False
 
     def get(self, name: str) -> dict | None:
@@ -114,6 +129,7 @@ class PublishedCopies:
         if name in self._docs:
             return self._docs[name]
         doc = None
+        status = "fora do ar"
         host = urlsplit(self.base).hostname
         if not self._unreachable:
             try:
@@ -122,7 +138,11 @@ class PublishedCopies:
                 if r.status_code == 200:
                     parsed = json.loads(maybe_gunzip(r.content).decode("utf-8"))
                     doc = parsed if isinstance(parsed, dict) else None
-                elif r.status_code != 404:
+                    status = "ok" if doc is not None else "erro"
+                elif r.status_code == 404:
+                    status = "ausente"
+                else:
+                    status = "erro"
                     log.info("cópia publicada de %s: HTTP %s (host %s) — vai enviar",
                              name, r.status_code, host)
             except (requests.ConnectionError, requests.Timeout) as e:
@@ -130,9 +150,16 @@ class PublishedCopies:
                 log.info("cópia publicada de %s: %s (host %s) — vai enviar",
                          name, type(e).__name__, host)
             except Exception as e:      # gzip/JSON ruim: tratar como "não existe"
+                status = "erro"
                 log.info("cópia publicada de %s ilegível (%s) — vai enviar", name, type(e).__name__)
         self._docs[name] = doc
+        self._status[name] = status
         return doc
+
+    def status(self, name: str) -> str:
+        if name not in self._status:
+            self.get(name)
+        return self._status[name]
 
     def content_hash(self, name: str) -> str | None:
         doc = self.get(name)

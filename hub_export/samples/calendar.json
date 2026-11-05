@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-11-02T13:00:00Z",
+  "timezone": "America/Sao_Paulo",
+  "from": "2025-01-01",
+  "to": "2028-05-31",
+  "categories": [
+    {
+      "id": "c-old",
+      "name": "Retired",
+      "color": "#999999",
+      "kind": null,
+      "sortOrder": 5,
+      "active": false
+    },
+    {
+      "id": "c-earn",
+      "name": "Earnings / Conf. Call",
+      "color": "#1565C0",
+      "kind": "earnings",
+      "sortOrder": 10,
+      "active": true
+    },
+    {
+      "id": "c-data",
+      "name": "Data Release",
+      "color": "#00838F",
+      "kind": "data_release",
+      "sortOrder": 20,
+      "active": true
+    }
+  ],
+  "dataWindows": [
+    {
+      "id": "w-1",
+      "sourceKey": "secex_steel",
+      "label": "SECEX — Steel foreign trade",
+      "fromDay": 1,
+      "toDay": 10,
+      "lagMonths": 1,
+      "note": "MDIC/Comex Stat (~4º dia útil)."
+    }
+  ],
+  "events": [
+    {
+      "id": "e-2",
+      "title": "SECEX monthly data",
+      "categoryId": "c-data",
+      "startDate": "2025-03-05",
+      "endDate": null,
+      "allDay": true,
+      "startTime": null,
+      "endTime": null,
+      "company": null,
+      "location": null,
+      "description": null,
+      "links": [],
+      "recurrence": {
+        "freq": "monthly",
+        "interval": 1,
+        "bymonthday": [5],
+        "until": null
+      },
+      "origin": null
+    },
+    {
+      "id": "e-1",
+      "title": "VALE3.SA | 3Q26 Earnings Release (B3)",
+      "categoryId": "c-earn",
+      "startDate": "2026-10-23",
+      "endDate": null,
+      "allDay": false,
+      "startTime": "08:00",
+      "endTime": null,
+      "company": "VALE3.SA",
+      "location": null,
+      "description": "Detalhes em https://ri.vale.com/3q26 e o anexo",
+      "links": [
+        {
+          "label": "Cronograma B3",
+          "url": "https://www.b3.com.br/cronograma"
+        },
+        {
+          "label": "anexo",
+          "url": null
+        }
+      ],
+      "recurrence": null,
+      "origin": "b3"
+    },
+    {
+      "id": "e-5",
+      "title": "IBBA Mining Day",
+      "categoryId": "c-data",
+      "startDate": "2027-03-10",
+      "endDate": "2027-03-11",
+      "allDay": true,
+      "startTime": null,
+      "endTime": null,
+      "company": null,
+      "location": "São Paulo",
+      "description": null,
+      "links": [
+        {
+          "label": "Inscrição",
+          "url": "https://events.itaubba.com/mining"
+        }
+      ],
+      "recurrence": null,
+      "origin": null
+    }
+  ]
+}

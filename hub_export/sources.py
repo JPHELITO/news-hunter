@@ -1,8 +1,8 @@
 """De onde vem cada dado: memória do ciclo → último estado conhecido → Supabase.
 
 Orçamento: ≤ 5 MB/dia de tráfego do Supabase com o loop rodando 24/7 (o sistema inteiro já anda
-a ~90 MB/dia num teto de 5 GB/mês, e o Supabase conta ~1 KB de cabeçalho por resposta). Cada
-fonte paga o mínimo:
+a ~90 MB/dia num teto de 5 GB/mês, e o Supabase conta ~0,75 KB de cabeçalho por resposta, medido
+em 05/11). Cada fonte paga o mínimo:
 
   cotações + curva do dia   memória do ciclo (`hunter.prices.LAST_QUOTE_ROWS`, gravada pelo
                             `update_quotes` deste MESMO processo) por cima do estado. Lê do banco
@@ -19,16 +19,29 @@ fonte paga o mínimo:
                             frio: o cache é semeado da cópia PUBLICADA do quotes-daily.json (sai
                             do Mindassets, não do Supabase) e a mesma lista diz quem relê.
   config                    três RPCs pequenas (flags, heatmap do /admin, grupos de commodities),
-                            só quando o config.json está na vez (15 min).
+                            só quando o config.json está na vez (15 min). As flags ficam no estado
+                            (o news-digest.json, HOT, lê a `home_digest` dali, com até 15 min).
+Onda 1b:
+  notícias                  news.py (cache do horizonte, incremental com margem, varreduras,
+                            semanas, carga inicial aos poucos, conferência das antigas).
+  resumo da hora            tabela `news_digest`, imutável: lida só nas janelas de gravação
+                            (E+10…E+45 de Brasília, E = 7…20, ~100 ciclos/dia) e na partida a
+                            frio (semeada da cópia publicada + `slot_start > maior`).
+  relatórios                RPC `get_recent_reports_v3` (nunca a tabela de origem), no COLD.
+  calendário                sonda "contagem + max(updated_at)" dos visíveis (1 chamada) a cada
+                            WARM; leitura completa quando muda, na partida a frio e 1×/dia depois
+                            das 23:45 UTC; categorias e janelas de dado a cada 60 min.
 
 Tudo é normalizado aqui (datas `…Z`, números finitos ou None, `session` válida ou None) e
 guardado assim no estado — os construtores só renomeiam campo a campo.
+`rebuild=True` (CLI `--rebuild`): ignora as sementes publicadas e os caches de dados e relê o
+banco (depois de um conserto manual de título, por exemplo).
 """
 from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from hunter import prices
 
@@ -38,11 +51,44 @@ from .supa import SupaError
 log = logging.getLogger(__name__)
 
 MEMORY_MAX_AGE_S = 900     # memória mais velha que isto não é "deste ciclo"
+FLAGS_MAX_AGE_S = 900      # as flags valem 15 min (o config.json as relê no WARM)
 
 QUOTE_COLS = "ticker,price,change_pct,change_abs,updated_at,intraday"
 MACRO_COLS = "code,value,change_pct,updated_at"
 COMM_COLS = ("code,name,unit,price,change_pct,assessed_at,updated_at,"
              "asof:spark->>asof,v:spark->>v,ph:spark->>ph")
+
+BRT = timezone(timedelta(hours=-3))  # o Brasil não tem horário de verão desde 2019
+DIGEST_COLS = "slot_start,slot_end,kind,status,summary,items,created_at"
+DIGEST_HOURS = range(7, 21)          # E = 7 (madrugada) … 20 (última janela de hora em hora)
+DIGEST_MINUTES = (10, 45)            # E+10 … E+45: o robô grava de E+10 a E+40 (digest.py)
+REPORTS_COLS = "name,sector,link,date,companies"
+REPORTS_LIMIT = 20
+CALENDAR_META_EVERY_S = 3600
+CALENDAR_DAILY_UTC = (23, 45)        # depois do robô da B3 (update_b3_calendar.yml, 23:20 UTC)
+_ISO = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _age_s(stamp, now: datetime) -> float | None:
+    iso = iso_utc(stamp)
+    if not iso:
+        return None
+    return (now - datetime.strptime(iso, _ISO).replace(tzinfo=timezone.utc)).total_seconds()
+
+
+def digest_window_open(now: datetime) -> bool:
+    """Janela de gravação do resumo da hora (horário de Brasília): E+10 ≤ agora < E+45."""
+    b = now.astimezone(BRT)
+    return b.hour in DIGEST_HOURS and DIGEST_MINUTES[0] <= b.minute < DIGEST_MINUTES[1]
+
+
+def calendar_daily_mark(now: datetime) -> str:
+    """O último 23:45 UTC já passado: leitura completa anterior a ele está vencida."""
+    h, m = CALENDAR_DAILY_UTC
+    mark = now.astimezone(timezone.utc).replace(hour=h, minute=m, second=0, microsecond=0)
+    if mark > now:
+        mark -= timedelta(days=1)
+    return iso_utc(mark)
 
 
 # ── universos (a ordem do arquivo é a das listas do robô) ──────────────────────────────────────
@@ -114,17 +160,27 @@ class Sources:
     """Dados de UMA execução, cada um lido no máximo uma vez (memo)."""
 
     def __init__(self, supa, state: dict, *, now: datetime | None = None,
-                 memory: dict | None = None, published=None):
+                 memory: dict | None = None, published=None, mode: str = "send",
+                 rebuild: bool = False, out_dir=None, weeks_arg=None, news_path=None,
+                 first_week: str | None = None):
         self.supa = supa
         self.state = state
         self.now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         self.generated_at = iso_utc(self.now)
         self.memory = memory or {}
         self.published = published
+        self.mode = mode
+        self.rebuild = rebuild
+        self.out_dir = out_dir
+        self.weeks_arg = weeks_arg
+        self.news_path = news_path
+        self.first_week = first_week
         self.quote_universe = quote_universe()
         self.macro_universe = macro_universe()
         self.used_memory = {"quotes": None, "macro": None}
         self._memo: dict = {}
+        self._news = None
+        self._news_state = None
 
     # ── cotações (+ curva do dia) ───────────────────────────────────────────────────────────
     def quotes(self) -> dict[str, dict]:
@@ -144,7 +200,8 @@ class Sources:
     def _with_memory(self, key, table, id_col, cols, norm, universe) -> dict[str, dict]:
         st = self.state[key]
         uni = set(universe)
-        rows = {k: v for k, v in (st.get("rows") or {}).items() if k in uni and isinstance(v, dict)}
+        rows = {} if self.rebuild else {k: v for k, v in (st.get("rows") or {}).items()
+                                         if k in uni and isinstance(v, dict)}
 
         def merge(raw_rows):
             for r in raw_rows:
@@ -161,17 +218,17 @@ class Sources:
             # Papel que nem a memória nem o estado conhecem: o banco é consultado UMA vez por
             # estado (partida a frio do runner) — senão um papel sem preço nenhum custaria uma
             # leitura em todo ciclo.
-            checked = set(st.get("checked") or [])
+            checked = set() if self.rebuild else set(st.get("checked") or [])
             missing = [k for k in universe if k not in rows and k not in checked]
             if missing:
-                merge(self.supa.select(table, cols, **{id_col: _in(missing)}))
+                merge(self.supa.select(table, cols, tag=key, **{id_col: _in(missing)}))
                 st["checked"] = sorted(checked | set(missing))
         else:
-            probe = self.supa.select(table, "updated_at", order="updated_at.desc.nullslast",
+            probe = self.supa.select(table, "updated_at", tag=key, order="updated_at.desc.nullslast",
                                      limit=1)
             top = iso_utc(probe[0].get("updated_at")) if probe else None
             if not rows or top is None or top != st.get("probe"):
-                merge(self.supa.select(table, cols))
+                merge(self.supa.select(table, cols, tag=key))
                 st["probe"] = top
         st["rows"] = rows
         return rows
@@ -182,8 +239,10 @@ class Sources:
             return self._memo["commodities"]
         st = self.state["commodities"]
         cache = self.state["spark"]
+        if self.rebuild:
+            cache.clear()
         try:
-            raw = self.supa.select("commodities", COMM_COLS, order="code")
+            raw = self.supa.select("commodities", COMM_COLS, tag="commodities", order="code")
         except SupaError as e:
             if not st.get("rows"):
                 raise
@@ -210,7 +269,8 @@ class Sources:
                     if x["spark_key"] and (cache.get(x["code"]) or {}).get("key") != x["spark_key"]]
             if need:
                 try:
-                    for g in self.supa.select("commodities", "code,spark", code=_in(need)):
+                    for g in self.supa.select("commodities", "code,spark", tag="commodities:spark",
+                                              code=_in(need)):
                         sp = g.get("spark")
                         if isinstance(g.get("code"), str) and isinstance(sp, dict):
                             cache[g["code"]] = {"key": _spark_key(sp.get("asof"), sp.get("v"),
@@ -235,21 +295,23 @@ class Sources:
         st = self.state["daily"]
         universe = [t for t, _n, _e in self.quote_universe]
         uni = set(universe)
-        cache = {t: e for t, e in (st.get("rows") or {}).items() if t in uni and isinstance(e, dict)}
-        probe = self.supa.select("quotes", "daily_updated_at",
+        cache = {} if self.rebuild else {t: e for t, e in (st.get("rows") or {}).items()
+                                         if t in uni and isinstance(e, dict)}
+        probe = self.supa.select("quotes", "daily_updated_at", tag="quotes:daily",
                                  order="daily_updated_at.desc.nullslast", limit=1)
         top = iso_utc(probe[0].get("daily_updated_at")) if probe else None
         if not (cache and top is not None and top == st.get("probe")):
-            if not cache:
+            if not cache and not self.rebuild:
                 cache.update(self._seed_daily())
             want = {}
-            for r in self.supa.select("quotes", "ticker,daily_updated_at"):
+            for r in self.supa.select("quotes", "ticker,daily_updated_at", tag="quotes:daily"):
                 if r.get("ticker") in uni:
                     want[r["ticker"]] = iso_utc(r.get("daily_updated_at"))
             need = [t for t in universe if t in want and (t not in cache or cache[t].get("at") != want[t])]
             if need:
                 params = {} if len(need) == len(want) else {"ticker": _in(need)}
-                for r in self.supa.select("quotes", "ticker,daily,daily_updated_at", **params):
+                for r in self.supa.select("quotes", "ticker,daily,daily_updated_at",
+                                          tag="quotes:daily", **params):
                     if r.get("ticker") in want:
                         cache[r["ticker"]] = {"at": iso_utc(r.get("daily_updated_at")),
                                               "pts": points(r.get("daily"))}
@@ -285,7 +347,9 @@ class Sources:
 
     # ── configuração do /admin ──────────────────────────────────────────────────────────────
     def flags(self) -> list[dict]:
-        return self._rpc("get_dashboard_flags", "key,enabled")
+        rows = self._rpc("get_dashboard_flags", "key,enabled")
+        self.state["flags"] = {"at": self.generated_at, "rows": rows}
+        return rows
 
     def heatmap_admin(self) -> list[dict]:
         return self._rpc("get_heatmap_tickers", "symbol,is_hidden,in_coverage,sort_order")
@@ -295,5 +359,129 @@ class Sources:
 
     def _rpc(self, fn: str, cols: str) -> list[dict]:
         if fn not in self._memo:
-            self._memo[fn] = self.supa.rpc(fn, cols)
+            self._memo[fn] = self.supa.rpc(fn, cols, tag="config")
         return self._memo[fn]
+
+    def _flag_rows(self) -> list[dict]:
+        """As flags com no máximo 15 min (do estado), ou lidas agora (e guardadas)."""
+        cached = self.state["flags"]
+        age = _age_s(cached.get("at"), self.now)
+        if (not self.rebuild and cached.get("rows") and age is not None and 0 <= age < FLAGS_MAX_AGE_S):
+            return cached["rows"]
+        return self.flags()
+
+    def digest_enabled(self) -> bool:
+        """`home_digest` só vale ligada com `true` (fail-closed, decisão O3); `hub_home_digest`
+        manda nela, como nas outras flags (config._flags)."""
+        from .exporters.config import _flags
+        on = _flags(self._flag_rows()).get("home_digest") is True
+        if not on:
+            self.state["digest"]["seeded"] = False     # religada: relê, não confia no cache velho
+        return on
+
+    # ── notícias (news.py) ──────────────────────────────────────────────────────────────────
+    def news(self):
+        """O NewsStore desta execução (o cache sai do arquivo próprio, uma vez)."""
+        if self._news is None:
+            from . import news as news_mod
+            from .weeks import FIRST_WEEK
+            st = news_mod.load_news(self.news_path) if self.news_path else news_mod.empty_news_state()
+            self._news_state = st
+            self._news = news_mod.NewsStore(self.supa, self.published, st, now=self.now,
+                                            mode=self.mode, rebuild=self.rebuild,
+                                            out_dir=self.out_dir, weeks_arg=self.weeks_arg,
+                                            first_week=self.first_week or FIRST_WEEK)
+        return self._news
+
+    def news_if_loaded(self):
+        return self._news
+
+    def save_news(self) -> None:
+        if self._news is not None and self.news_path:
+            from . import news as news_mod
+            news_mod.save_news(self.news_path, self._news_state)
+
+    # ── resumo da hora ──────────────────────────────────────────────────────────────────────
+    def digest_windows(self) -> list[dict]:
+        if "digest" in self._memo:
+            return self._memo["digest"]
+        from .exporters import news_digest as nd
+        st = self.state["digest"]
+        rows = {} if self.rebuild else {w["slotStart"]: w for w in st["rows"]
+                                         if isinstance(w, dict) and w.get("slotStart")}
+        read = digest_window_open(self.now)
+        if not st["seeded"] or self.rebuild:
+            if not self.rebuild and self.published is not None:
+                doc = self.published.get("news-digest.json")
+                if isinstance(doc, dict) and doc.get("schemaVersion") == 1:
+                    for obj in doc.get("windows") or []:
+                        w = nd.from_published(obj)
+                        if w:
+                            rows.setdefault(w["slotStart"], w)
+            read = True
+        if read:
+            if rows:
+                got = self.supa.select("news_digest", DIGEST_COLS, tag="digest",
+                                       slot_start=f"gt.{max(rows)}", order="slot_start.asc")
+            else:
+                got = self.supa.select("news_digest", DIGEST_COLS, tag="digest",
+                                       order="slot_start.desc", limit=nd.KEEP)
+            for r in got:
+                w = nd.from_row(r)
+                if w:
+                    rows[w["slotStart"]] = w
+            st["readAt"] = self.generated_at
+            st["seeded"] = True
+        keep = sorted(rows.values(), key=lambda w: w["slotStart"], reverse=True)[:nd.KEEP]
+        st["rows"] = keep
+        self._memo["digest"] = keep
+        return keep
+
+    # ── relatórios ──────────────────────────────────────────────────────────────────────────
+    def recent_reports(self) -> list[dict]:
+        if "reports" not in self._memo:
+            self._memo["reports"] = self.supa.rpc("get_recent_reports_v3", REPORTS_COLS,
+                                                  {"p_limit": REPORTS_LIMIT}, tag="reports")
+        return self._memo["reports"]
+
+    # ── calendário ──────────────────────────────────────────────────────────────────────────
+    def calendar(self) -> dict:
+        if "calendar" in self._memo:
+            return self._memo["calendar"]
+        from .exporters import calendar as cal
+        st = self.state["calendar"]
+        first, last = cal.date_range(self.now)
+        rows, total = self.supa.select_count("exec_calendar_events", "updated_at",
+                                             tag="calendar:sonda", is_visible="eq.true",
+                                             order="updated_at.desc.nullslast", limit=1)
+        probe = {"count": total, "max": iso_utc(rows[0].get("updated_at")) if rows else None}
+        full = (self.rebuild or st["events"] is None or probe != st["probe"]
+                or st["range"] != [first, last] or not st["fullAt"]
+                or st["fullAt"] < calendar_daily_mark(self.now))
+        age = _age_s(st["metaAt"], self.now)
+        meta = full or age is None or age >= CALENDAR_META_EVERY_S - 60
+        if meta:
+            cats = [c for c in (cal.category(r) for r in self.supa.rpc(
+                "get_exec_calendar_categories", cal.CATEGORY_COLS, tag="calendar")) if c]
+            wins = [w for w in (cal.data_window(r) for r in self.supa.rpc(
+                "get_exec_calendar_data_windows", cal.WINDOW_COLS, tag="calendar")) if w]
+            categories, windows = cal.sort_categories(cats), cal.sort_windows(wins)
+        else:
+            categories, windows = st["categories"], st["windows"]
+        if full:
+            evs = self.supa.rpc("get_exec_calendar_events", cal.EVENT_COLS,
+                                {"p_from": first, "p_to": last}, tag="calendar")
+            events = cal.sort_events([e for e in (cal.event(r) for r in evs)
+                                      if e and cal.in_range(e, first, last)])
+        else:
+            events = st["events"]
+        # só depois de TODAS as leituras: uma que falhe não deixa o estado meio novo
+        if meta:
+            st.update(categories=categories, windows=windows, metaAt=self.generated_at)
+        if full:
+            st.update(events=events, fullAt=self.generated_at, range=[first, last])
+        st["probe"] = probe
+        out = {"from": first, "to": last, "updatedAt": probe["max"], "categories": categories,
+               "windows": windows, "events": events}
+        self._memo["calendar"] = out
+        return out

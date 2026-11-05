@@ -44,10 +44,10 @@ def test_config_forma_exata():
     src, _ = hunt_sources()
     c = config.build(src)
     assert list(c) == ["schemaVersion", "generatedAt", "flags", "exchanges", "heatmap",
-                       "commodityGroups"]
+                       "commodityGroups", "coveredCompanies"]
     assert c["schemaVersion"] == 1 and c["generatedAt"] == F.GENERATED
     assert c["flags"] == {"heatmap": True, "commodities": True, "market": False, "news_feed": False,
-                          "quarterly": True}
+                          "quarterly": True, "home_digest": True}
     hm = c["heatmap"]
     assert list(hm) == ["max", "groups", "coverage", "hidden", "benchmarkByExchange",
                         "benchmarkLabels"]
@@ -293,3 +293,23 @@ def test_loop_e_cli_dao_o_mesmo_arquivo():
     for b in (live.build, intraday.build, quotes_daily.build, config.build):
         assert content_hash(b(loop)) == content_hash(b(cli)), b.__module__
     assert http.supa_calls("quotes")                           # o CLI leu o banco
+
+
+def test_config_empresas_cobertas_do_classificador():
+    """Apêndice E.8: as 16 do `_PULSE_CO` (index.html:2268-2276), na ordem, com `code` (e não
+    `token`, chave proibida); o mesmo mapa que o resumo da hora usa (hunter/digest.py COV)."""
+    from hunter import digest
+    src, _ = hunt_sources()
+    cos = config.build(src)["coveredCompanies"]
+    assert [c["code"] for c in cos] == ["VALE", "CSN", "CMIN", "GERDAU", "USIMINAS", "TERNIUM",
+                                        "AURA", "SOUTHERN COPPER", "GRUPO MEXICO", "SUZANO",
+                                        "KLABIN", "IRANI", "CMPC", "COPEC", "ACLARA", "VIRIDIS"]
+    assert all(list(c) == ["code", "ticker", "quote", "desk"] for c in cos)
+    assert cos[0] == {"code": "VALE", "ticker": "VALE3", "quote": "VALE3.SA", "desk": "sm"}
+    assert {c["code"]: c["ticker"] for c in cos} == digest.COV
+    assert {c["desk"] for c in cos} == {"sm", "pp"}
+    assert [c["code"] for c in cos if c["desk"] == "pp"] == ["SUZANO", "KLABIN", "IRANI", "CMPC",
+                                                             "COPEC"]
+    # o ticker de cotação de toda coberta está no live.json (QUOTES_LIST): a coluna do Pulse e
+    # "Our names today" acham a variação do dia
+    assert [c["quote"] for c in cos if c["quote"] not in set(QUOTES_ORDER)] == []

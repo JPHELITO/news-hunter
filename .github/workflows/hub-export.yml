@@ -16,11 +16,15 @@ on:
   workflow_dispatch:
     inputs:
       files:
-        description: "Arquivos: all, ou lista (config,live,intraday,quotes-daily)"
+        description: "Arquivos: all, ou lista (config,live,intraday,quotes-daily,news-latest,news-digest,calendar,reports,news-week,news-index; uma semana: news-week-2026-w45)"
         type: string
         default: all
       force:
         description: "Ignorar hash e cadência (envia mesmo sem mudança)"
+        type: boolean
+        default: false
+      rebuild:
+        description: "Reler o banco em vez das cópias publicadas (depois de conserto manual de notícia)"
         type: boolean
         default: false
 
@@ -60,8 +64,10 @@ jobs:
           PYTHONIOENCODING:            utf-8
           HUB_FILES:                   ${{ inputs.files }}
           HUB_FORCE:                   ${{ inputs.force }}
+          HUB_REBUILD:                 ${{ inputs.rebuild }}
         run: |
           set -- --only "${HUB_FILES:-all}"
           if [ "$HUB_FORCE" = "true" ]; then set -- "$@" --force; fi
+          if [ "$HUB_REBUILD" = "true" ]; then set -- "$@" --rebuild; fi
           echo "rodando: python -m hub_export $*"
           python -m hub_export "$@"

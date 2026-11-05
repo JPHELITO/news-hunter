@@ -6,7 +6,8 @@
     "commodities": true,
     "market": false,
     "news_feed": false,
-    "quarterly": true
+    "quarterly": true,
+    "home_digest": true
   },
   "exchanges": {
     "B3": {
@@ -173,6 +174,104 @@
       "id": "77474b40-f8b1-4181-bc24-10a6413d5894",
       "title": "Iron Ore + Pellet",
       "codes": ["IRON_ORE", "IOPRM00"]
+    }
+  ],
+  "coveredCompanies": [
+    {
+      "code": "VALE",
+      "ticker": "VALE3",
+      "quote": "VALE3.SA",
+      "desk": "sm"
+    },
+    {
+      "code": "CSN",
+      "ticker": "CSNA3",
+      "quote": "CSNA3.SA",
+      "desk": "sm"
+    },
+    {
+      "code": "CMIN",
+      "ticker": "CMIN3",
+      "quote": "CMIN3.SA",
+      "desk": "sm"
+    },
+    {
+      "code": "GERDAU",
+      "ticker": "GGBR4",
+      "quote": "GGBR4.SA",
+      "desk": "sm"
+    },
+    {
+      "code": "USIMINAS",
+      "ticker": "USIM5",
+      "quote": "USIM5.SA",
+      "desk": "sm"
+    },
+    {
+      "code": "TERNIUM",
+      "ticker": "TX",
+      "quote": "TX",
+      "desk": "sm"
+    },
+    {
+      "code": "AURA",
+      "ticker": "AURA33",
+      "quote": "AURA33.SA",
+      "desk": "sm"
+    },
+    {
+      "code": "SOUTHERN COPPER",
+      "ticker": "SCCO",
+      "quote": "SCCO",
+      "desk": "sm"
+    },
+    {
+      "code": "GRUPO MEXICO",
+      "ticker": "GMEXICOB",
+      "quote": "GMEXICOB.MX",
+      "desk": "sm"
+    },
+    {
+      "code": "SUZANO",
+      "ticker": "SUZB3",
+      "quote": "SUZB3.SA",
+      "desk": "pp"
+    },
+    {
+      "code": "KLABIN",
+      "ticker": "KLBN11",
+      "quote": "KLBN11.SA",
+      "desk": "pp"
+    },
+    {
+      "code": "IRANI",
+      "ticker": "RANI3",
+      "quote": "RANI3.SA",
+      "desk": "pp"
+    },
+    {
+      "code": "CMPC",
+      "ticker": "CMPC",
+      "quote": "CMPC.SN",
+      "desk": "pp"
+    },
+    {
+      "code": "COPEC",
+      "ticker": "COPEC",
+      "quote": "COPEC.SN",
+      "desk": "pp"
+    },
+    {
+      "code": "ACLARA",
+      "ticker": "ARA",
+      "quote": "ARA.TO",
+      "desk": "sm"
+    },
+    {
+      "code": "VIRIDIS",
+      "ticker": "VMM",
+      "quote": "VMM.AX",
+      "desk": "sm"
     }
   ]
 }
