@@ -441,3 +441,20 @@ def test_regras_do_disco_viram_um_hash_estavel(tmp_path):
     h = N.rules_hash(tmp_path)
     assert h and h == N.rules_hash(tmp_path)
     assert N.rules_hash() is not None                       # as regras de verdade do repositório
+
+
+def test_cache_de_antes_de_um_filtro_mais_estrito_nao_publica_o_link_recusado(tmp_path):
+    p = tmp_path / "st.json"
+    run(F.FakeHTTP(), p)
+    np_ = N.news_state_path(p)
+    st = N.load_news(np_)
+    item = dict(st["rows"][F.U_SMM])
+    item["url"] = "https://mailerurl.mziq.com/ls/click?upn=destinatario"   # como se aceito antes
+    st["rows"][item["url"]] = item
+    N.save_news(np_, st)
+    res = run(F.FakeHTTP(), p, now=F.NOW + timedelta(minutes=5))
+    assert res["news-latest.json"].action == "igual"           # o item "aceito antes" não entra
+    out = tmp_path / "saida"
+    run(F.FakeHTTP(), p, now=F.NOW + timedelta(minutes=6), mode="out", out_dir=out, weeks=1)
+    for nome in ("news-latest.json", "news-week-2026-w45.json"):
+        assert b"mziq" not in gzip.decompress((out / nome).read_bytes()), nome

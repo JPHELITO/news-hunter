@@ -28,7 +28,7 @@ from hub_export import weeks as W  # noqa: E402
 from hub_export.exporters import calendar as cal  # noqa: E402
 from hub_export.exporters import news_common as NC  # noqa: E402
 from hub_export.exporters import news_reference as R  # noqa: E402
-from hub_export.urls import safe_url, scrub_text, url_problem  # noqa: E402
+from hub_export.urls import safe_url, url_problem  # noqa: E402
 
 
 def utc(s: str) -> datetime:
@@ -151,10 +151,45 @@ def test_url_ruim_vira_null(url, motivo):
     assert url_problem(url) == motivo and safe_url(url) is None
 
 
-def test_texto_livre_perde_so_os_links_recusados():
-    t = "Veja https://ri.vale.com/3q26 e https://abc.supabase.co/storage/v1/x.pdf (anexo)."
-    assert scrub_text(t) == "Veja https://ri.vale.com/3q26 e  (anexo)."
-    assert scrub_text(None) is None
+@pytest.mark.parametrize("url", [
+    # os três achados no calendário real (05/11): rastreio de clique e confirmação de inscrição
+    "https://mailerurl.mziq.com/ls/click?upn=u001.ABCDEF-2BXYZ",
+    "https://mail.closir.com/c/eJxckL2q3DAQhZ_G7mJGM9JIKlykiLlFuOSGQ",
+    "https://cloud.sfmc.itau.com.br/confirmacao_externa_prod?AttendanceType=1&CampaignID=9",
+    # o link de relatório copiado de um e-mail do Marketing Cloud (o sfmc_id é o destinatário)
+    "https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2815389c?sfmc_id=123&utm_source=sfmc",
+    "https://empresa.us21.list-manage.com/track/click?u=abc&id=def&e=0123456789",
+    "https://u123456.ct.sendgrid.net/ls/click?upn=XYZ", "https://url9999.empresa.com/ls/click?upn=Q",
+    "https://click.e.empresa.com/?qs=abc", "https://clicks.empresa.com/f/a/b",
+    "https://email.mg.empresa.com/c/eJyNkM1u", "https://empresa.com/track/click?id=1",
+    "https://d1abc04.na1.hubspotlinks.com/Ctc/I8+113/xyz", "https://empresa.com/e3t/Ctc/abc",
+    "https://www.empresa.com/artigo?_hsenc=p2ANqtz&_hsmi=12", "https://empresa.com/a?mkt_tok=MzQ5",
+    "https://empresa.com/a?mc_cid=1&mc_eid=abc", "https://empresa.com/a?elqTrackId=1&elq=abc",
+    "https://empresa.com/a?_ke=ZW1haWw", "https://r20.rs6.net/tn.jsp?f=001abc",
+    "https://empresa.createsend1.com/t/r-l-abc", "https://cl.exct.net/?qs=abc",
+    "https://mandrillapp.com/track/click/123", "https://empresa.cmail20.com/t/y-l-abc",
+    "https://empresa.com/#/artigo?sfmc_sub=1",
+])
+def test_rastreio_de_clique_de_email_e_marketing_vira_null(url):
+    assert url_problem(url) == "rastreio" and safe_url(url) is None
+
+
+@pytest.mark.parametrize("url", [
+    # os parâmetros e hosts que existem nas notícias reais (05/11) continuam passando
+    "https://valor.globo.com/empresas/noticia/2026/11/05/x.ghtml?utm_source=rss&utm_medium=feed"
+    "&utm_campaign=empresas",
+    "https://redir.folha.com.br/redir/online/mercado/rss091/*https://www1.folha.uol.com.br/x.shtml",
+    "https://www.rad.cvm.gov.br/ENETWEB/frmExibirArquivoIPEExterno.aspx?ID=1234567&flnk=1",
+    "https://www.ft.com/content/e89a420d-3a93-402f-ab0d-461476cf23ce?syn-25a6b1a6=1",
+    "https://www.steelradar.com/en/haber/kocaer?comment=1",
+    "https://www.chinapulppaper.com/component/content/article/sun-paper?catid=12",
+    "https://news.metal.com/newscontent/103581234", "https://www.clickpetroleoegas.com.br/noticia",
+    "https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2b7acd7a-579b-4602-82a1-021",
+    "https://us06web.zoom.us/webinar/register/WN_wqvadIMnSAW1Z7oeZJf",
+    "https://www.mail.com.br/noticia",                    # "mail." sem o redirecionador /c/
+])
+def test_link_normal_de_noticia_continua_passando(url):
+    assert url_problem(url) is None
 
 
 # ── 4) semanas ISO ──────────────────────────────────────────────────────────────────────────────

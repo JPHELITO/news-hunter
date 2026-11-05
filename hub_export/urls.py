@@ -1,14 +1,21 @@
-"""Filtro de URL de TODO link publicado (PLANO, Apêndice E; pesquisa 1b-dados §5).
+"""Filtro de URL de TODO link publicado (PLANO, Apêndice E; pesquisa 1b-dados §5): notícias, itens do
+resumo da hora e relatórios.
 
 O Mindassets é aberto a qualquer cliente. Os links das notícias vêm dos raspadores, mas os dos
-relatórios e do calendário são DIGITADOS pelo admin e podem apontar para SharePoint ou Storage
-com token de compartilhamento. Regra:
+relatórios são DIGITADOS pelo admin e podem apontar para SharePoint ou Storage com token de
+compartilhamento — ou ser copiados de um e-mail recebido pelo time. Regra:
   • só `http(s)`, com host, sem usuário/senha no endereço;
   • fora: endereço interno (Supabase/Storage, localhost, rede privada) e link com credencial
     na consulta ou no fragmento (`token=`, assinaturas, SAS do Azure, `X-Amz-*`, `X-Goog-*`…);
+  • fora também (revisão do orquestrador, 05/11/2026, sobre os links do calendário): link de
+    RASTREIO DE CLIQUE de e-mail e de marketing, que pode identificar QUEM recebeu o e-mail —
+    o redirecionador do provedor (`mailerurl.*`, `click.*`, `mail.closir.com/c/…`, Mailchimp
+    `*.list-manage.com`, SendGrid `/ls/click?upn=`, Salesforce Marketing Cloud `*.sfmc.*`,
+    HubSpot, Marketo, Eloqua…) e o parâmetro que carrega o destinatário (`upn`, `sfmc_id`,
+    `mc_eid`, `_hsenc`, `mkt_tok`, `elqTrackId`, `_ke`…). `utm_*` NÃO é rastreio de pessoa
+    (é campanha) e passa: os RSS das notícias trazem `utm_source=rss`;
   • link recusado vira `null` (a notícia sem link sai do arquivo — ver news_common).
-`url_problem` devolve o MOTIVO (estatística do log, nunca a URL); `safe_url` devolve o link ou
-None; `scrub_text` tira de um texto livre (descrição de evento) os links que não passariam.
+`url_problem` devolve o MOTIVO (estatística do log, nunca a URL); `safe_url` devolve o link ou None.
 """
 from __future__ import annotations
 
@@ -31,20 +38,39 @@ _INTERNAL_HOSTS = frozenset({"localhost", "supabase.co", "supabase.in", "supabas
 _INTERNAL_SUFFIXES = (".supabase.co", ".supabase.in", ".supabase.net", ".localhost", ".local",
                       ".internal", ".lan")
 _INTERNAL_PATHS = ("/storage/v1/", "/rest/v1/", "/auth/v1/", "/functions/v1/", "/realtime/v1/")
+
+# rastreio de clique de e-mail/marketing
+_TRACK_HOST_PREFIXES = ("mailerurl.", "click.", "clicks.", "trk.", "track.", "tracking.")
+_TRACK_HOSTS = frozenset({"mail.closir.com", "list-manage.com", "sendgrid.net", "mandrillapp.com",
+                          "hubspotlinks.com", "exct.net", "rs6.net"})
+_TRACK_SUFFIXES = (".list-manage.com", ".sendgrid.net", ".mandrillapp.com", ".hubspotlinks.com",
+                   ".exacttarget.com", ".exct.net", ".rs6.net", ".createsend1.com", ".pardot.com",
+                   ".eloqua.com", ".mktoedge.com")
+_TRACK_LABELS = frozenset({"sfmc"})                        # cloud.sfmc.itau.com.br, *.sfmc.*
+_TRACK_PATHS = ("/ls/click", "/wf/click", "/ss/c/", "/track/click", "/e3t/")
+_TRACK_PARAMS = frozenset({
+    "upn",                                 # SendGrid (o destinatário vai codificado)
+    "sfmc_id", "sfmc_sub", "sfmc_subscriberid", "subscriberkey",     # Salesforce Marketing Cloud
+    "mc_eid",                              # Mailchimp (id do assinante)
+    "_hsenc", "_hsmi",                     # HubSpot
+    "mkt_tok",                             # Marketo
+    "elqtrackid", "elqtrack", "elq",       # Eloqua
+    "_ke",                                 # Klaviyo (e-mail do destinatário)
+    "ss_email_id", "vero_id", "oly_enc_id", "subscriber_id", "subscriberid", "recipient_id"})
+_CMAIL = re.compile(r"(^|\.)cmail\d+\.com$")               # Campaign Monitor
 _BAD_CHARS = re.compile(r'[\x00-\x20\x7f<>"\\]')
-_TEXT_URL = re.compile(r"https?://[^\s<>\"'()\[\]{}]+", re.I)
 
 
-def _secret_keys(query: str) -> bool:
+def _keys(query: str) -> set[str] | None:
     try:
-        keys = {k.strip().lower() for k, _ in parse_qsl(query, keep_blank_values=True)}
+        return {k.strip().lower() for k, _ in parse_qsl(query, keep_blank_values=True)}
     except ValueError:
-        return True
-    for k in keys:
-        if (k in _SECRET_PARAMS or k.startswith(_SECRET_PREFIXES)
-                or any(p in k for p in _SECRET_PARTS)):
-            return True
-    return False
+        return None
+
+
+def _secret(keys: set[str]) -> bool:
+    return any(k in _SECRET_PARAMS or k.startswith(_SECRET_PREFIXES)
+               or any(p in k for p in _SECRET_PARTS) for k in keys)
 
 
 def _internal_host(host: str) -> bool:
@@ -55,6 +81,16 @@ def _internal_host(host: str) -> bool:
     except ValueError:
         return False
     return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified
+
+
+def _tracking(host: str, path: str, keys: set[str]) -> bool:
+    labels = host.split(".")
+    return (host in _TRACK_HOSTS or host.startswith(_TRACK_HOST_PREFIXES)
+            or host.endswith(_TRACK_SUFFIXES) or bool(_TRACK_LABELS & set(labels))
+            or bool(_CMAIL.search(host))
+            or any(p in path for p in _TRACK_PATHS)
+            or (labels[0] in ("mail", "email") and path.startswith("/c/"))   # Closir, Mailgun
+            or bool(keys & _TRACK_PARAMS))
 
 
 def url_problem(value) -> str | None:
@@ -80,21 +116,19 @@ def url_problem(value) -> str | None:
         return "credencial"
     if _internal_host(host):
         return "interno"
-    if any(p in parts.path.lower() for p in _INTERNAL_PATHS):
+    path = parts.path.lower()
+    if any(p in path for p in _INTERNAL_PATHS):
         return "storage"
     frag = parts.fragment.split("?", 1)[1] if "?" in parts.fragment else parts.fragment
-    if _secret_keys(parts.query) or ("=" in frag and _secret_keys(frag)):
+    keys = _keys(parts.query)
+    fkeys = _keys(frag) if "=" in frag else set()
+    if keys is None or fkeys is None or _secret(keys) or _secret(fkeys):
         return "credencial"
+    if _tracking(host, path, keys | fkeys):
+        return "rastreio"
     return None
 
 
 def safe_url(value) -> str | None:
     """O link (sem espaços nas pontas) se pode ser publicado; senão None."""
     return value.strip() if url_problem(value) is None else None
-
-
-def scrub_text(text):
-    """Texto livre sem os links http(s) que o filtro recusaria (o resto do texto fica igual)."""
-    if not isinstance(text, str):
-        return text
-    return _TEXT_URL.sub(lambda m: m.group(0) if url_problem(m.group(0)) is None else "", text)

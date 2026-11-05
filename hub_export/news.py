@@ -438,7 +438,8 @@ class NewsStore:
     # ── news-latest ─────────────────────────────────────────────────────────────────────────
     def latest_items(self) -> list[dict]:
         self.sync()
-        return sort_latest([dict(i) for i in self.rows.values() if self.in_latest(i)])
+        return sort_latest([dict(i) for i in self.rows.values()
+                            if self.in_latest(i) and not url_problem(i["url"])])
 
     # ── semanas ─────────────────────────────────────────────────────────────────────────────
     def week_labels(self, explicit=(), auto: bool = True) -> list[str]:
@@ -484,7 +485,10 @@ class NewsStore:
             return self.fresh[label]
         kind = self.plan.get(label) or ("cache" if label >= self.complete_from else "banco")
         if kind == "cache":
-            items = [week_item(i) for i in self.rows.values() if _bucket_label(i) == label]
+            # o filtro de URL de novo na montagem: um cache de antes de um filtro mais estrito
+            # (o runner vive ~5 h) não publica o link que ele passou a recusar
+            items = [week_item(i) for i in self.rows.values()
+                     if _bucket_label(i) == label and not url_problem(i["url"])]
         elif kind == "correção":
             items = self._patched(label)
         else:

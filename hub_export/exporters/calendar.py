@@ -6,15 +6,22 @@
               sortOrder, active}, por (sortOrder, name, id);
   dataWindows só as ativas: {id, sourceKey, label, fromDay, toDay, lagMonths, note}, por
               (fromDay, label, id);
-  events      só os visíveis; os NÃO recorrentes de 1º/jan do ano anterior até o fim do mês de
-              hoje + 18 meses (fim arredondado ao mês: o hash não muda todo dia); os recorrentes
-              SEMPRE, com a REGRA (`recurrence` com as chaves do banco — exceção ao camelCase
-              para o porte do calendar-lib.js ser 1:1; o exportador não expande ocorrências).
-              Horas em "HH:MM" de Brasília (`time` sem fuso no banco). `origin` = `source` do
-              banco ("b3" ou null = cadastrado à mão). Por (startDate, startTime, id).
-Fora do arquivo: `updated_by` (uuid de auth.users), `updated_at` de linha, `external_id`,
-`ics_seq`, `locked`, eventos ocultos. Links (`links[].url`) passam pelo filtro de URL; dentro da
-descrição, o link que o filtro recusaria é tirado do texto.
+  events      só os visíveis: {id, title, categoryId, startDate, endDate, allDay, startTime,
+              endTime, company, recurrence, origin}; os NÃO recorrentes de 1º/jan do ano anterior
+              até o fim do mês de hoje + 18 meses (fim arredondado ao mês: o hash não muda todo
+              dia); os recorrentes SEMPRE, com a REGRA (`recurrence` com as chaves do banco —
+              exceção ao camelCase para o porte do calendar-lib.js ser 1:1; o exportador não
+              expande ocorrências). Horas em "HH:MM" de Brasília (`time` sem fuso no banco).
+              `origin` = `source` do banco ("b3" ou null = cadastrado à mão). Por (startDate,
+              startTime, id).
+
+SEM TEXTO LIVRE (revisão do orquestrador, 05/11/2026): `location`, `description` e `links` dos
+eventos NÃO saem — nem são lidos do banco. São texto digitado pelo time, com links copiados de
+e-mails recebidos (rastreio de clique que identifica quem recebeu, confirmação de inscrição do
+Itaú). A Home não usa nenhum dos três; eles voltam na Onda 4 (página Calendar), com regra própria
+decidida com o usuário. O leitor do hub trata a ausência (`null` / `[]`).
+Fora do arquivo também: `updated_by` (uuid de auth.users), `updated_at` de linha, `external_id`,
+`ics_seq`, `locked`, eventos ocultos.
 
 Leitura (sources.py): sonda "contagem + max(updated_at)" dos visíveis a cada 15 min numa chamada
 só; leitura completa quando ela muda, na partida a frio, quando o intervalo vira o mês e uma vez
@@ -28,14 +35,17 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 from ..encode import iso_date, num
-from ..urls import safe_url, scrub_text
 
 TIMEZONE = "America/Sao_Paulo"
 BRT = timezone(timedelta(hours=-3))          # o Brasil não tem horário de verão desde 2019
 CATEGORY_COLS = "id,name,color,kind,sort_order,is_active"
 WINDOW_COLS = "id,source_key,label,from_day,to_day,lag_months,note,is_active"
 EVENT_COLS = ("id,title,category_id,start_date,end_date,all_day,start_time,end_time,company,"
-              "location,description,links,recurrence,source,is_visible")
+              "recurrence,source,is_visible")
+EVENT_KEYS = ("id", "title", "categoryId", "startDate", "endDate", "allDay", "startTime", "endTime",
+              "company", "recurrence", "origin")
+CATEGORY_KEYS = ("id", "name", "color", "kind", "sortOrder", "active")
+WINDOW_KEYS = ("id", "sourceKey", "label", "fromDay", "toDay", "lagMonths", "note")
 RECURRENCE_KEYS = ("freq", "interval", "byweekday", "bymonthday", "bysetpos", "until", "count",
                    "whole_week")
 MONTHS_AHEAD = 18
@@ -101,28 +111,18 @@ def recurrence(value) -> dict | None:
     return out or None
 
 
-def links(value) -> list[dict]:
-    if not isinstance(value, list):
-        return []
-    return [{"label": _text(o.get("label")), "url": safe_url(o.get("url"))}
-            for o in value if isinstance(o, dict)]
-
-
 def event(r: dict) -> dict | None:
     if r.get("is_visible") is not True or r.get("id") in (None, ""):
         return None
     title, start = _text(r.get("title")), iso_date(r.get("start_date"))
     if not title or not start:
         return None
-    desc = r.get("description")
     return {"id": str(r["id"]), "title": title,
             "categoryId": str(r["category_id"]) if r.get("category_id") not in (None, "") else None,
             "startDate": start, "endDate": iso_date(r.get("end_date")),
             "allDay": r["all_day"] if isinstance(r.get("all_day"), bool) else None,
             "startTime": hhmm(r.get("start_time")), "endTime": hhmm(r.get("end_time")),
-            "company": _text(r.get("company")), "location": _text(r.get("location")),
-            "description": _text(scrub_text(desc)) if isinstance(desc, str) else None,
-            "links": links(r.get("links")), "recurrence": recurrence(r.get("recurrence")),
+            "company": _text(r.get("company")), "recurrence": recurrence(r.get("recurrence")),
             "origin": _text(r.get("source"))}
 
 
@@ -146,6 +146,12 @@ def sort_events(items: list[dict]) -> list[dict]:
     return sorted(items, key=lambda e: (e["startDate"], e["startTime"] or "", e["id"]))
 
 
+def _only(items, keys) -> list[dict]:
+    """Campo a campo na montagem também: um cache de estado de uma versão anterior (com chaves que
+    deixaram de sair) nunca chega ao arquivo."""
+    return [{k: i.get(k) for k in keys} for i in items or [] if isinstance(i, dict)]
+
+
 def build(src) -> dict:
     cal = src.calendar()
     return {
@@ -155,7 +161,7 @@ def build(src) -> dict:
         "timezone": TIMEZONE,
         "from": cal["from"],
         "to": cal["to"],
-        "categories": cal["categories"],
-        "dataWindows": cal["windows"],
-        "events": cal["events"],
+        "categories": _only(cal["categories"], CATEGORY_KEYS),
+        "dataWindows": _only(cal["windows"], WINDOW_KEYS),
+        "events": _only(cal["events"], EVENT_KEYS),
     }

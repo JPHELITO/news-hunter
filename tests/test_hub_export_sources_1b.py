@@ -163,19 +163,47 @@ def test_calendario_forma_e_regras():
     assert [e["id"] for e in c["events"]] == ["e-2", "e-1", "e-5"]     # sem oculto e sem o antigo
     e1 = c["events"][1]
     assert list(e1) == ["id", "title", "categoryId", "startDate", "endDate", "allDay", "startTime",
-                        "endTime", "company", "location", "description", "links", "recurrence",
-                        "origin"]
+                        "endTime", "company", "recurrence", "origin"]
     assert (e1["startTime"], e1["origin"], e1["allDay"]) == ("08:00", "b3", False)
-    assert e1["links"] == [{"label": "Cronograma B3", "url": "https://www.b3.com.br/cronograma"},
-                           {"label": "anexo", "url": None}]               # Storage → null
-    assert "supabase" not in e1["description"] and "https://ri.vale.com/3q26" in e1["description"]
     assert c["events"][0]["recurrence"] == {"freq": "monthly", "interval": 1, "bymonthday": [5],
                                             "until": None}               # sem a chave de depuração
     sel = {c.table: c.params["select"] for c in http.supa_calls()}
     for t, s in sel.items():
         assert "updated_by" not in s and "external_id" not in s and "ics_seq" not in s, t
+        for livre in ("location", "description", "links"):          # nem lidos do banco
+            assert livre not in s.split(","), (t, livre)
     ev = next(c for c in http.supa_calls() if c.table == "rpc/get_exec_calendar_events")
     assert ev.data and b'"p_from": "2025-01-01"' in ev.data and b'"p_to": "2028-05-31"' in ev.data
+
+
+TEXTO_LIVRE = ("location", "description", "links")
+
+
+def test_eventos_nunca_levam_local_descricao_nem_links():
+    """Texto livre do time, com links copiados de e-mails recebidos (rastreio de clique que
+    identifica quem recebeu, confirmação de inscrição): fora até a Onda 4, que decide a regra."""
+    http = F.FakeHTTP()
+    for e in http.database["exec_calendar_events"]:
+        e.update(location="Sala 3", description="Inscrição: https://mailerurl.mziq.com/ls/click?upn=x",
+                 links=[{"label": "confirmar", "url":
+                         "https://cloud.sfmc.itau.com.br/confirmacao_externa_prod?CampaignID=1"},
+                        {"label": "webinar", "url": "https://mail.closir.com/c/eJxck"}])
+    src, _ = F.make_sources(http=http)
+    c = cal_exp.build(src)
+    assert c["events"] and all(k not in e for e in c["events"] for k in TEXTO_LIVRE)
+    texto = str(c)
+    for pedaco in ("mziq", "sfmc", "closir", "Sala 3", "Inscrição"):
+        assert pedaco not in texto
+    # um cache de estado de antes desta regra (com as 3 chaves) também não chega ao arquivo
+    st = S.empty_state()
+    src, _ = F.make_sources(state=st)
+    cal_exp.build(src)
+    for e in st["calendar"]["events"]:
+        e.update(location="Sala 3", description="velha", links=[{"label": "x", "url": "https://x.com"}])
+    src, http = F.make_sources(state=st, now=F.NOW + timedelta(minutes=15))
+    c = cal_exp.build(src)
+    assert "rpc/get_exec_calendar_events" not in cal_calls(http)      # veio do cache…
+    assert all(k not in e for e in c["events"] for k in TEXTO_LIVRE)  # …e saiu sem as 3 chaves
 
 
 def test_calendario_sonda_e_leitura_completa(tmp_path):
@@ -256,6 +284,25 @@ def test_categorias_e_janelas_a_cada_hora_e_leitura_que_falha_nao_estraga_o_esta
 
 
 # ── relatórios ──────────────────────────────────────────────────────────────────────────────────
+def test_relatorio_com_link_de_email_marketing_sai_sem_link():
+    http = F.FakeHTTP()
+    http.database["rpc_rows"]["reports"][0]["link"] = (
+        "https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2815389c?sfmc_id=123&utm_id=9")
+    src, _ = F.make_sources(http=http)
+    item = reports.build(src)["items"][0]
+    assert item["name"] == "Vale 3Q26: strong volumes" and item["link"] is None
+
+
+def test_resumo_relido_do_estado_passa_pelo_filtro_de_url_de_novo():
+    st = S.empty_state()
+    src, _ = F.make_sources(state=st)
+    news_digest.build(src)
+    st["digest"]["rows"][0]["items"][0]["url"] = "https://mailerurl.mziq.com/ls/click?upn=x"
+    src, http = F.make_sources(state=st, now=F.NOW + timedelta(minutes=1))   # fora da janela
+    w = news_digest.build(src)["windows"]
+    assert not http.supa_calls("news_digest") and w[0]["items"][0]["url"] is None
+
+
 def test_relatorios_so_pela_rpc():
     src, http = F.make_sources()
     obj = reports.build(src)

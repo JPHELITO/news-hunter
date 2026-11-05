@@ -53,9 +53,6 @@
       "startTime": null,
       "endTime": null,
       "company": null,
-      "location": null,
-      "description": null,
-      "links": [],
       "recurrence": {
         "freq": "monthly",
         "interval": 1,
@@ -74,18 +71,6 @@
       "startTime": "08:00",
       "endTime": null,
       "company": "VALE3.SA",
-      "location": null,
-      "description": "Detalhes em https://ri.vale.com/3q26 e o anexo",
-      "links": [
-        {
-          "label": "Cronograma B3",
-          "url": "https://www.b3.com.br/cronograma"
-        },
-        {
-          "label": "anexo",
-          "url": null
-        }
-      ],
       "recurrence": null,
       "origin": "b3"
     },
@@ -99,14 +84,6 @@
       "startTime": null,
       "endTime": null,
       "company": null,
-      "location": "São Paulo",
-      "description": null,
-      "links": [
-        {
-          "label": "Inscrição",
-          "url": "https://events.itaubba.com/mining"
-        }
-      ],
       "recurrence": null,
       "origin": null
     }

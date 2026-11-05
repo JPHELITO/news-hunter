@@ -66,7 +66,10 @@ def from_published(w) -> dict | None:
 
 
 def build(src) -> dict:
-    windows = src.digest_windows() if src.digest_enabled() else []
+    # cada janela passa de novo pela normalização (filtro de URL e lista branca dos itens): o que
+    # está no estado pode ter sido guardado antes de um filtro mais estrito
+    windows = ([w for w in (from_published(x) for x in src.digest_windows()) if w]
+               if src.digest_enabled() else [])
     return {
         "schemaVersion": 1,
         "generatedAt": src.generated_at,
