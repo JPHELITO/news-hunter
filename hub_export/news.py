@@ -53,11 +53,11 @@ from . import weeks as W
 from .encode import iso_utc
 from .exporters.news_common import (INCREMENTAL_COLS, NEWS_COLS, SWEEP_COLS, apply_mutable,
                                     bucket_iso, from_published, item_from_row, plain_iso,
-                                    sort_latest, sort_week, week_item)
+                                    publishable, sort_latest, sort_week, week_item)
 from .exporters.news_reference import pulse_window_start
 from .state import load as _load
 from .state import save as _save
-from .urls import url_problem
+from .urls import safe_url, url_problem
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +116,15 @@ def _floor_hour(d: datetime) -> datetime:
 def _quote(v: str) -> str:
     """Valor entre aspas para `in.(…)` do PostgREST (vírgula, parêntese e aspas no meio da URL)."""
     return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _key(url) -> str | None:
+    """A chave do cache = o link COMO É PUBLICADO (limpo do rastreio de e-mail), a mesma das
+    cópias publicadas que semeiam o cache; link recusado fica com o endereço cru. A leitura por
+    `url=in.(…)` usa sempre o endereço cru do banco."""
+    if not isinstance(url, str) or not url.strip():
+        return None
+    return safe_url(url) or url.strip()
 
 
 def _bucket_label(item: dict) -> str:
@@ -350,7 +359,7 @@ class NewsStore:
 
     def _upsert(self, row: dict) -> bool:
         item, prob = item_from_row(row)
-        url = row.get("url").strip() if isinstance(row.get("url"), str) else None
+        url = _key(row.get("url"))
         if item is None:
             self.dropped[prob] += 1
             if url:
@@ -392,9 +401,9 @@ class NewsStore:
                                    **{"or": f"(published_at.gte.{cut},found_at.gte.{cut})"})
         seen = {}
         for r in got:
-            u = r.get("url")
-            if isinstance(u, str) and u.strip():
-                seen[u.strip()] = r
+            k = _key(r.get("url"))
+            if k:
+                seen[k] = r
         removed = changed = 0
         for url, item in list(self.rows.items()):
             if ((item["publishedAt"] or "") >= cut or item["foundAt"] >= cut) and url not in seen:
@@ -411,12 +420,13 @@ class NewsStore:
         for u in [u for u in dropped if u not in seen]:
             del dropped[u]
         missing = []
-        for u in (u for u in seen if u not in self.rows):
-            prob = dropped.get(u) or (f"url {url_problem(u)}" if url_problem(u) else None)
+        for k in (k for k in seen if k not in self.rows):
+            raw = seen[k]["url"].strip()
+            prob = dropped.get(k) or (f"url {url_problem(raw)}" if url_problem(raw) else None)
             if prob:
                 self.dropped[prob] += 1
             else:
-                missing.append(u)
+                missing.append(raw)                      # o banco é lido pelo endereço cru
         added = 0
         for i in range(0, len(missing), URL_BATCH):
             batch = missing[i:i + URL_BATCH]
@@ -438,8 +448,8 @@ class NewsStore:
     # ── news-latest ─────────────────────────────────────────────────────────────────────────
     def latest_items(self) -> list[dict]:
         self.sync()
-        return sort_latest([dict(i) for i in self.rows.values()
-                            if self.in_latest(i) and not url_problem(i["url"])])
+        return sort_latest([p for p in (publishable(i) for i in self.rows.values()
+                                        if self.in_latest(i)) if p])
 
     # ── semanas ─────────────────────────────────────────────────────────────────────────────
     def week_labels(self, explicit=(), auto: bool = True) -> list[str]:
@@ -487,8 +497,8 @@ class NewsStore:
         if kind == "cache":
             # o filtro de URL de novo na montagem: um cache de antes de um filtro mais estrito
             # (o runner vive ~5 h) não publica o link que ele passou a recusar
-            items = [week_item(i) for i in self.rows.values()
-                     if _bucket_label(i) == label and not url_problem(i["url"])]
+            items = [week_item(p) for p in (publishable(i) for i in self.rows.values()
+                                            if _bucket_label(i) == label) if p]
         elif kind == "correção":
             items = self._patched(label)
         else:

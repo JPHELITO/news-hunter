@@ -156,22 +156,39 @@ def test_url_ruim_vira_null(url, motivo):
     "https://mailerurl.mziq.com/ls/click?upn=u001.ABCDEF-2BXYZ",
     "https://mail.closir.com/c/eJxckL2q3DAQhZ_G7mJGM9JIKlykiLlFuOSGQ",
     "https://cloud.sfmc.itau.com.br/confirmacao_externa_prod?AttendanceType=1&CampaignID=9",
-    # o link de relatório copiado de um e-mail do Marketing Cloud (o sfmc_id é o destinatário)
-    "https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2815389c?sfmc_id=123&utm_source=sfmc",
     "https://empresa.us21.list-manage.com/track/click?u=abc&id=def&e=0123456789",
     "https://u123456.ct.sendgrid.net/ls/click?upn=XYZ", "https://url9999.empresa.com/ls/click?upn=Q",
     "https://click.e.empresa.com/?qs=abc", "https://clicks.empresa.com/f/a/b",
     "https://email.mg.empresa.com/c/eJyNkM1u", "https://empresa.com/track/click?id=1",
     "https://d1abc04.na1.hubspotlinks.com/Ctc/I8+113/xyz", "https://empresa.com/e3t/Ctc/abc",
-    "https://www.empresa.com/artigo?_hsenc=p2ANqtz&_hsmi=12", "https://empresa.com/a?mkt_tok=MzQ5",
-    "https://empresa.com/a?mc_cid=1&mc_eid=abc", "https://empresa.com/a?elqTrackId=1&elq=abc",
-    "https://empresa.com/a?_ke=ZW1haWw", "https://r20.rs6.net/tn.jsp?f=001abc",
+    "https://r20.rs6.net/tn.jsp?f=001abc",
     "https://empresa.createsend1.com/t/r-l-abc", "https://cl.exct.net/?qs=abc",
     "https://mandrillapp.com/track/click/123", "https://empresa.cmail20.com/t/y-l-abc",
-    "https://empresa.com/#/artigo?sfmc_sub=1",
 ])
-def test_rastreio_de_clique_de_email_e_marketing_vira_null(url):
+def test_redirecionador_de_clique_de_email_e_descartado_inteiro(url):
+    """O endereço todo é o rastreio: não há o que limpar."""
     assert url_problem(url) == "rastreio" and safe_url(url) is None
+
+
+@pytest.mark.parametrize("url, limpo", [
+    # o relatório da Ternium (05/11): link do portal copiado de um e-mail do Marketing Cloud
+    ("https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2815389c-99c0?sfmc_id=123"
+     "&utm_source=sfmc&utm_medium=email&utm_campaign=x&utm_term=y&utm_id=9",
+     "https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2815389c-99c0"),
+    ("https://www.empresa.com/artigo?id=7&_hsenc=p2ANqtz&_hsmi=12&utm_medium=email",
+     "https://www.empresa.com/artigo?id=7"),                      # o que não é rastreio fica
+    ("https://empresa.com/a?mkt_tok=MzQ5", "https://empresa.com/a"),
+    ("https://empresa.com/a?mc_cid=1&mc_eid=abc", "https://empresa.com/a"),
+    ("https://empresa.com/a?elqTrackId=1&elq=abc&x=1", "https://empresa.com/a?x=1"),
+    ("https://empresa.com/a?_ke=ZW1haWw#topo", "https://empresa.com/a#topo"),
+    ("https://empresa.com/a?SFMC_SUB=1&Utm_Source=x", "https://empresa.com/a"),   # sem caixa
+    ("https://empresa.com/a?upn=abc&p=2&ss_email_id=9", "https://empresa.com/a?p=2"),
+    ("https://empresa.com/#/artigo?sfmc_sub=1&utm_source=x&p=2", "https://empresa.com/#/artigo?p=2"),
+    ("https://empresa.com/a?q=a%20b&sfmc_id=1&z=%C3%A9", "https://empresa.com/a?q=a%20b&z=%C3%A9"),
+])
+def test_link_normal_com_parametro_do_destinatario_fica_limpo(url, limpo):
+    assert url_problem(url) is None and safe_url(url) == limpo
+    assert safe_url(limpo) == limpo                               # limpar de novo não muda nada
 
 
 @pytest.mark.parametrize("url", [
@@ -187,9 +204,10 @@ def test_rastreio_de_clique_de_email_e_marketing_vira_null(url):
     "https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2b7acd7a-579b-4602-82a1-021",
     "https://us06web.zoom.us/webinar/register/WN_wqvadIMnSAW1Z7oeZJf",
     "https://www.mail.com.br/noticia",                    # "mail." sem o redirecionador /c/
+    "HTTPS://Exemplo.com/a?",                             # sem nada a tirar: byte a byte igual
 ])
 def test_link_normal_de_noticia_continua_passando(url):
-    assert url_problem(url) is None
+    assert url_problem(url) is None and safe_url(url) == url  # utm_* sem destinatário fica
 
 
 # ── 4) semanas ISO ──────────────────────────────────────────────────────────────────────────────

@@ -458,3 +458,30 @@ def test_cache_de_antes_de_um_filtro_mais_estrito_nao_publica_o_link_recusado(tm
     run(F.FakeHTTP(), p, now=F.NOW + timedelta(minutes=6), mode="out", out_dir=out, weeks=1)
     for nome in ("news-latest.json", "news-week-2026-w45.json"):
         assert b"mziq" not in gzip.decompress((out / nome).read_bytes()), nome
+
+
+def test_noticia_com_parametro_do_destinatario_sai_limpa_sem_duplicar(tmp_path):
+    """A chave do cache é o link publicado (limpo): a varredura não acha que a notícia sumiu nem
+    a relê, e a partida a frio sobre a cópia publicada não a duplica."""
+    from hub_export.exporters.news_common import news_id
+    cru = "https://www.mining.com/artigo-email/?id=9&sfmc_id=destinatario&utm_source=sfmc"
+    limpo = "https://www.mining.com/artigo-email/?id=9"
+    http = F.FakeHTTP()
+    http.database["news_articles"].append(row(cru, found="2026-11-03T17:00:00+00:00",
+                                              take_at="2026-11-03T17:01:00+00:00"))
+    p = tmp_path / "st.json"
+    run(http, p)
+    itens = [i for i in doc(http, "news-latest.json")["items"] if "artigo-email" in i["url"]]
+    assert [(i["url"], i["id"]) for i in itens] == [(limpo, news_id(limpo))]
+    assert "destinatario" not in str(doc(http, "news-week-2026-w45.json"))
+    h2 = F.FakeHTTP()
+    h2.database = http.database
+    run(h2, p, now=F.NOW + timedelta(hours=3, minutes=1))         # varredura de 80 h
+    assert "varredura" in kinds(h2) and "por url" not in kinds(h2)   # não a dá por nova
+    h3 = F.FakeHTTP(published={**http.uploads, **h2.uploads})
+    h3.database = http.database
+    out = tmp_path / "saida"
+    run(h3, tmp_path / "novo.json", now=F.NOW + timedelta(hours=3, minutes=5), mode="out",
+        out_dir=out, weeks=1)
+    lat = json.loads(gzip.decompress((out / "news-latest.json").read_bytes()))
+    assert sum(1 for i in lat["items"] if "artigo-email" in i["url"]) == 1

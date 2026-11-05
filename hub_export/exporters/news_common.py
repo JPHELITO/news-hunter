@@ -25,7 +25,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from ..encode import iso_utc
-from ..urls import url_problem
+from ..urls import safe_url, url_problem
 from .news_reference import desk, is_primary, label
 
 HIDE_PAID_SNIPPETS = True
@@ -113,7 +113,7 @@ def item_from_row(row: dict) -> tuple[dict | None, str | None]:
     dom = _domain(row.get("domain"))
     src = label(sn, dom)
     sector = _text(row.get("sector"))
-    url = url.strip()
+    url = safe_url(url)                     # o link como vai ao arquivo (já sem rastreio)
     item = {
         "id": news_id(url),
         "url": url,
@@ -155,7 +155,7 @@ def from_published(obj) -> dict | None:
     found = iso_utc(obj.get("foundAt"))
     if not found or not isinstance(obj.get("source"), str):
         return None
-    url = obj["url"].strip()
+    url = safe_url(obj["url"])
     out = {k: obj.get(k) for k in ITEM_KEYS}
     out.update(id=news_id(url), url=url, foundAt=found, publishedAt=iso_utc(obj.get("publishedAt")),
                primary=obj.get("primary") is True, take=take(obj.get("take")),
@@ -164,6 +164,18 @@ def from_published(obj) -> dict | None:
                snippet=_text(obj.get("snippet")), reason=_text(obj.get("reason")),
                domain=_domain(obj.get("domain")), sector=_text(obj.get("sector")))
     return out
+
+
+def publishable(item: dict) -> dict | None:
+    """O item do cache como vai ao arquivo: o filtro de URL de novo (um cache de antes de um
+    filtro mais estrito não publica o link que ele passou a recusar, e o link é limpo do
+    rastreio de e-mail, com o `id` refeito); None se o link agora é recusado."""
+    url = safe_url(item.get("url"))
+    if url is None:
+        return None
+    if url == item["url"]:
+        return dict(item)
+    return {**item, "url": url, "id": news_id(url)}
 
 
 def week_item(item: dict) -> dict:

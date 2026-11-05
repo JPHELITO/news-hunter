@@ -284,13 +284,18 @@ def test_categorias_e_janelas_a_cada_hora_e_leitura_que_falha_nao_estraga_o_esta
 
 
 # ── relatórios ──────────────────────────────────────────────────────────────────────────────────
-def test_relatorio_com_link_de_email_marketing_sai_sem_link():
+def test_relatorio_com_link_de_email_marketing_sai_com_o_link_limpo():
+    import hashlib
     http = F.FakeHTTP()
-    http.database["rpc_rows"]["reports"][0]["link"] = (
-        "https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2815389c?sfmc_id=123&utm_id=9")
+    rows = http.database["rpc_rows"]["reports"]
+    rows[0]["link"] = ("https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2815389c"
+                       "?sfmc_id=123&utm_source=sfmc&utm_id=9")
+    rows[2]["link"] = "https://mailerurl.mziq.com/ls/click?upn=abc"   # redirecionador: fora
     src, _ = F.make_sources(http=http)
-    item = reports.build(src)["items"][0]
-    assert item["name"] == "Vale 3Q26: strong volumes" and item["link"] is None
+    items = reports.build(src)["items"]
+    assert items[0]["link"] == "https://www.itau.com.br/itaubba-pt/portal/viewer/equity/2815389c"
+    assert items[2]["link"] is None and "sfmc" not in str(items) and "mziq" not in str(items)
+    assert items[0]["id"] == hashlib.sha1(rows[0]["link"].encode()).hexdigest()[:12]  # id estável
 
 
 def test_resumo_relido_do_estado_passa_pelo_filtro_de_url_de_novo():
@@ -298,9 +303,11 @@ def test_resumo_relido_do_estado_passa_pelo_filtro_de_url_de_novo():
     src, _ = F.make_sources(state=st)
     news_digest.build(src)
     st["digest"]["rows"][0]["items"][0]["url"] = "https://mailerurl.mziq.com/ls/click?upn=x"
+    st["digest"]["rows"][3]["items"][0]["url"] = F.U_CVM + "&sfmc_id=destinatario&utm_source=sfmc"
     src, http = F.make_sources(state=st, now=F.NOW + timedelta(minutes=1))   # fora da janela
     w = news_digest.build(src)["windows"]
     assert not http.supa_calls("news_digest") and w[0]["items"][0]["url"] is None
+    assert w[3]["items"][0]["url"] == F.U_CVM                         # limpo, sem o destinatário
 
 
 def test_relatorios_so_pela_rpc():

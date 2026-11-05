@@ -7,21 +7,25 @@ compartilhamento — ou ser copiados de um e-mail recebido pelo time. Regra:
   • só `http(s)`, com host, sem usuário/senha no endereço;
   • fora: endereço interno (Supabase/Storage, localhost, rede privada) e link com credencial
     na consulta ou no fragmento (`token=`, assinaturas, SAS do Azure, `X-Amz-*`, `X-Goog-*`…);
-  • fora também (revisão do orquestrador, 05/11/2026, sobre os links do calendário): link de
-    RASTREIO DE CLIQUE de e-mail e de marketing, que pode identificar QUEM recebeu o e-mail —
-    o redirecionador do provedor (`mailerurl.*`, `click.*`, `mail.closir.com/c/…`, Mailchimp
-    `*.list-manage.com`, SendGrid `/ls/click?upn=`, Salesforce Marketing Cloud `*.sfmc.*`,
-    HubSpot, Marketo, Eloqua…) e o parâmetro que carrega o destinatário (`upn`, `sfmc_id`,
-    `mc_eid`, `_hsenc`, `mkt_tok`, `elqTrackId`, `_ke`…). `utm_*` NÃO é rastreio de pessoa
-    (é campanha) e passa: os RSS das notícias trazem `utm_source=rss`;
+  • rastreio de e-mail e de marketing (revisão do orquestrador, 05/11/2026), que pode identificar
+    QUEM recebeu o e-mail:
+      – REDIRECIONADOR de clique do provedor (`mailerurl.*`, `click.*`, `mail.closir.com/c/…`,
+        Mailchimp `*.list-manage.com`, SendGrid `/ls/click`, Salesforce Marketing Cloud
+        `*.sfmc.*`, HubSpot, Eloqua, Campaign Monitor…): o endereço inteiro é o rastreio → fora;
+      – link NORMAL com parâmetro do destinatário (`upn`, `sfmc_*`, `mc_eid`, `_hsenc`, `_hsmi`,
+        `mkt_tok`, `elqTrackId`, `elq`, `_ke`, `ss_email_id`…): o link fica, LIMPO — saem esses
+        parâmetros e, junto, os de campanha do mesmo link (`utm_*`, `mc_cid`), para não sobrar
+        rastro do e-mail. `utm_*` de link SEM parâmetro de destinatário fica como está (os RSS das
+        notícias trazem `utm_source=rss`);
   • link recusado vira `null` (a notícia sem link sai do arquivo — ver news_common).
-`url_problem` devolve o MOTIVO (estatística do log, nunca a URL); `safe_url` devolve o link ou None.
+`url_problem` devolve o MOTIVO da recusa (estatística do log, nunca a URL) ou None; `safe_url`
+devolve o link como vai ao arquivo (já limpo) ou None. Limpar é idempotente.
 """
 from __future__ import annotations
 
 import ipaddress
 import re
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote_plus, urlsplit, urlunsplit
 
 MAX_LEN = 2048
 
@@ -39,7 +43,7 @@ _INTERNAL_SUFFIXES = (".supabase.co", ".supabase.in", ".supabase.net", ".localho
                       ".internal", ".lan")
 _INTERNAL_PATHS = ("/storage/v1/", "/rest/v1/", "/auth/v1/", "/functions/v1/", "/realtime/v1/")
 
-# rastreio de clique de e-mail/marketing
+# redirecionadores de clique de e-mail/marketing: o endereço inteiro é o rastreio
 _TRACK_HOST_PREFIXES = ("mailerurl.", "click.", "clicks.", "trk.", "track.", "tracking.")
 _TRACK_HOSTS = frozenset({"mail.closir.com", "list-manage.com", "sendgrid.net", "mandrillapp.com",
                           "hubspotlinks.com", "exct.net", "rs6.net"})
@@ -48,16 +52,21 @@ _TRACK_SUFFIXES = (".list-manage.com", ".sendgrid.net", ".mandrillapp.com", ".hu
                    ".eloqua.com", ".mktoedge.com")
 _TRACK_LABELS = frozenset({"sfmc"})                        # cloud.sfmc.itau.com.br, *.sfmc.*
 _TRACK_PATHS = ("/ls/click", "/wf/click", "/ss/c/", "/track/click", "/e3t/")
-_TRACK_PARAMS = frozenset({
-    "upn",                                 # SendGrid (o destinatário vai codificado)
-    "sfmc_id", "sfmc_sub", "sfmc_subscriberid", "subscriberkey",     # Salesforce Marketing Cloud
+_CMAIL = re.compile(r"(^|\.)cmail\d+\.com$")               # Campaign Monitor
+# parâmetros que carregam o DESTINATÁRIO (link normal: saem, e o link fica)
+_RECIPIENT_PARAMS = frozenset({
+    "upn",                                 # SendGrid
+    "subscriberkey",                       # Salesforce Marketing Cloud (e todo `sfmc_*`)
     "mc_eid",                              # Mailchimp (id do assinante)
     "_hsenc", "_hsmi",                     # HubSpot
     "mkt_tok",                             # Marketo
     "elqtrackid", "elqtrack", "elq",       # Eloqua
     "_ke",                                 # Klaviyo (e-mail do destinatário)
     "ss_email_id", "vero_id", "oly_enc_id", "subscriber_id", "subscriberid", "recipient_id"})
-_CMAIL = re.compile(r"(^|\.)cmail\d+\.com$")               # Campaign Monitor
+_RECIPIENT_PREFIXES = ("sfmc_",)
+# de campanha: saem JUNTO, só quando o link tem parâmetro de destinatário
+_CAMPAIGN_PARAMS = frozenset({"mc_cid"})
+_CAMPAIGN_PREFIXES = ("utm_",)
 _BAD_CHARS = re.compile(r'[\x00-\x20\x7f<>"\\]')
 
 
@@ -73,6 +82,10 @@ def _secret(keys: set[str]) -> bool:
                or any(p in k for p in _SECRET_PARTS) for k in keys)
 
 
+def _recipient(key: str) -> bool:
+    return key in _RECIPIENT_PARAMS or key.startswith(_RECIPIENT_PREFIXES)
+
+
 def _internal_host(host: str) -> bool:
     if host in _INTERNAL_HOSTS or host.endswith(_INTERNAL_SUFFIXES):
         return True
@@ -83,52 +96,85 @@ def _internal_host(host: str) -> bool:
     return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified
 
 
-def _tracking(host: str, path: str, keys: set[str]) -> bool:
+def _redirector(host: str, path: str) -> bool:
     labels = host.split(".")
     return (host in _TRACK_HOSTS or host.startswith(_TRACK_HOST_PREFIXES)
             or host.endswith(_TRACK_SUFFIXES) or bool(_TRACK_LABELS & set(labels))
             or bool(_CMAIL.search(host))
             or any(p in path for p in _TRACK_PATHS)
-            or (labels[0] in ("mail", "email") and path.startswith("/c/"))   # Closir, Mailgun
-            or bool(keys & _TRACK_PARAMS))
+            or (labels[0] in ("mail", "email") and path.startswith("/c/")))   # Closir, Mailgun
 
 
-def url_problem(value) -> str | None:
-    """None se o link pode ir ao arquivo público; senão o motivo (curto, sem a URL)."""
+def _clean_query(query: str) -> str:
+    """A consulta sem os parâmetros do destinatário — e, se havia algum, sem os de campanha.
+    Mexe só nos pedaços que saem: os outros ficam com a grafia (e a ordem) de antes."""
+    parts = [p for p in query.split("&") if p]
+    names = [unquote_plus(p.split("=", 1)[0]).strip().lower() for p in parts]
+    if not any(_recipient(n) for n in names):
+        return query
+    keep = [p for p, n in zip(parts, names)
+            if not (_recipient(n) or n in _CAMPAIGN_PARAMS or n.startswith(_CAMPAIGN_PREFIXES))]
+    return "&".join(keep)
+
+
+def _clean(u: str, parts) -> str:
+    """O link sem os parâmetros do destinatário; sem nada a tirar, EXATAMENTE como veio."""
+    query = _clean_query(parts.query)
+    frag = parts.fragment
+    if "?" in frag:
+        head, tail = frag.split("?", 1)
+        tail = _clean_query(tail)
+        frag = f"{head}?{tail}" if tail else head
+    elif "=" in frag:
+        frag = _clean_query(frag)
+    if query == parts.query and frag == parts.fragment:
+        return u
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, frag))
+
+
+def _check(value):
+    """(motivo da recusa, link limpo): exatamente um dos dois é None."""
     if not isinstance(value, str) or not value.strip():
-        return "vazio"
+        return "vazio", None
     u = value.strip()
     if len(u) > MAX_LEN:
-        return "longo"
+        return "longo", None
     if _BAD_CHARS.search(u):
-        return "caractere inválido"
+        return "caractere inválido", None
     try:
         parts = urlsplit(u)
         host = (parts.hostname or "").lower()
         _ = parts.port                      # porta inválida levanta ValueError
     except ValueError:
-        return "malformado"
+        return "malformado", None
     if parts.scheme.lower() not in ("http", "https"):
-        return "esquema"
+        return "esquema", None
     if not host:
-        return "sem host"
+        return "sem host", None
     if parts.username is not None or parts.password is not None:
-        return "credencial"
+        return "credencial", None
     if _internal_host(host):
-        return "interno"
+        return "interno", None
     path = parts.path.lower()
     if any(p in path for p in _INTERNAL_PATHS):
-        return "storage"
+        return "storage", None
     frag = parts.fragment.split("?", 1)[1] if "?" in parts.fragment else parts.fragment
     keys = _keys(parts.query)
     fkeys = _keys(frag) if "=" in frag else set()
     if keys is None or fkeys is None or _secret(keys) or _secret(fkeys):
-        return "credencial"
-    if _tracking(host, path, keys | fkeys):
-        return "rastreio"
-    return None
+        return "credencial", None
+    if _redirector(host, path):
+        return "rastreio", None
+    return None, _clean(u, parts)
+
+
+def url_problem(value) -> str | None:
+    """None se o link pode ir ao arquivo público (talvez depois de limpo); senão o motivo
+    (curto, sem a URL)."""
+    return _check(value)[0]
 
 
 def safe_url(value) -> str | None:
-    """O link (sem espaços nas pontas) se pode ser publicado; senão None."""
-    return value.strip() if url_problem(value) is None else None
+    """O link como vai ao arquivo: sem espaços nas pontas e sem os parâmetros do destinatário
+    (e os de campanha que vieram com eles); None se recusado."""
+    return _check(value)[1]
