@@ -342,3 +342,33 @@ def test_relatorios_id_setor_link_e_data():
     assert len({i["id"] for i in items}) == 3                  # chave repetida ganha id próprio
     import hashlib
     assert items[0]["id"] == hashlib.sha1(b"https://x.com/a.pdf").hexdigest()[:12]
+
+
+# ── publishedAt no futuro (regra do orquestrador, 05/11) ───────────────────────────────────────
+@pytest.mark.parametrize("pub, esperado", [
+    ("2026-12-07T13:00:00+00:00", None),                        # Northern Miner: 6 semanas depois
+    ("2026-11-03T19:00:01+00:00", None),                        # 1 h e 1 s depois do foundAt
+    ("2026-11-03T19:00:00+00:00", "2026-11-03T19:00:00Z"),      # exatamente 1 h: fica
+    ("2026-11-03T12:00:00+00:00", "2026-11-03T12:00:00Z"),      # normal: intacto
+    ("2026-10-01T00:00:00+00:00", "2026-10-01T00:00:00Z"),      # muito antiga: FICA (data dela)
+    (None, None),
+])
+def test_published_at_no_futuro_sai_null(pub, esperado):
+    item, _ = NC.item_from_row(_row(published_at=pub, found_at="2026-11-03T18:00:00+00:00"))
+    assert item["publishedAt"] == esperado
+    assert item["foundAt"] == "2026-11-03T18:00:00Z"
+    if pub and esperado is None:                                 # a data efetiva vira o foundAt
+        assert NC.plain_iso(item) == NC.bucket_iso(item) == "2026-11-03T18:00:00Z"
+    if pub == "2026-10-01T00:00:00+00:00":                       # a semana segue pelo foundAt
+        assert NC.plain_iso(item) == "2026-10-01T00:00:00Z"
+        assert NC.bucket_iso(item) == "2026-11-03T18:00:00Z"
+
+
+def test_published_at_no_futuro_vale_tambem_para_copia_publicada_e_cache():
+    base, _ = NC.item_from_row(_row(found_at="2026-10-26T21:33:57+00:00"))
+    velho = {**base, "publishedAt": "2026-12-07T13:00:00Z"}     # montado antes da regra
+    assert NC.from_published(velho)["publishedAt"] is None
+    assert NC.publishable(velho)["publishedAt"] is None
+    antigo = {**base, "publishedAt": "2026-09-01T00:00:00Z"}
+    assert NC.from_published(antigo)["publishedAt"] == "2026-09-01T00:00:00Z"
+    assert NC.publishable(antigo)["publishedAt"] == "2026-09-01T00:00:00Z"

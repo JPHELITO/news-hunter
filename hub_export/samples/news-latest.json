@@ -28,7 +28,7 @@
       "source": "Mining.com",
       "domain": "mining.com",
       "primary": false,
-      "publishedAt": "2026-11-05T10:00:00Z",
+      "publishedAt": null,
       "foundAt": "2026-11-03T15:00:00Z",
       "take": "+",
       "sector": "mining",

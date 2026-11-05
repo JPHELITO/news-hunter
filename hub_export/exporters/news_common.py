@@ -9,6 +9,11 @@
 • `take` é o da IA (`take_llm`); `null` = pendente. O take do robô nunca é publicado.
 • `snippet`: sem tags, espaços normalizados, até 200 caracteres; `null` se vazio ou de FONTE PAGA.
 • datas normalizadas aqui (ISO UTC `Z`), antes de qualquer filtro ou comparação.
+• `publishedAt` mais de 1 h DEPOIS do `foundAt` (data no futuro) sai `null` e a data efetiva passa
+  a ser o `foundAt` (regra do orquestrador, 05/11/2026: uma notícia da Northern Miner com data de
+  07/12 abria o feed da News com "agora" e esticava o período até dezembro). É a mesma
+  tolerância da semana. O `publishedAt` muito ANTIGO (< `foundAt` − 8 dias) fica como está: é
+  notícia antiga achada tarde, e o site a mostra pela data dela (só a semana usa o `foundAt`).
 
 FONTES PAGAS (decisão DEFINITIVA do usuário, 05/11/2026: "só o título"): notícia de fonte
 coletada COM ASSINATURA vai só com o título, `snippet: null`. São as dos raspadores com login
@@ -97,6 +102,13 @@ def _domain(value):
     return d[4:] if d.startswith("www.") else d
 
 
+def published_at(published, found):
+    """`publishedAt` como sai no item: None quando está mais de 1 h depois do `foundAt`."""
+    if published and found and _dt(published) > _dt(found) + WEIRD_AHEAD:
+        return None
+    return published
+
+
 def item_from_row(row: dict) -> tuple[dict | None, str | None]:
     """(item, None) ou (None, motivo) — motivo curto para a estatística do log."""
     url = row.get("url")
@@ -121,7 +133,7 @@ def item_from_row(row: dict) -> tuple[dict | None, str | None]:
         "source": src,
         "domain": dom,
         "primary": is_primary(sn),
-        "publishedAt": iso_utc(row.get("published_at")),
+        "publishedAt": published_at(iso_utc(row.get("published_at")), found),
         "foundAt": found,
         "take": take(row.get("take_llm")),
         "sector": sector,
@@ -157,7 +169,8 @@ def from_published(obj) -> dict | None:
         return None
     url = safe_url(obj["url"])
     out = {k: obj.get(k) for k in ITEM_KEYS}
-    out.update(id=news_id(url), url=url, foundAt=found, publishedAt=iso_utc(obj.get("publishedAt")),
+    out.update(id=news_id(url), url=url, foundAt=found,
+               publishedAt=published_at(iso_utc(obj.get("publishedAt")), found),
                primary=obj.get("primary") is True, take=take(obj.get("take")),
                desk=obj.get("desk") if obj.get("desk") in ("sm", "pp", "nr") else "nr",
                companies=split_list(obj.get("companies")), topics=split_list(obj.get("topics")),
@@ -167,15 +180,18 @@ def from_published(obj) -> dict | None:
 
 
 def publishable(item: dict) -> dict | None:
-    """O item do cache como vai ao arquivo: o filtro de URL de novo (um cache de antes de um
-    filtro mais estrito não publica o link que ele passou a recusar, e o link é limpo do
-    rastreio de e-mail, com o `id` refeito); None se o link agora é recusado."""
+    """O item do cache como vai ao arquivo, com as regras de montagem de AGORA (um cache de antes
+    de uma regra nova não a escapa): o filtro de URL de novo (o link recusado não sai; o link é
+    limpo do rastreio de e-mail, com o `id` refeito) e o `publishedAt` no futuro anulado. None se
+    o link agora é recusado."""
     url = safe_url(item.get("url"))
     if url is None:
         return None
-    if url == item["url"]:
-        return dict(item)
-    return {**item, "url": url, "id": news_id(url)}
+    out = dict(item)
+    if url != item["url"]:
+        out.update(url=url, id=news_id(url))
+    out["publishedAt"] = published_at(item.get("publishedAt"), item.get("foundAt"))
+    return out
 
 
 def week_item(item: dict) -> dict:

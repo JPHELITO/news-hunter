@@ -32,8 +32,9 @@ POR EXECUÇÃO (sync, 1×):
 SEMANAS (COLD):
   • completas (anterior e corrente): montadas do cache; vão só quando mudaram;
   • antigas: correções do incremental/varredura e da conferência diária aplicadas sobre a cópia
-    publicada; a conferência (05 UTC) compara, por semana, a contagem do banco pela data efetiva
-    (HEAD, ~0,75 KB) com a das cópias publicadas e relê só a fatia que divergiu;
+    publicada; a conferência (05 UTC) regrava a cópia que uma REGRA NOVA de montagem mudaria (sem
+    ler o banco) e compara, por semana, a contagem do banco pelo `found_at` (HEAD, ~0,75 KB) com
+    a das cópias publicadas, relendo só a fatia que divergiu;
   • carga inicial desde 2026-w23 aos poucos: no máximo 2 por hora (da mais nova para a mais antiga)
     e até 300 KB de Supabase por estado — medido em 05/11: ~167 KB por semana, então 2 semanas por
     runner, ≈ 1,4 MB/dia com ~4 runners por dia (as 21 semanas antigas em ~2,5 dias, sem passar
@@ -52,8 +53,8 @@ from pathlib import Path
 from . import weeks as W
 from .encode import iso_utc
 from .exporters.news_common import (INCREMENTAL_COLS, NEWS_COLS, SWEEP_COLS, apply_mutable,
-                                    bucket_iso, from_published, item_from_row, plain_iso,
-                                    publishable, sort_latest, sort_week, week_item)
+                                    bucket_iso, from_published, item_from_row, publishable,
+                                    sort_latest, sort_week, week_item)
 from .exporters.news_reference import pulse_window_start
 from .state import load as _load
 from .state import save as _save
@@ -131,8 +132,8 @@ def _bucket_label(item: dict) -> str:
     return W.label_of(_dt(bucket_iso(item)))
 
 
-def _plain_label(item: dict) -> str:
-    return W.label_of(_dt(plain_iso(item)))
+def _found_label(item: dict) -> str:
+    return W.label_of(_dt(item["foundAt"]))
 
 
 def rules_hash(hunter_dir: Path = HUNTER_DIR) -> str | None:
@@ -585,64 +586,83 @@ class NewsStore:
 
     # ── conferência diária das semanas antigas ──────────────────────────────────────────────
     def _audit(self, plan: dict) -> None:
+        """1×/dia (05 UTC), sobre as cópias PUBLICADAS das semanas antigas (Mindassets, 0 Supabase):
+        (1) REGRA NOVA DE MONTAGEM: cópia que muda quando normalizada pelas regras de agora (ex.:
+            o `publishedAt` no futuro anulado, o link limpo do rastreio) é regravada sobre ela
+            mesma — sem reler o banco;
+        (2) CONTAGEM: por semana, as linhas incluídas com `found_at` na semana (uma HEAD, ~0,75 KB)
+            contra as das cópias publicadas + o cache. `found_at` é o carimbo que nenhuma regra
+            de montagem muda. Linha publicada antes do início do arquivo não entra dos DOIS lados
+            (fica fora de toda semana: a de data antiga achada no começo do feed). Divergiu →
+            relê a fatia e corrige onde cada linha mora. Só com a carga inicial completa."""
         if self.mode not in ("send", "dry") or self.pub is None or self.now.hour != AUDIT_HOUR:
             return
         today = self.now.date().isoformat()
         if self.st["audit"].get("day") == today:
             return
         cf = self.complete_from
-        old = [lab for lab in W.span(self.first_week, W.shift(cf, -1))]
-        if not old or any(lab not in self.registry for lab in old):
-            return                                       # carga inicial incompleta: amanhã
-        docs = {}
-        for lab in old:
+        old = W.span(self.first_week, W.shift(cf, -1))
+        docs, drift = {}, []
+        for lab in (lab for lab in old if lab in self.registry):
             doc = self._doc(W.file_name(lab))
             if doc is None:
                 return                                   # Mindassets fora: tenta no próximo ciclo
-            docs[lab] = [it for it in (from_published(o) for o in doc.get("items") or []) if it]
+            items = [it for it in (from_published(o) for o in doc.get("items") or []) if it]
+            docs[lab] = items
+            if sort_week([week_item(it) for it in items]) != [o for o in doc.get("items") or []]:
+                drift.append(lab)
+                plan.setdefault(lab, "correção")
+        if any(lab not in self.registry for lab in old):
+            self.st["audit"]["day"] = today              # carga inicial incompleta: só a regra
+            self.notes.append(f"conferência: regra nova em {', '.join(drift) or 'nenhuma'}")
+            return
+        first = _iso(W.start(self.first_week))
+
+        def counted(it) -> bool:
+            return it["publishedAt"] is None or it["publishedAt"] >= first
         ref = Counter()
         for items in docs.values():
             for it in items:
-                ref[_plain_label(it)] += 1
+                if counted(it):
+                    ref[_found_label(it)] += 1
         cfs = _iso(W.start(cf))
         for it in self.rows.values():
-            if bucket_iso(it) >= cfs:
-                ref[_plain_label(it)] += 1
+            if bucket_iso(it) >= cfs and counted(it):
+                ref[_found_label(it)] += 1
         wrong = []
         for lab in old:
             s, e = _iso(W.start(lab)), _iso(W.end(lab))
             n = self.supa.count(
                 "news_articles", "url", tag="news:conferência", include_in_report="eq.true",
-                **{"or": f"(and(published_at.gte.{s},published_at.lt.{e}),"
-                         f"and(published_at.is.null,found_at.gte.{s},found_at.lt.{e}))"})
+                **{"and": f"(found_at.gte.{s},found_at.lt.{e},"
+                          f"or(published_at.is.null,published_at.gte.{first}))"})
             if n is not None and n != ref[lab]:
                 wrong.append(lab)
         for lab in wrong[:AUDIT_FIX_PER_RUN]:
             self._audit_fix(lab, docs, plan)
         if len(wrong) <= AUDIT_FIX_PER_RUN:
             self.st["audit"]["day"] = today
-        self.notes.append(f"conferência: {len(old)} semanas, divergentes {', '.join(wrong) or 'nenhuma'}")
+        self.notes.append(f"conferência: {len(old)} semanas, regra nova em "
+                          f"{', '.join(drift) or 'nenhuma'}, divergentes {', '.join(wrong) or 'nenhuma'}")
 
     def _audit_fix(self, label: str, docs: dict, plan: dict) -> None:
-        """Relê do banco a fatia de `label` (data efetiva na semana) e corrige onde ela mora."""
+        """Relê do banco as linhas ACHADAS na semana `label` e corrige onde cada uma mora."""
         s, e = _iso(W.start(label)), _iso(W.end(label))
-        got = self.supa.select_all(
-            "news_articles", NEWS_COLS, order="url.asc", tag="news:conferência",
-            include_in_report="eq.true",
-            **{"or": f"(and(published_at.gte.{s},published_at.lt.{e}),"
-                     f"and(published_at.is.null,found_at.gte.{s},found_at.lt.{e}))"})
+        got = self.supa.select_all("news_articles", NEWS_COLS, order="url.asc",
+                                   tag="news:conferência", include_in_report="eq.true",
+                                   **{"and": f"(found_at.gte.{s},found_at.lt.{e})"})
         fresh = {}
         for r in got:
-            item, prob = item_from_row(r)
-            if item is not None and _plain_label(item) == label:
+            item, _prob = item_from_row(r)
+            if item is not None:
                 fresh[item["url"]] = item
         cfs = _iso(W.start(self.complete_from))
         for lab, items in docs.items():
             for it in items:
-                if _plain_label(it) == label and it["url"] not in fresh:
+                if _found_label(it) == label and it["url"] not in fresh:
                     self._pending_op(lab, it["url"], None)
         for url, it in list(self.rows.items()):
-            if _plain_label(it) == label and bucket_iso(it) >= cfs and url not in fresh:
+            if _found_label(it) == label and bucket_iso(it) >= cfs and url not in fresh:
                 del self.rows[url]
         for url, it in fresh.items():
             if bucket_iso(it) >= cfs:

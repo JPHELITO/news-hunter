@@ -485,3 +485,66 @@ def test_noticia_com_parametro_do_destinatario_sai_limpa_sem_duplicar(tmp_path):
         out_dir=out, weeks=1)
     lat = json.loads(gzip.decompress((out / "news-latest.json").read_bytes()))
     assert sum(1 for i in lat["items"] if "artigo-email" in i["url"]) == 1
+
+
+def test_publicado_no_futuro_sai_null_e_continua_na_semana_e_na_janela_pelo_found(tmp_path):
+    http = F.FakeHTTP()
+    run(http, tmp_path / "st.json")
+    lat = {i["url"]: i for i in doc(http, "news-latest.json")["items"]}
+    w45 = {i["url"]: i for i in doc(http, "news-week-2026-w45.json")["items"]}
+    for d in (lat, w45):                                       # U_FUTURE: publicada em 05/11,
+        assert d[F.U_FUTURE]["publishedAt"] is None              # achada em 03/11 15:00
+        assert d[F.U_FUTURE]["foundAt"] == "2026-11-03T15:00:00Z"
+        assert d[F.U_OLDPUB]["publishedAt"] == "2026-09-01T00:00:00Z"   # antiga: fica
+        assert d[F.U_GNEWS]["publishedAt"] == "2026-11-03T12:00:00Z"    # normal: intacta
+    assert urls(doc(http, "news-week-2026-w45.json")) == F.WEEK_URLS[F.WEEK_CUR]  # mesma ordem
+
+
+def test_cache_de_antes_da_regra_sai_com_a_regra(tmp_path):
+    p = tmp_path / "st.json"
+    run(F.FakeHTTP(), p)
+    np_ = N.news_state_path(p)
+    st = N.load_news(np_)
+    st["rows"][F.U_FUTURE]["publishedAt"] = "2026-11-05T10:00:00Z"   # como era montado antes
+    N.save_news(np_, st)
+    out = tmp_path / "saida"
+    run(F.FakeHTTP(), p, now=F.NOW + timedelta(minutes=5), mode="out", out_dir=out, weeks=1)
+    for nome in ("news-latest.json", "news-week-2026-w45.json"):
+        itens = json.loads(gzip.decompress((out / nome).read_bytes()))["items"]
+        assert next(i for i in itens if i["url"] == F.U_FUTURE)["publishedAt"] is None, nome
+
+
+def test_conferencia_regrava_semana_antiga_com_regra_nova_sem_ler_o_banco(tmp_path):
+    """A semana 43 foi publicada com um publishedAt no futuro (regra de antes): na conferência
+    das 05 UTC, a cópia publicada é normalizada pelas regras de agora e regravada sobre ela
+    mesma; nem a fatia da semana é relida (a contagem por found_at bate)."""
+    p = tmp_path / "st.json"
+    primeiro = F.FakeHTTP()
+    run(primeiro, p)
+    copia = json.loads(gzip.decompress(primeiro.uploads["news-week-2026-w43.json"]))
+    copia["items"][0]["publishedAt"] = "2026-12-07T13:00:00Z"   # Northern Miner na semana antiga
+    pub = {**primeiro.uploads, "news-week-2026-w43.json": gzip.compress(json.dumps(copia).encode())}
+    http = F.FakeHTTP(published=pub)
+    res = run(http, p, now=utc("2026-11-04T05:10:00Z"))
+    assert res["news-week-2026-w43.json"].action == "enviado"
+    item = doc(http, "news-week-2026-w43.json")["items"][0]
+    assert item["publishedAt"] is None and item["foundAt"] == "2026-10-21T10:30:00Z"   # a regra
+    assert "semana" not in kinds(http)                            # não releu a semana do banco
+    assert kinds(http).count("contagem") == 1                     # uma HEAD por semana antiga
+
+
+def test_conferencia_por_found_at_ignora_linha_de_antes_do_arquivo(tmp_path):
+    """Linha achada na 1ª semana do arquivo mas publicada antes dele (fora de todo arquivo
+    semanal): a contagem do banco e a das cópias a deixam de fora — sem divergência eterna."""
+    p = tmp_path / "st.json"
+    primeiro = F.FakeHTTP()
+    antes = row("https://www.mining.com/antes-do-arquivo/", published="2026-10-17T10:00:00+00:00",
+                found="2026-10-20T10:00:00+00:00", take_at="2026-10-20T10:05:00+00:00")
+    primeiro.database["news_articles"].append(antes)
+    run(primeiro, p)
+    assert "antes-do-arquivo" not in str(doc(primeiro, "news-week-2026-w43.json"))
+    http = F.FakeHTTP(published=dict(primeiro.uploads))
+    http.database["news_articles"].append(dict(antes))
+    res = run(http, p, now=utc("2026-11-04T05:10:00Z"))
+    assert "contagem" in kinds(http) and "semana" not in kinds(http)   # bateu: não releu
+    assert "news-week-2026-w43.json" not in res or res["news-week-2026-w43.json"].action != "enviado"
