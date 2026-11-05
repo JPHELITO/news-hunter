@@ -212,8 +212,11 @@ def main() -> None:
 
     # Hub de dashboards do Itaú (hub_export/): monta os arquivos públicos com as linhas que o bloco
     # de preços acabou de gravar e manda ao Feeder só o que mudou. Desligado por padrão (variável
-    # HUB_EXPORT_ENABLED do repositório) e NÃO-FATAL; o loop do Playwright não exporta.
-    if os.getenv("HUB_EXPORT_ENABLED") == "1" and not args.playwright:
+    # HUB_EXPORT_ENABLED do repositório) e NÃO-FATAL; o loop do Playwright não exporta. Só dentro
+    # do GitHub Actions: o "Atualizar Mining" roda este ciclo no PC, e um HUB_EXPORT_ENABLED=1 no
+    # .env de lá exportaria do PC, com estado na pasta temporária (o CLI segue funcionando no PC).
+    if (os.getenv("HUB_EXPORT_ENABLED") == "1" and os.getenv("GITHUB_ACTIONS") == "true"
+            and not args.playwright):
         try:
             from hub_export.run import run_cycle
             run_cycle()

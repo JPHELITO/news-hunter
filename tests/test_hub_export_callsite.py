@@ -8,7 +8,10 @@ que ele tem de ser inofensivo por construção. O que estes testes TRAVAM:
   2) ligado, o exportador roda DEPOIS do bloco de preços (é de lá que vem a memória do ciclo) e
      antes do "done";
   3) o modo --playwright (hunt-playwright, 30 min) nunca exporta, mesmo com a variável ligada;
-  4) qualquer exceção do exportador vira uma linha de aviso e o ciclo termina normalmente.
+  4) qualquer exceção do exportador vira uma linha de aviso e o ciclo termina normalmente;
+  5) FORA do GitHub Actions o passo não roda nem com a variável ligada: o "Atualizar Mining" roda
+     este ciclo no PC do analista, e um HUB_EXPORT_ENABLED=1 no .env de lá exportaria do PC
+     (pesquisa 1b-dados §6.13). O CLI (`python -m hub_export`) segue funcionando no PC.
 
 O hunt.main de verdade é executado, com os módulos do robô trocados por falsos (nada de rede).
 """
@@ -93,6 +96,7 @@ def test_desligado_o_pacote_nem_e_importado(robo, monkeypatch):
 def test_ligado_roda_depois_do_bloco_de_precos(robo, monkeypatch):
     hunt, ordem = robo
     monkeypatch.setenv("HUB_EXPORT_ENABLED", "1")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     _exportador_falso(monkeypatch, ordem)
     _main(hunt, monkeypatch)
     assert ordem.count("run_cycle") == 1
@@ -103,6 +107,7 @@ def test_ligado_roda_depois_do_bloco_de_precos(robo, monkeypatch):
 def test_modo_playwright_nunca_exporta(robo, monkeypatch):
     hunt, ordem = robo
     monkeypatch.setenv("HUB_EXPORT_ENABLED", "1")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     _exportador_falso(monkeypatch, ordem)
     _main(hunt, monkeypatch, "--playwright")
     assert "collect_platts_headlines" in ordem and "run_cycle" not in ordem
@@ -111,8 +116,27 @@ def test_modo_playwright_nunca_exporta(robo, monkeypatch):
 def test_excecao_do_exportador_nao_derruba_o_ciclo(robo, monkeypatch, caplog):
     hunt, ordem = robo
     monkeypatch.setenv("HUB_EXPORT_ENABLED", "1")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     _exportador_falso(monkeypatch, ordem, erro=RuntimeError("Feeder caiu"))
     with caplog.at_level(logging.INFO):
         _main(hunt, monkeypatch)
     assert "hub_export: falhou (não-fatal): Feeder caiu" in caplog.text
     assert "=== News Hunter done ===" in caplog.text
+
+
+def test_fora_do_github_actions_nao_exporta_nem_com_a_variavel_ligada(robo, monkeypatch):
+    """O "Atualizar Mining" (IBBA-Dashboard/atualizar_mining.py) roda hunt.main() no PC."""
+    hunt, ordem = robo
+    monkeypatch.setenv("HUB_EXPORT_ENABLED", "1")
+    _exportador_falso(monkeypatch, ordem)
+    for valor in (None, "", "false", "True", "1"):
+        if valor is None:
+            monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        else:
+            monkeypatch.setenv("GITHUB_ACTIONS", valor)
+        _main(hunt, monkeypatch)
+        assert "run_cycle" not in ordem, valor
+    assert "update_quotes" in ordem                               # o ciclo do robô rodou normal
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _main(hunt, monkeypatch)
+    assert ordem.count("run_cycle") == 1
