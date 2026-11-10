@@ -36,9 +36,10 @@ Onda 2 (PLANO, Apêndice F; pesquisa 2-dados §4):
                             série leve inteira; a semeada da cópia publicada do quotes-daily.json
                             (400 dias) completa a cauda com a cópia PUBLICADA do quotes-monthly.json
                             quando ela é do mesmo mês do corte; senão relê só aquele papel.
-  commodities livres        sonda do último ponto das 3 (`last:daily->-1`, ~1,3 KB); relê só o código
-                            cujo último ponto mudou, mais 1 leitura completa por dia (06 UTC: o TE
-                            reescreve 10 anos a cada ~3 h); partida a frio semeada da cópia publicada.
+  commodities livres        sonda do último ponto das 3 (`last:daily->-1`, ~1 KB); relê só o código
+                            cujo último ponto mudou, e cada código ao menos 1×/dia (depois das 06 UTC:
+                            o TE reescreve 10 anos a cada ~3 h — a revisão no meio da série só aparece
+                            assim); partida a frio semeada da cópia publicada.
   recomendações             sonda "contagem + max(updated_at)" do histórico e das empresas do Stock
                             Guide; RPC `get_rating_history` (paginada) quando muda, na partida a
                             frio e 1×/dia (06 UTC). Flag `market_ratings` desligada: nada é lido.
@@ -453,14 +454,10 @@ class Sources:
         from .exporters.commodities_daily import FREE_SERIES
         st = self.state["commDaily"]
         codes = list(FREE_SERIES)
-        cache = {} if self.rebuild else {c: e for c, e in (st.get("rows") or {}).items()
+        cache = {} if self.rebuild else {c: dict(e) for c, e in (st.get("rows") or {}).items()
                                          if c in FREE_SERIES and isinstance(e, dict)}
-        full_at = None if self.rebuild else st.get("fullAt")
         if not cache and not st.get("seeded") and not self.rebuild and self.published is not None:
-            seed, gen = self._seed_comm_daily(FREE_SERIES)
-            if seed:
-                cache.update(seed)
-                full_at = full_at or gen
+            cache.update(self._seed_comm_daily(FREE_SERIES))
         seen = {}
         for r in self.supa.select("commodities", COMM_DAILY_PROBE_COLS,
                                   tag="commodities:livres:sonda", code=_in(codes)):
@@ -469,41 +466,46 @@ class Sources:
                 last = points([r.get("last")])
                 seen[c] = {"at": iso_utc(r.get("daily_updated_at")), "unit": _text(r.get("unit")),
                            "last": last[0] if last else None}
-        full = not full_at or full_at < daily_mark(self.now, *COMM_DAILY_FULL_UTC)
+        mark = daily_mark(self.now, *COMM_DAILY_FULL_UTC)
 
-        def last_of(c):
-            pts = (cache.get(c) or {}).get("pts") or []
-            return pts[-1] if pts else None
-        need = [c for c in codes if c in seen and (full or c not in cache or last_of(c) != seen[c]["last"])]
+        def stale(c) -> bool:
+            """Relê: código novo, último ponto diferente ou leitura inteira de antes da marca do dia."""
+            e = cache.get(c)
+            if e is None or (e.get("readAt") or "") < mark:
+                return True
+            pts = e.get("pts") or []
+            return (pts[-1] if pts else None) != seen[c]["last"]
+        need = [c for c in codes if c in seen and stale(c)]
         if need:
             for r in self.supa.select("commodities", COMM_DAILY_COLS, tag="commodities:livres",
                                       code=_in(need)):
                 c = r.get("code")
                 if c in FREE_SERIES:
                     cache[c] = {"at": iso_utc(r.get("daily_updated_at")), "unit": _text(r.get("unit")),
-                                "pts": points(r.get("daily"))}
+                                "pts": points(r.get("daily")), "readAt": self.generated_at}
         for c in list(cache):
             if c not in seen:
                 del cache[c]                          # sumiu do banco: não sai
             elif c not in need:
                 cache[c].update(at=seen[c]["at"], unit=seen[c]["unit"])   # carimbo e unidade da sonda
         # só depois de todas as leituras: uma que falhe não deixa o estado meio novo
-        st.update(rows=cache, seeded=True, fullAt=self.generated_at if full else full_at)
+        st.update(rows=cache, seeded=True)
         self._memo["commDaily"] = cache
         return cache
 
-    def _seed_comm_daily(self, free) -> tuple[dict, str | None]:
-        """Partida a frio: as séries da cópia PUBLICADA (zero Supabase); a sonda diz quem relê."""
+    def _seed_comm_daily(self, free) -> dict:
+        """Partida a frio: as séries da cópia PUBLICADA (zero Supabase), lidas "quando foi gerada";
+        a sonda diz quem relê."""
         doc = self.published.get("commodities-daily.json")
         if (not isinstance(doc, dict) or doc.get("schemaVersion") != 1
                 or not isinstance(doc.get("series"), dict)):
-            return {}, None
+            return {}
         out = {}
         for c, s in doc["series"].items():
             if c in free and isinstance(s, dict):
                 out[c] = {"at": iso_utc(s.get("updatedAt")), "unit": _text(s.get("unit")),
-                          "pts": points(s.get("pts"))}
-        return out, iso_utc(doc.get("generatedAt"))
+                          "pts": points(s.get("pts")), "readAt": iso_utc(doc.get("generatedAt"))}
+        return out
 
     # ── histórico de recomendações (ratings.json, Onda 2) ──────────────────────────────────────
     def ratings(self) -> dict:

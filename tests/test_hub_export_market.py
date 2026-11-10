@@ -314,10 +314,14 @@ def test_commodities_daily_sonda_do_ultimo_ponto():
     out = commodities_daily.build(src)
     assert [c.params["code"] for c in daily_reads(http)] == ['in.("GOLD")']
     assert out["series"]["GOLD"]["pts"][-1] == [F.D_1103 + 86400, 4030.0]
-    # 1 leitura completa por dia (06 UTC), mesmo sem mudança
+    # cada código relido ao menos 1×/dia (depois das 06 UTC), mesmo sem mudança…
     src, http = F.make_sources(state=st, now=datetime(2026, 11, 4, 6, 10, tzinfo=timezone.utc))
     src.commodities_daily()
     assert len(daily_reads(http)) == 1 and "IRON_ORE_62" in daily_reads(http)[0].params["code"]
+    # …e só 1×: a leitura do dia (inclusive a de "último ponto mudou") já conta
+    src, http = F.make_sources(state=st, now=datetime(2026, 11, 4, 9, 0, tzinfo=timezone.utc))
+    src.commodities_daily()
+    assert daily_reads(http) == []
 
 
 def test_commodities_daily_partida_a_frio_semeada_da_copia_publicada():

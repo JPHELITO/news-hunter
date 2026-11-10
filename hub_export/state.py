@@ -80,7 +80,7 @@ def empty_state() -> dict:
             "digest": {"rows": [], "seeded": False, "readAt": None},
             "calendar": {"probe": None, "fullAt": None, "metaAt": None, "range": None,
                          "categories": [], "windows": [], "events": None},
-            "commDaily": {"rows": {}, "seeded": False, "fullAt": None},
+            "commDaily": {"rows": {}, "seeded": False},
             "ratings": {"probe": None, "fullAt": None, "data": None},
             "history": {"seeded": False, "published": {}, "probe": None, "needLong": [],
                         "failedAt": {},
