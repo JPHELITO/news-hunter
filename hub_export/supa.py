@@ -11,6 +11,7 @@ Regras de tráfego (PLANO §2.4/10; o plano grátis conta CABEÇALHOS e mede o t
     sem tag, o nome da tabela/RPC). O run.py loga isso numa linha por ciclo;
   • contagem barata: `count()` = HEAD com `Prefer: count=exact` (só cabeçalhos, sem corpo);
     `select_count()` = a leitura com o total do `Content-Range` junto (sonda "contagem + max");
+    `rpc_count()` = o mesmo sobre o resultado de uma RPC (as sondas do Market Watch);
   • paginação por `limit`/`offset` na QUERY (nunca pelo cabeçalho `Range`): `select_all` (tabela)
     e `rpc_all` (RPC, com a soma conferida com a contagem) — o PostgREST corta em 1.000 linhas.
 
@@ -162,6 +163,15 @@ class SupaReader:
         rows, _ = self._call("POST", f"/rest/v1/rpc/{fn}", f"rpc/{fn}", select, params,
                              args or {}, tag=tag)
         return rows
+
+    def rpc_count(self, fn: str, select: str, args: dict | None = None, *,
+                  tag: str | None = None, **params) -> tuple[list[dict], int | None]:
+        """A RPC com o total de linhas do RESULTADO (filtros incluídos) no `Content-Range`
+        (`Prefer: count=exact`): a sonda "contagem + máximo" do Market Watch numa chamada só —
+        `order` pelo carimbo + `limit=1` (~1 KB, quase só cabeçalho). Pela RPC, e não pela tabela,
+        para contar exatamente o que se publica (a RPC tira a empresa oculta)."""
+        return self._call("POST", f"/rest/v1/rpc/{fn}", f"rpc/{fn}", select, params, args or {},
+                          tag=tag, count=True)
 
     def rpc_all(self, fn: str, select: str, args: dict | None = None, *, order: str,
                 tag: str | None = None, page: int = PAGE_ROWS, max_pages: int = 200,

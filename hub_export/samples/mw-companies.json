@@ -1,0 +1,301 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "lendingThrough": "2026-11-02",
+  "companies": [
+    {
+      "ticker": "VALE3",
+      "name": "Vale",
+      "shareClass": "ON",
+      "lendingTickers": ["VALE3"],
+      "quote": "VALE3.SA",
+      "sector": "iron_ore",
+      "order": 10,
+      "capital": {
+        "refDate": "2026-12-31",
+        "docVersion": 3,
+        "sharesOn": 4539007580,
+        "sharesPn": null,
+        "sharesTotal": 4539007580,
+        "floatOn": 4268000000,
+        "floatPn": null,
+        "floatTotal": 4268000000,
+        "pctFloatTotal": 94.03,
+        "floatByClass": {}
+      },
+      "facts": {
+        "shortPctFloat": 3.5145267104029996,
+        "shortAsOf": "2026-11-02",
+        "buybackActive": true,
+        "insidersNet12m": 600,
+        "insidersTrades12m": 2
+      }
+    },
+    {
+      "ticker": "BRAP4",
+      "name": "Bradespar",
+      "shareClass": "PN",
+      "lendingTickers": ["BRAP3", "BRAP4"],
+      "quote": "BRAP4.SA",
+      "sector": "iron_ore",
+      "order": 25,
+      "capital": {
+        "refDate": "2026-12-31",
+        "docVersion": 3,
+        "sharesOn": 122523049,
+        "sharesPn": 236003738,
+        "sharesTotal": 358526787,
+        "floatOn": 2000000,
+        "floatPn": 230000000,
+        "floatTotal": 232000000,
+        "pctFloatTotal": 64.7,
+        "floatByClass": {}
+      },
+      "facts": {
+        "shortPctFloat": 13.043478260869565,
+        "shortAsOf": "2026-11-02",
+        "buybackActive": false,
+        "insidersNet12m": 50,
+        "insidersTrades12m": 1
+      }
+    },
+    {
+      "ticker": "USIM5",
+      "name": "Usiminas",
+      "shareClass": "PNA",
+      "lendingTickers": ["USIM3", "USIM5", "USIM6"],
+      "quote": "USIM5.SA",
+      "sector": "steel",
+      "order": 50,
+      "capital": {
+        "refDate": "2026-12-31",
+        "docVersion": 3,
+        "sharesOn": 705260684,
+        "sharesPn": 547690000,
+        "sharesTotal": 1252950684,
+        "floatOn": 300000000,
+        "floatPn": 518315018,
+        "floatTotal": 818315018,
+        "pctFloatTotal": 65.0,
+        "floatByClass": {
+          "PNA": 518248757,
+          "PNB": 66261
+        }
+      },
+      "facts": {
+        "shortPctFloat": 13.50702708969546,
+        "shortAsOf": "2026-11-02",
+        "buybackActive": false,
+        "insidersNet12m": 0,
+        "insidersTrades12m": 0
+      }
+    },
+    {
+      "ticker": "KLBN11",
+      "name": "Klabin",
+      "shareClass": "UNT",
+      "lendingTickers": ["KLBN3", "KLBN4", "KLBN11"],
+      "quote": "KLBN11.SA",
+      "sector": "pulp_paper",
+      "order": 60,
+      "capital": {
+        "refDate": "2026-12-31",
+        "docVersion": 3,
+        "sharesOn": 2198000000,
+        "sharesPn": 3889000000,
+        "sharesTotal": 6087000000,
+        "floatOn": 1100000000,
+        "floatPn": 3800000000,
+        "floatTotal": 4900000000,
+        "pctFloatTotal": 80.5,
+        "floatByClass": {}
+      },
+      "facts": {
+        "shortPctFloat": 16.48979591836735,
+        "shortAsOf": "2026-11-02",
+        "buybackActive": true,
+        "insidersNet12m": -5100,
+        "insidersTrades12m": 2
+      }
+    },
+    {
+      "ticker": "RANI3",
+      "name": "Irani",
+      "shareClass": "ON",
+      "lendingTickers": ["RANI3"],
+      "quote": "RANI3.SA",
+      "sector": "pulp_paper",
+      "order": 80,
+      "capital": null,
+      "facts": {
+        "shortPctFloat": null,
+        "shortAsOf": null,
+        "buybackActive": false,
+        "insidersNet12m": 0,
+        "insidersTrades12m": 0
+      }
+    },
+    {
+      "ticker": "AURA33",
+      "name": "Aura Minerals",
+      "shareClass": "BDR",
+      "lendingTickers": ["AURA33"],
+      "quote": "AURA33.SA",
+      "sector": "gold",
+      "order": 90,
+      "capital": {
+        "refDate": "2026-12-31",
+        "docVersion": 3,
+        "sharesOn": null,
+        "sharesPn": null,
+        "sharesTotal": 74000000,
+        "floatOn": null,
+        "floatPn": null,
+        "floatTotal": 30000000,
+        "pctFloatTotal": 40.5,
+        "floatByClass": {}
+      },
+      "facts": {
+        "shortPctFloat": 6.396666666666667,
+        "shortAsOf": "2026-11-02",
+        "buybackActive": true,
+        "insidersNet12m": null,
+        "insidersTrades12m": null
+      }
+    }
+  ],
+  "shortLatest": [
+    {
+      "ticker": "AURA33",
+      "company": "AURA33",
+      "refDate": "2026-11-02",
+      "qtyTotal": 1919000,
+      "valueBrl": 39531400.0,
+      "avgPrice": 20.6,
+      "rateTakerAvg": 0.09,
+      "qty1m": 1995000,
+      "rate1m": 0.13,
+      "days": 17
+    },
+    {
+      "ticker": "BRAP3",
+      "company": "BRAP4",
+      "refDate": "2026-11-02",
+      "qtyTotal": 600000,
+      "valueBrl": 11460000.0,
+      "avgPrice": 19.1,
+      "rateTakerAvg": 0.08,
+      "qty1m": 624000,
+      "rate1m": 0.12,
+      "days": 17
+    },
+    {
+      "ticker": "BRAP4",
+      "company": "BRAP4",
+      "refDate": "2026-11-02",
+      "qtyTotal": 30000000,
+      "valueBrl": 573000000.0,
+      "avgPrice": 19.1,
+      "rateTakerAvg": 0.08,
+      "qty1m": 31200000,
+      "rate1m": 0.12,
+      "days": 17
+    },
+    {
+      "ticker": "KLBN11",
+      "company": "KLBN11",
+      "refDate": "2026-11-02",
+      "qtyTotal": 161600000,
+      "valueBrl": 3328960000.0,
+      "avgPrice": 20.6,
+      "rateTakerAvg": 0.09,
+      "qty1m": 168000000,
+      "rate1m": 0.13,
+      "days": 17
+    },
+    {
+      "ticker": "KLBN3",
+      "company": "KLBN11",
+      "refDate": "2026-11-02",
+      "qtyTotal": 4000000,
+      "valueBrl": 82400000.0,
+      "avgPrice": 20.6,
+      "rateTakerAvg": 0.08,
+      "qty1m": 4160000,
+      "rate1m": 0.12,
+      "days": 17
+    },
+    {
+      "ticker": "KLBN4",
+      "company": "KLBN11",
+      "refDate": "2026-11-02",
+      "qtyTotal": 9000000,
+      "valueBrl": 185400000.0,
+      "avgPrice": 20.6,
+      "rateTakerAvg": 0.08,
+      "qty1m": 9360000,
+      "rate1m": 0.12,
+      "days": 17
+    },
+    {
+      "ticker": "RANI3",
+      "company": "RANI3",
+      "refDate": "2026-11-02",
+      "qtyTotal": 5000000,
+      "valueBrl": 95500000.0,
+      "avgPrice": 19.1,
+      "rateTakerAvg": 0.08,
+      "qty1m": 5200000,
+      "rate1m": 0.12,
+      "days": 17
+    },
+    {
+      "ticker": "USIM3",
+      "company": "USIM5",
+      "refDate": "2026-11-02",
+      "qtyTotal": 1200000,
+      "valueBrl": 22920000.0,
+      "avgPrice": 19.1,
+      "rateTakerAvg": 0.08,
+      "qty1m": 1248000,
+      "rate1m": 0.12,
+      "days": 17
+    },
+    {
+      "ticker": "USIM5",
+      "company": "USIM5",
+      "refDate": "2026-11-02",
+      "qtyTotal": 70000000,
+      "valueBrl": 1337000000.0,
+      "avgPrice": 19.1,
+      "rateTakerAvg": 0.08,
+      "qty1m": 72800000,
+      "rate1m": 0.12,
+      "days": 17
+    },
+    {
+      "ticker": "USIM6",
+      "company": "USIM5",
+      "refDate": "2026-11-02",
+      "qtyTotal": 3,
+      "valueBrl": 53.1,
+      "avgPrice": 17.7,
+      "rateTakerAvg": 0.12,
+      "qty1m": null,
+      "rate1m": null,
+      "days": 3
+    },
+    {
+      "ticker": "VALE3",
+      "company": "VALE3",
+      "refDate": "2026-11-02",
+      "qtyTotal": 150000000,
+      "valueBrl": 2865000000.0,
+      "avgPrice": 19.1,
+      "rateTakerAvg": 0.08,
+      "qty1m": 156000000,
+      "rate1m": 0.12,
+      "days": 17
+    }
+  ]
+}

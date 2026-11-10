@@ -19,9 +19,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest  # noqa: E402
+
 import test_hub_export_fixtures as F  # noqa: E402
 from hub_export import schedule as S  # noqa: E402
 from hub_export.run import run_cycle  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _sem_teto_do_market_watch(monkeypatch):
+    F.no_mw_cap(monkeypatch)
 
 # 18:10, e não 18:00: o ponto das fixtures 5 min antes do corte de 400 dias já está fora da janela
 # — senão ele sairia DURANTE a hora simulada e o quotes-daily mudaria (o corte que anda é
@@ -77,8 +84,10 @@ def test_cadencia_no_ciclo(tmp_path):
                      "news-week-2026-w44.json": "fora da vez",
                      "news-week-2026-w45.json": "fora da vez", "news-index.json": "fora da vez",
                      "quotes-monthly.json": "fora da vez", "commodities-daily.json": "fora da vez",
-                     "ratings.json": "fora da vez", "history-index.json": "fora da vez"}
+                     "ratings.json": "fora da vez", "history-index.json": "fora da vez",
+                     **{n: "fora da vez" for n in F.MW_FIXED}}  # a família mw-short nem entra
     assert not http.supa_calls("rpc/get_dashboard_flags")      # fora da vez nem lê
+    assert not [c for c in http.supa_calls() if c.table.startswith("rpc/get_mw_")]
     assert not [c for c in http.supa_calls("quotes") if "daily" in c.params["select"]]
     assert not http.supa_calls("rpc/get_recent_reports_v3")
     assert not http.supa_calls("exec_calendar_events")
@@ -112,4 +121,5 @@ def test_force_ignora_cadencia_e_hash(tmp_path):
     http = F.FakeHTTP()
     acoes = ciclo(http, p, 1, force=True)
     from hub_export.registry import FILES
-    assert set(acoes.values()) == {"enviado"} and len(http.uploads) == len(FILES) + 2  # + 44 e 45
+    assert set(acoes.values()) == {"enviado"}
+    assert len(http.uploads) == len(FILES) + 2 + len(F.MW_FAMILY_FILES)  # + 44 e 45 + o aluguel

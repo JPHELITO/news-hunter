@@ -84,7 +84,34 @@ def _before_archive(supa) -> str:
             f"arquivo semanal; {len(rows)} candidata(s) lidas)")
 
 
-def run_checks(supa) -> list[str]:
+def _mw_checks(supa, now=None) -> list[str]:
+    """O Market Watch pelas RPCs (só as empresas visíveis), como o exportador conta: a contagem do
+    mesmo filtro que cada arquivo usa e o carimbo das sondas — ~1 KB por linha (`limit=1`)."""
+    from datetime import datetime, timezone
+    from .exporters.mw_insiders import window_from
+    start = window_from((now or datetime.now(timezone.utc)).date())
+    probes = (("empresas visíveis", "get_mw_companies", "ticker", {}, "ticker.asc"),
+              ("aluguel", "get_mw_short_interest", "ref_date", {"p_company": None, "p_from": None},
+               "ref_date.desc"),
+              (f"insiders desde {start}", "get_mw_insiders", "updated_at",
+               {"p_company": None, "p_from": start}, "updated_at.desc.nullslast"),
+              ("comunicados (até 2.000)", "get_mw_filings", "updated_at",
+               {"p_company": None, "p_limit": 2000}, "updated_at.desc.nullslast"),
+              ("programas de recompra", "get_mw_buybacks", "program_id", {"p_company": None},
+               "program_id.desc"))
+    out = []
+    for label, fn, col, args, order in probes:
+        try:
+            rows, n = supa.rpc_count(fn, col, args, tag="check", order=order, limit=1)
+            top = rows[0].get(col) if rows else None
+            out.append(f"rpc {fn}: {label}: {n} linha(s)"
+                       + (f", topo {iso_utc(top) or top}" if col in ("ref_date", "updated_at") else ""))
+        except SupaError as e:
+            out.append(f"rpc {fn}: {e}")
+    return out
+
+
+def run_checks(supa, now=None) -> list[str]:
     """As linhas do relatório, na ordem. Cada conferência isola o próprio erro."""
     out = []
     t = "news_articles"
@@ -140,9 +167,11 @@ def run_checks(supa) -> list[str]:
                                                                    tag="check")}
         out.append("flags: " + ", ".join(f"{k}={flags.get(k)}" for k in
                                          ("home_digest", "hub_home_digest", "exec_calendar",
-                                          "hub_exec_calendar", "news_feed", "market_pulse")))
+                                          "hub_exec_calendar", "news_feed", "market_pulse",
+                                          "market", "market_watch", "market_ratings")))
     except SupaError as e:
         out.append(f"flags: erro ({e})")
+    out += _mw_checks(supa, now)
     out.append(f"Supabase: {supa.calls} chamada(s), {supa.wire_bytes:,} B de corpo pela rede + "
                f"{supa.header_bytes:,} B de cabeçalhos".replace(",", "."))
     return out

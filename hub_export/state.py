@@ -4,7 +4,9 @@ ONDE: `$RUNNER_TEMP/hub_export_state.json` no GitHub Actions (o runner esvazia a
 job, ~6 h — molde do `digest_done.json` do resumo da hora e da memória de takes do sync.py);
 fora dele, `$HUB_EXPORT_STATE_DIR` ou a pasta temporária do sistema. Sem tabela nova no Supabase.
 As notícias têm um arquivo PRÓPRIO ao lado (`hub_export_state_news.json`, ver news.py): o cache
-delas é grande e só é lido nas execuções que montam um arquivo de notícias.
+delas é grande e só é lido nas execuções que montam um arquivo de notícias. O Market Watch também
+(`hub_export_state_mw.json`, ver mw.py: a série inteira do aluguel e os 14 meses de insiders, ~1 MB,
+lidos só nas execuções que montam um arquivo do Market Watch).
 
 O QUE GUARDA:
   files       por arquivo: hash do último ENVIO, quando foi enviado, revisão do Feeder, quando

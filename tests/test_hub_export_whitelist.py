@@ -49,10 +49,13 @@ def mundo_sujo():
     http.database["quote_history"] = F.quote_history()
     # Onda 1b também: as linhas de notícia, o resumo (inclusive os itens jsonb), os relatórios e
     # o calendário (inclusive a regra de recorrência e os links) vêm com as chaves proibidas;
-    # Onda 2: a série longa, o histórico de recomendações e as empresas do Stock Guide também
+    # Onda 2: a série longa, o histórico de recomendações e as empresas do Stock Guide também; e
+    # as tabelas do Market Watch (as RPCs get_mw_* devolvem a linha da tabela inteira)
     for nome in ("quotes", "commodities", "macro_indicators", "news_articles", "news_digest",
                  "exec_calendar_events", "exec_calendar_categories", "exec_calendar_data_windows",
-                 "quote_history", "stock_guide_rating_history", "stock_guide_companies"):
+                 "quote_history", "stock_guide_rating_history", "stock_guide_companies",
+                 "mw_companies", "mw_share_capital", "mw_short_interest", "mw_buyback_programs",
+                 "mw_insider_moves", "mw_filings"):
         http.database[nome] = _sujo(http.database[nome])
     http.database["rpc_rows"]["reports"] = _sujo(http.database["rpc_rows"]["reports"])
     for fn in ("get_heatmap_tickers", "get_commodity_groups"):   # nas flags, "key" é a coluna
@@ -78,6 +81,8 @@ def payloads(http, mem, state=None):
         name = H.file_name(r["ticker"])
         if name:
             out[name] = spec_for(name).builder(src)
+    for name in F.MW_FAMILY_FILES:                            # o aluguel de cada empresa (WP2.4B)
+        out[name] = spec_for(name).builder(src)
     return out
 
 

@@ -42,6 +42,22 @@ Onda 2 (WP2.1B):
   • histórico de recomendações (tabela, empresas do Stock Guide e a RPC `get_rating_history`, que
     só devolve com a flag `market_ratings` ligada e esconde a empresa oculta), com `note`, `source`,
     ids e carimbos de usuário que não podem vazar.
+Onda 2 (WP2.4B, Market Watch — as tabelas `mw_*` e as RPCs `get_mw_*`, que escondem a empresa
+oculta como as de verdade):
+  • 7 empresas, uma OCULTA (CSNA3, com dado em todas as tabelas que nunca pode sair), fora de ordem
+    na tabela; um papel PNA/PNB (USIM5, `float_by_class`), uma UNIT (KLBN11, ÷ 5), um BDR (AURA33,
+    total), ON (VALE3, RANI3) e PN (BRAP4); RANI3 SEM capital; AURA33 sem insiders;
+  • aluguel semanal de 16/07 a 29/10 + 02/11/2026 (o último pregão gravado), 12 papéis, o USIM6 só
+    nos 3 últimos, `bdi_pdf` antes de agosto; colunas internas (`qty_registro/d0/d1`) que não saem;
+  • recompras: em andamento, encerrada com prazo no futuro (o status manda), SEM status com prazo no
+    futuro (vale o prazo), em dólar (Aura), sem data de decisão; `reason` com e-mail e telefone;
+  • insiders: MAIS DE 1.000 linhas na janela de 14 meses (o PostgREST corta em 1.000), saldos e
+    negócios — dentro e fora dos 12 meses, "Exercício opção de venda" (conta como venda na regra
+    do site), meses fora da janela, `group_type` nulo; `move_desc` com e-mail e telefone e com a
+    data colada (`20082026`, não é telefone);
+  • comunicados: com link do ENET, SEM link, com link recusado pelo filtro (credencial), política
+    de fato relevante (R), trecho com e-mail/telefone (+55 (21) …, 55 21 ….…, 0800) e com o e-mail
+    CORTADO no fim do trecho; `published_at` com fuso -03:00 (como o robô grava).
 
 Nada aqui fala com a rede: o `FakeHTTP` faz o papel do `requests.Session` para o Supabase (um
 mini-PostgREST: select com alias, `->>` e `->` com chave ou índice (inclusive negativo:
@@ -553,7 +569,320 @@ def _rpc_events(database, args):
     return sorted(rows, key=lambda e: (e["start_date"], e["start_time"] or ""))
 
 
+# ── Onda 2 (WP2.4B): Market Watch ─────────────────────────────────────────────────────────────
+def _mwc(ticker, name, cls, lending, symbol, sector, order, visible=True):
+    return {"ticker": ticker, "name": name, "cnpj": "00.000.000/0001-91", "cvm_code": "009999",
+            "b3_code": ticker[:4], "share_class": cls, "lending_tickers": lending,
+            "yahoo_symbol": symbol, "sector": sector, "is_visible": visible, "display_order": order,
+            "updated_at": "2026-09-02T22:06:16.449534+00:00"}
+
+
+MW_COMPANIES = [                                   # fora de ordem: a RPC ordena por display_order
+    _mwc("AURA33", "Aura Minerals", "BDR", ["AURA33"], "AURA33.SA", "gold", 90),
+    _mwc("VALE3", "Vale", "ON", ["VALE3"], "VALE3.SA", "iron_ore", 10),
+    _mwc("KLBN11", "Klabin", "UNT", ["KLBN3", "KLBN4", "KLBN11"], "KLBN11.SA", "pulp_paper", 60),
+    _mwc("BRAP4", "Bradespar", "PN", ["BRAP3", "BRAP4"], "BRAP4.SA", "iron_ore", 25),
+    _mwc("CSNA3", "CSN", "ON", ["CSNA3"], "CSNA3.SA", "steel", 30, visible=False),     # OCULTA
+    _mwc("USIM5", "Usiminas", "PNA", ["USIM3", "USIM5", "USIM6"], "USIM5.SA", "steel", 50),
+    _mwc("RANI3", "Irani", "ON", ["RANI3"], "RANI3.SA", "pulp_paper", 80),
+]
+MW_VISIBLE = ["VALE3", "BRAP4", "USIM5", "KLBN11", "RANI3", "AURA33"]      # a ordem da RPC
+MW_HIDDEN = "CSNA3"
+
+
+def _cap(co, on, pn, f_on, f_pn, *, total=None, f_total=None, by=None, pct=None):
+    return {"company": co, "ref_date": "2026-12-31", "doc_version": 3, "shares_on": on,
+            "shares_pn": pn, "shares_total": total if total is not None else (on or 0) + (pn or 0),
+            "float_on": f_on, "float_pn": f_pn,
+            "float_total": f_total if f_total is not None else (f_on or 0) + (f_pn or 0),
+            "pct_float_total": pct, "float_by_class": by or {},
+            "updated_at": "2026-09-02T12:00:00+00:00"}
+
+
+MW_CAPITAL = [                                     # RANI3 não tem
+    _cap("VALE3", 4539007580, None, 4268000000, None, pct=94.03),
+    _cap("BRAP4", 122523049, 236003738, 2000000, 230000000, pct=64.7),
+    _cap("CSNA3", 1326093947, None, 727421210, None, pct=54.85),
+    _cap("USIM5", 705260684, 547690000, 300000000, 518315018,
+         by={"PNB": 66261, "PNA": 518248757}, pct=65.0),          # fora de ordem: sai A→Z
+    _cap("KLBN11", 2198000000, 3889000000, 1100000000, 3800000000, pct=80.5),
+    _cap("AURA33", None, None, None, None, total=74000000, f_total=30000000, pct=40.5),
+]
+
+# o aluguel: semanal (às quintas) de 16/07 a 29/10 + 02/11/2026, o último pregão gravado
+MW_LENDING_DAYS = ["2026-07-16", "2026-07-23", "2026-07-30", "2026-08-06", "2026-08-13",
+                   "2026-08-20", "2026-08-27", "2026-09-03", "2026-09-10", "2026-09-17",
+                   "2026-09-24", "2026-10-01", "2026-10-08", "2026-10-15", "2026-10-22",
+                   "2026-10-29", "2026-11-02"]
+MW_LENDING_TICKERS = [("VALE3", "VALE3", 150_000_000), ("BRAP3", "BRAP4", 600_000),
+                      ("BRAP4", "BRAP4", 30_000_000), ("USIM3", "USIM5", 1_200_000),
+                      ("USIM5", "USIM5", 70_000_000), ("USIM6", "USIM5", 3),
+                      ("KLBN3", "KLBN11", 4_000_000), ("KLBN4", "KLBN11", 9_000_000),
+                      ("KLBN11", "KLBN11", 160_000_000), ("RANI3", "RANI3", 5_000_000),
+                      ("AURA33", "AURA33", 1_900_000), ("CSNA3", "CSNA3", 114_000_000)]
+
+
+def mw_lending_row(ticker, company, day, k, base, *, qty=None):
+    q = qty if qty is not None else int(base * (1 + 0.01 * ((k * 7 + len(ticker)) % 13)))
+    price = round(10 + len(company) * 1.5 + k * 0.1, 2)
+    return {"ticker": ticker, "company": company, "ref_date": day, "qty_total": q,
+            "value_brl": round(q * price, 2), "avg_price": price, "qty_registro": q // 2,
+            "qty_d0": q // 4, "qty_d1": q - q // 2 - q // 4,
+            "rate_taker_avg": round(0.05 + 0.01 * ((k + len(ticker)) % 9), 4),
+            "rate_taker_min": 0.01, "rate_taker_max": round(1 + 0.1 * len(ticker), 2),
+            "rate_donor_avg": round(0.04 + 0.01 * ((k + len(ticker)) % 7), 4),
+            "contracts_day": 10 + k, "qty_day": q // 100, "value_day": round(q // 100 * price, 2),
+            "source": "bdi_pdf" if day < "2026-08-01" else "bdi_api",
+            "updated_at": f"{day}T21:30:00.123+00:00"}
+
+
+def _mw_lending() -> list[dict]:
+    rows = []
+    for t, co, base in MW_LENDING_TICKERS:
+        days = MW_LENDING_DAYS[-3:] if t == "USIM6" else MW_LENDING_DAYS
+        for k, d in enumerate(days):
+            rows.append(mw_lending_row(t, co, d, k, base))
+    return rows
+
+
+MW_LENDING = _mw_lending()
+
+
+def _bb(pid, co, decided, expires, status, operation, purpose, q_on, q_pn, c_on, c_pn, *,
+        reason=None, usd=None, brokers=()):
+    return {"program_id": pid, "company": co, "company_name": "RAZAO SOCIAL INTERNA S.A.",
+            "decided_on": decided, "expires_on": expires, "status": status, "operation": operation,
+            "reason": reason, "purpose": purpose, "qty_on": q_on, "qty_pn": q_pn, "qty_circ_on": c_on,
+            "qty_circ_pn": c_pn, "authorized_usd": usd, "brokers": list(brokers),
+            "updated_at": "2026-09-03T12:10:00.5+00:00"}
+
+
+MW_BUYBACKS = [
+    _bb(1500, "VALE3", "2024-01-10", "2025-07-10", "Encerrado", "Compra",
+        "AS AÇÕES VÃO FICAR EM TESOURARIA.", 50000000, None, 4400000000, None),
+    _bb(1973, "VALE3", "2026-04-30", "2027-10-29", "Em Andamento", "Compra",
+        "AS AÇÕES PODERÃO SER CANCELADAS.", 100000000, None, 4300000000, None,
+        reason="Maximizar o valor ao acionista. Dúvidas: ri@vale-exemplo.com.br ou (21) 3485-0000.",
+        brokers=["BTG PACTUAL CTVM S.A.", " J.P. MORGAN CCVM S.A. ", ""]),
+    _bb(1800, "BRAP4", "2025-06-01", "2027-01-01", "Encerrado", "Compra", None,       # o status manda
+        None, 5000000, None, 230000000),
+    _bb(1900, "KLBN11", "2026-03-01", "2027-03-01", None, None,                     # sem status: o prazo
+        "AS AÇÕES PODERÃO SER CANCELADAS.", 31250000, 125000000, 1100000000, 3800000000),
+    _bb(-1, "AURA33", "2026-05-18", "2027-05-18", "Em Andamento", None,             # em US$, à mão
+        "PARA MANUTENCAO EM TESOURARIA, POSTERIOR CANCELAMENTO OU ALIENACAO", None, None, None, None,
+        usd=200000000),
+    _bb(1700, "USIM5", None, None, "Encerrado", "Venda", None, 1000, 2000, None, None),  # sem data: no fim
+    _bb(1600, "CSNA3", "2026-08-01", "2027-08-01", "Em Andamento", "Compra",           # empresa OCULTA
+        "AS AÇÕES PODERÃO SER CANCELADAS.", 30000000, None, 700000000, None),
+]
+
+MW_GROUPS = ["Controlador ou Vinculado", "Conselho de Administração ou Vinculado",
+             "Diretor ou Vinculado", "Conselho Fiscal ou Vinculado", "Órgão Estatutário ou Vinculado"]
+MW_ENTITY = {"VALE3": "VALE S.A.", "BRAP4": "BRADESPAR S.A.", "USIM5": "USINAS SID MINAS GERAIS S.A.",
+             "KLBN11": "KLABIN S.A.", "RANI3": "IRANI PAPEL E EMBALAGEM S.A.", "CSNA3": "CIA SIDERURGICA NAC"}
+# 14 meses no banco (ago/2025 a set/2026); a janela do "agora" (03/11/2026) começa em out/2025
+MW_MONTHS = [f"2025-{m:02d}-01" for m in range(8, 13)] + [f"2026-{m:02d}-01" for m in range(1, 10)]
+
+
+def _mid(*parts) -> str:
+    import hashlib
+    return hashlib.sha1("|".join(map(str, parts)).encode()).hexdigest()[:24]
+
+
+def mw_insider(co, month, group, move, *, qty=None, price=None, day=None, desc=None, asset="ON",
+               version=1, broker=None, seq=0, entity_type="Companhia", upd=None):
+    trade = "compra" in move.lower() or "venda" in move.lower()
+    return {"id": _mid(co, month, version, group, move, asset, seq), "company": co, "ref_month": month,
+            "doc_version": version, "entity_type": entity_type, "entity": MW_ENTITY.get(co),
+            "group_type": group, "move_type": move, "move_desc": desc,
+            "operation": "Débito" if "venda" in move.lower() or "saída" in move.lower() else "Crédito",
+            "asset_type": "Ações", "asset_class": asset, "broker": broker, "move_date": day,
+            "qty": qty, "unit_price": price if trade else None,
+            "volume": round(qty * price, 2) if trade and qty and price else None,
+            "is_balance": move.lower().startswith("saldo"),
+            "updated_at": upd or f"{month[:7]}-25T12:00:00.25+00:00"}
+
+
+def _mw_insiders() -> list[dict]:
+    rows = []
+    for mi, month in enumerate(MW_MONTHS):
+        for ci, co in enumerate(("VALE3", "BRAP4", "USIM5", "KLBN11", "RANI3", "CSNA3")):
+            for gi, group in enumerate(MW_GROUPS):
+                for asset in ("ON", "PN", None):
+                    rows.append(mw_insider(co, month, group, "Saldo Inicial", asset=asset,
+                                           qty=1000 * (gi + 1) * (ci + 1) + mi))
+            for k, move in enumerate(("Outras Entradas", "Outras Saídas")):
+                rows.append(mw_insider(co, month, MW_GROUPS[2], move, day=f"{month[:8]}1{k}",
+                                       qty=10 + mi, seq=k))
+    rows += [
+        # VALE3: dois negócios nos 12 meses (+1.000 −400) e um em out/2025 (na janela de 14 meses,
+        # fora dos 12)
+        mw_insider("VALE3", "2026-09-01", "Diretor ou Vinculado", "Compra à vista", qty=1000,
+                   price=60.1, day="2026-09-12", broker="XP INVESTIMENTOS CCTVM S.A.",
+                   desc="Compra em bolsa. Contato: ri@vale-exemplo.com.br, tel. (21) 3485-0000",
+                   upd="2026-10-19T09:00:00.75+00:00"),
+        mw_insider("VALE3", "2026-08-01", "Conselho de Administração ou Vinculado", "Venda à vista",
+                   qty=400, price=58.0, day="2026-08-20", desc="Operação liquidada em 20082026"),
+        mw_insider("VALE3", "2025-10-01", "Diretor ou Vinculado", "Compra à vista", qty=9999,
+                   price=55.0, day="2025-10-15"),
+        # KLBN11: venda do controlador e o "Exercício opção de venda" (casa /venda/: venda no site)
+        mw_insider("KLBN11", "2026-07-01", "Controlador ou Vinculado", "Venda à vista", qty=5000,
+                   price=20.0, day="2026-07-14", asset="KLBN11"),
+        mw_insider("KLBN11", "2026-06-01", "Diretor ou Vinculado", "Exercício opção de venda",
+                   qty=100, price=19.0, day="2026-06-30", asset="KLBN11"),
+        # BRAP4: "Compra" (sem "à vista") também é negócio; group_type nulo (existe no real)
+        mw_insider("BRAP4", "2026-05-01", None, "Compra", qty=50, price=21.5, day="2026-05-06",
+                   asset="PN"),
+        # empresa OCULTA: nunca sai
+        mw_insider("CSNA3", "2026-09-01", "Diretor ou Vinculado", "Compra à vista", qty=777,
+                   price=13.0, day="2026-09-02"),
+    ]
+    return rows
+
+
+MW_INSIDERS = _mw_insiders()
+ENET = "https://www.rad.cvm.gov.br/ENET/frmExibirArquivoIPEExterno.aspx?ID={}&flnk"
+
+
+def _fl(fid, co, headline, category, doc_date, published, *, url="enet", newsworthy=False,
+        flag=None, title=None, excerpt=None, upd=None):
+    return {"id": fid, "company": co, "b3_code": co[:4], "headline": headline, "category": category,
+            "doc_date": doc_date, "published_at": published, "flag": flag,
+            "cvm_url": ENET.format(fid - 2000000) if url == "enet" else url,
+            "is_newsworthy": newsworthy, "doc_title": title, "doc_excerpt": excerpt,
+            "updated_at": upd or published[:10] + "T23:00:00.5+00:00"}
+
+
+MW_FILINGS = [
+    _fl(3545500, "VALE3", "VALE (VALE-NM) - Apresentacao a analistas/agentes mercado - 26/10/26",
+        "Apresentacao a analistas/agentes mercado", "2026-10-26", "2026-10-26T18:00:00-03:00"),
+    _fl(3546251, "VALE3", "VALE (VALE-NM) - Fato Relevante - 02/11/26", "Fato Relevante",
+        "2026-11-02", "2026-11-02T19:32:00-03:00", newsworthy=True,
+        title="Vale informa sobre o projeto Serra Norte",
+        excerpt=("Vale informa sobre o projeto Serra Norte, aprovado para o período 2026-2030. "
+                 "Relações com Investidores: ri@vale-exemplo.com.br | Tel.: +55 (21) 3485-0000 | "
+                 "Fax.: 55 21 3485.0001 | CNPJ 33.592.510/0001-54 | NIRE 33.300.019.766"),
+        upd="2026-11-03T01:10:00.5+00:00"),
+    _fl(3546100, "KLBN11", "KLABIN S.A. (KLBN) - Outros Comunicados ao Mercado - 01/11/26",
+        "Outros Comunicados ao Mercado", "2026-11-01", "2026-11-01T10:05:00-03:00", url=None,
+        newsworthy=True, excerpt="Safra 2025-2026: 1.234.567 toneladas; a data-base é 06.11.2026."),
+    _fl(3546050, "USIM5", "USIMINAS (USIM-N1) - Ata Reuniao do Conselho de Administracao - 30/10/26",
+        "Ata Reuniao do Conselho de Administracao", "2026-10-30", "2026-10-30T18:00:00-03:00",
+        url="https://www.rad.cvm.gov.br/ENET/frmExibirArquivoIPEExterno.aspx?ID=1&token=SEGREDO"),
+    _fl(3545900, "BRAP4", "BRADESPAR (BRAP-N1) - Polit. Divulgacao Ato ou Fato Relevante - 29/10/26 (R)",
+        "Polit. Divulgacao Ato ou Fato Relevante", "2026-10-29", "2026-10-29T09:00:00-03:00",
+        flag="R", newsworthy=True),
+    _fl(3545800, "AURA33", "AURA MINERALS (AURA) - Aviso aos Acionistas - 28/10/26",
+        "Aviso aos Acionistas", "2026-10-28", "2026-10-28T20:00:00-03:00", newsworthy=True,
+        title="Aura anuncia dividendos",
+        excerpt="Aura anuncia dividendos de US$ 0,25 por ação. Dúvidas: ri@aura-exemplo.co"),
+    _fl(3545700, "RANI3", "IRANI (RANI-NM) - Dados Financeiros - Press-release - 27/10/26",
+        "Dados Financeiros - Press-release", "2026-10-27", "2026-10-27T19:00:00-03:00",
+        newsworthy=True,
+        excerpt=("Receita de R$ 1.234.567,89 no 3T26. SAC 0800 891 0000. Sede: Rua Exemplo, 100, "
+                 "CEP 90010-150. NIRE 43300002578.")),
+    _fl(3545600, "CSNA3", "CSN (CSNA-N1) - Fato Relevante - 27/10/26", "Fato Relevante",   # OCULTA
+        "2026-10-27", "2026-10-27T12:00:00-03:00", newsworthy=True),
+]
+
+
+MW_FAMILY_FILES = [f"mw-short-{co.lower()}.json" for co in MW_VISIBLE]
+MW_FIXED = ["mw-companies.json", "mw-short-interest.json", "mw-buybacks.json", "mw-insiders.json",
+            "mw-filings.json"]
+
+
+def no_mw_cap(monkeypatch) -> None:
+    """Desliga o teto de envios por execução do grupo `mw` (registry.GROUP_CAPS). Os testes das
+    Ondas 1a/1b/2.1B andam ciclo a ciclo com TODOS os arquivos; o teto espalharia os 11 do Market
+    Watch por vários ciclos, o que eles não examinam — o teto tem testes próprios
+    (test_hub_export_mw.py)."""
+    monkeypatch.setattr("hub_export.run.GROUP_CAPS", {})
+
+
+def _mw_visible(database) -> set:
+    return {c["ticker"] for c in database["mw_companies"] if c["is_visible"]}
+
+
+def _rpc_mw_companies(database, args):
+    return sorted((c for c in database["mw_companies"] if c["is_visible"]),
+                  key=lambda c: (c["display_order"], c["ticker"]))
+
+
+def _rpc_mw_short_interest(database, args):
+    vis, co, frm = _mw_visible(database), args.get("p_company"), args.get("p_from")
+    rows = [r for r in database["mw_short_interest"] if r["company"] in vis
+            and (co is None or r["company"] == co) and (frm is None or r["ref_date"] >= frm)]
+    return sorted(rows, key=lambda r: (r["ref_date"], r["ticker"]))
+
+
+def _rpc_mw_short_latest(database, args):
+    """O corpo de `get_mw_short_latest()`: o último dia de cada papel visível, a posição do último
+    pregão ≤ 30 dias antes e quantos dias o papel tem na tabela."""
+    from datetime import date as _d, timedelta as _td
+    vis = _mw_visible(database)
+    by: dict = {}
+    for r in database["mw_short_interest"]:
+        by.setdefault(r["ticker"], []).append(r)
+    out = []
+    for t, rows in by.items():
+        rows = sorted(rows, key=lambda r: r["ref_date"])
+        last = rows[-1]
+        if last["company"] not in vis:
+            continue
+        lim = (_d.fromisoformat(last["ref_date"]) - _td(days=30)).isoformat()
+        m1 = [r for r in rows if r["ref_date"] <= lim]
+        out.append({"ticker": t, "company": last["company"], "ref_date": last["ref_date"],
+                    "qty_total": last["qty_total"], "value_brl": last["value_brl"],
+                    "avg_price": last["avg_price"], "rate_taker_avg": last["rate_taker_avg"],
+                    "qty_1m": m1[-1]["qty_total"] if m1 else None,
+                    "rate_1m": m1[-1]["rate_taker_avg"] if m1 else None, "days": len(rows)})
+    return sorted(out, key=lambda r: (r["company"], r["ticker"]))
+
+
+def _rpc_mw_share_capital(database, args):
+    vis = _mw_visible(database)
+    return [k for k in database["mw_share_capital"] if k["company"] in vis]
+
+
+def _rpc_mw_buybacks(database, args):
+    vis, co = _mw_visible(database), args.get("p_company")
+    rows = [b for b in database["mw_buyback_programs"] if b["company"] in vis
+            and (co is None or b["company"] == co)]
+    rows.sort(key=lambda b: b["program_id"], reverse=True)
+    rows.sort(key=lambda b: (b["decided_on"] is not None, b["decided_on"] or ""), reverse=True)
+    return rows
+
+
+def _rpc_mw_insiders(database, args):
+    vis, co, frm = _mw_visible(database), args.get("p_company"), args.get("p_from")
+    rows = [m for m in database["mw_insider_moves"] if m["company"] in vis
+            and (co is None or m["company"] == co) and (frm is None or m["ref_month"] >= frm)]
+    rows.sort(key=lambda m: m["id"])
+    rows.sort(key=lambda m: (m["group_type"] is None, m["group_type"] or ""))
+    rows.sort(key=lambda m: (m["move_date"] is not None, m["move_date"] or ""), reverse=True)
+    rows.sort(key=lambda m: m["ref_month"], reverse=True)
+    return rows
+
+
+def _rpc_mw_filings(database, args):
+    vis, co = _mw_visible(database), args.get("p_company")
+    lim = max(1, min(int(args.get("p_limit") or 200), 2000))
+    rows = [f for f in database["mw_filings"] if f["company"] in vis
+            and (co is None or f["company"] == co)]
+    rows.sort(key=lambda f: _ts(f["published_at"], "published_at"), reverse=True)
+    return rows[:lim]
+
+
 def db() -> dict:
+    out = _db_small()
+    # as tabelas grandes do Market Watch têm só valores escalares por linha: a cópia rasa de cada
+    # linha basta (o deepcopy de ~1.400 linhas custava 60 ms por banco falso, centenas de vezes)
+    out["mw_short_interest"] = [dict(r) for r in MW_LENDING]
+    out["mw_insider_moves"] = [dict(r) for r in MW_INSIDERS]
+    return out
+
+
+def _db_small() -> dict:
     return copy.deepcopy({"quotes": QUOTES, "macro_indicators": MACRO, "commodities": COMMODITIES,
                           "news_articles": NEWS, "news_digest": DIGEST,
                           "exec_calendar_events": CAL_EVENTS,
@@ -562,6 +891,8 @@ def db() -> dict:
                           "quote_history": [],          # vazia: quem testa a família põe quote_history()
                           "stock_guide_rating_history": RATING_HISTORY,
                           "stock_guide_companies": SG_COMPANIES,
+                          "mw_companies": MW_COMPANIES, "mw_share_capital": MW_CAPITAL,
+                          "mw_buyback_programs": MW_BUYBACKS, "mw_filings": MW_FILINGS,
                           "rpc_rows": {"reports": REPORTS},
                           "rpc": {"get_dashboard_flags": FLAGS,
                                   "get_heatmap_tickers": HEATMAP_ADMIN,
@@ -570,7 +901,14 @@ def db() -> dict:
                                   "get_exec_calendar_categories": _rpc_categories,
                                   "get_exec_calendar_data_windows": _rpc_windows,
                                   "get_exec_calendar_events": _rpc_events,
-                                  "get_rating_history": _rpc_rating_history}})
+                                  "get_rating_history": _rpc_rating_history,
+                                  "get_mw_companies": _rpc_mw_companies,
+                                  "get_mw_short_interest": _rpc_mw_short_interest,
+                                  "get_mw_short_latest": _rpc_mw_short_latest,
+                                  "get_mw_share_capital": _rpc_mw_share_capital,
+                                  "get_mw_buybacks": _rpc_mw_buybacks,
+                                  "get_mw_insiders": _rpc_mw_insiders,
+                                  "get_mw_filings": _rpc_mw_filings}})
 
 
 # ── a memória do ciclo, como o update_quotes/update_macro monta ───────────────────────────────
@@ -660,12 +998,19 @@ def _arrow(row: dict, expr: str):
     return val if isinstance(val, str) else json.dumps(val)
 
 
+_SCALARS = (str, int, float, bool, type(None))
+
+
 def _project(row: dict, select: str) -> dict:
     out = {}
     for item in select.split(","):
         item = item.strip()
         alias, expr = item.split(":", 1) if ":" in item else (item, item)
-        out[alias] = _arrow(row, expr) if "->" in expr else copy.deepcopy(row.get(expr))
+        if "->" in expr:
+            out[alias] = _arrow(row, expr)
+        else:
+            v = row.get(expr)
+            out[alias] = v if isinstance(v, _SCALARS) else copy.deepcopy(v)
     return out
 
 

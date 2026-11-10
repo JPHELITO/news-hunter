@@ -6,7 +6,10 @@ Onda 1a: config, live, intraday, quotes-daily. Onda 1b: news-latest, três seman
 as três já "publicadas"), news-digest, reports e calendar. Onda 2: quotes-monthly,
 commodities-daily, ratings, três históricos (history-vale3.sa: desde 2020, com pontos que a redução
 mensal descarta; history-ibov: índice; history-scco: com split) e o history-index (com os três já
-"publicados").
+"publicados"). Onda 2 (WP2.4B, Market Watch): mw-companies (com os fatos de cada empresa),
+mw-short-interest (visão "Todas", 100 dias), mw-buybacks, mw-insiders (MAIS DE 1.000 linhas: o
+caso do corte do PostgREST — é a amostra grande, ~190 KB) e mw-filings, mais o aluguel de cada
+empresa visível (mw-short-<empresa>: ON, PN, PNA/PNB, UNIT, BDR).
 
 Por que existe: o hub (React) começa as telas por estas amostras — o orquestrador as copia para
 `__tests__/fixtures` do lado do hub a cada mudança de contrato. Qualquer mudança no que sai daqui
@@ -32,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import test_hub_export_fixtures as F  # noqa: E402
 from hub_export import history as H  # noqa: E402
+from hub_export import mw as MW  # noqa: E402
 from hub_export import weeks as W  # noqa: E402
 from hub_export.encode import forbidden_keys  # noqa: E402
 from hub_export.registry import FILES, spec_for  # noqa: E402
@@ -70,6 +74,9 @@ def golden_objects() -> dict[str, dict]:
         hist.after(t, obj, "enviado")                                      # como se publicado
         out[name] = obj
     out["history-index.json"] = FILES["history-index.json"].builder(src)
+    for co in F.MW_VISIBLE:
+        name = MW.file_name(co)
+        out[name] = spec_for(name).builder(src)
     return out
 
 
@@ -96,4 +103,4 @@ def test_samples_sao_exatamente_os_arquivos_e_validos():
         obj = json.loads((SAMPLES / name).read_text(encoding="utf-8"))
         assert obj == built                                  # a formatação não mexe no dado
         assert obj["schemaVersion"] == 1 and obj["generatedAt"] == F.GENERATED
-        assert forbidden_keys(obj) == []
+        assert forbidden_keys(obj, extra=spec_for(name).forbidden) == []

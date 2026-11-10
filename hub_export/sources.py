@@ -44,6 +44,9 @@ Onda 2 (PLANO, Apêndice F; pesquisa 2-dados §4):
                             Guide; RPC `get_rating_history` (paginada) quando muda, na partida a
                             frio e 1×/dia (06 UTC). Flag `market_ratings` desligada: nada é lido.
   histórico longo           history.py (família history-<id>.json + history-index.json).
+  Market Watch              mw.py (WP2.4B): as RPCs `get_mw_*`, sondas pela RPC (contagem +
+                            máximo, ~1 KB), estado próprio (`<estado>_mw.json`), partida a frio pelas
+                            cópias publicadas e a família mw-short-<empresa>.json.
 
 Tudo é normalizado aqui (datas `…Z`, números finitos ou None, `session` válida ou None) e
 guardado assim no estado — os construtores só renomeiam campo a campo.
@@ -211,7 +214,7 @@ class Sources:
     def __init__(self, supa, state: dict, *, now: datetime | None = None,
                  memory: dict | None = None, published=None, mode: str = "send",
                  rebuild: bool = False, out_dir=None, weeks_arg=None, news_path=None,
-                 first_week: str | None = None, history_arg=None):
+                 first_week: str | None = None, history_arg=None, mw_path=None):
         self.supa = supa
         self.state = state
         self.now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -225,6 +228,9 @@ class Sources:
         self.news_path = news_path
         self.first_week = first_week
         self.history_arg = history_arg
+        self.mw_path = mw_path
+        self._mw = None
+        self._mw_state = None
         self.quote_universe = quote_universe()
         self.macro_universe = macro_universe()
         self.used_memory = {"quotes": None, "macro": None}
@@ -550,6 +556,36 @@ class Sources:
 
     def history_if_loaded(self):
         return self._history
+
+    # ── Market Watch (mw.py) ────────────────────────────────────────────────────────────────────
+    def mw(self):
+        """O MWStore desta execução (o estado sai do arquivo próprio, uma vez)."""
+        if self._mw is None:
+            from .mw import MWStore, empty_mw_state, load_mw_state
+            st = load_mw_state(self.mw_path) if self.mw_path else empty_mw_state()
+            self._mw_state = st
+            self._mw = MWStore(self, st)
+        return self._mw
+
+    def mw_if_loaded(self):
+        return self._mw
+
+    def save_mw(self) -> None:
+        if self._mw is not None and self.mw_path:
+            from .mw import save_mw_state
+            save_mw_state(self.mw_path, self._mw_state)
+
+    def mw_family_plan(self, explicit=(), auto: bool = True, force: bool = False) -> list[str]:
+        """As empresas da família mw-short nesta execução. No envio, se nenhum arquivo da família
+        conhecido está na vez (o caso de 11 em cada 12 ciclos), nem carrega o estado do Market Watch."""
+        from .mw import company_from_file
+        from .schedule import COLD, is_due
+        if self._mw is None and self.mode == "send" and auto and not explicit and not force:
+            files = self.state.get("files") or {}
+            known = [n for n in files if company_from_file(n)]
+            if known and not any(is_due(COLD, (files[n] or {}).get("builtAt"), self.now) for n in known):
+                return []
+        return self.mw().family_plan(explicit=explicit, auto=auto, force=force)
 
     # ── configuração do /admin ──────────────────────────────────────────────────────────────
     def flags(self) -> list[dict]:

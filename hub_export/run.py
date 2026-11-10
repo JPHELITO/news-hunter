@@ -12,11 +12,15 @@ cadência, a ordem do registro: as semanas antes do índice):
      manda reenviar; sem envio no estado (runner novo) → compara com a cópia PUBLICADA
      (igual = registra e não envia);
   4. envia (initialize → PUT → complete) e grava hash/enviado em/revisão.
-As famílias são expandidas na vez delas: `news-week` (news.py diz quais semanas vão nesta execução)
-e `history` (history.py: a fila do loop, no máximo 2 por execução, ou os papéis pedidos pelo nome
-ou pelo `--history`). Erro num arquivo vira uma linha de aviso e NÃO impede os outros (e o arquivo
+As famílias são expandidas na vez delas: `news-week` (news.py diz quais semanas vão nesta execução),
+`history` (history.py: a fila do loop, no máximo 2 por execução, ou os papéis pedidos pelo nome
+ou pelo `--history`) e `mw-short` (mw.py: as empresas visíveis na vez, ou as pedidas pelo nome).
+Erro num arquivo vira uma linha de aviso e NÃO impede os outros (e o arquivo
 tenta de novo no ciclo seguinte). Orçamento de 90 s por execução no loop: arquivo que não coube
 fica para o próximo ciclo — a família `history` vem por último no COLD, então é ela que espera.
+TETO POR GRUPO (registry.GROUP_CAPS; hoje o Market Watch, 4 por execução): o arquivo que mudou mas
+passaria do teto fica "na fila" — não conta como erro e, sem o build registrado, vai no ciclo
+seguinte. Vale no envio e é simulado no dry-run; o --out grava tudo.
 
 Modos: "send" (o normal), "dry" (monta e diz o que enviaria) e "out" (grava os arquivos numa
 pasta exatamente como seriam enviados — gzip inclusive). "dry" e "out" NUNCA mexem no registro
@@ -34,18 +38,21 @@ import logging
 import os
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import history as H
+from . import mw as MW
 from . import state as state_mod
 from . import weeks as W
 from .encode import content_hash, forbidden_keys, gzip_bytes, iso_utc, to_json_bytes
 from .feeder import FeederClient, missing_env
 from .news import news_state_path
-from .registry import HISTORY_FAMILY, WEEK_FAMILY, cadence_of, position, resolve, spec_for
+from .registry import (GROUP_CAPS, HISTORY_FAMILY, MW_FAMILY, WEEK_FAMILY, cadence_of, position,
+                       resolve, spec_for)
 from .schedule import is_due, pulse_due
 from .sources import Sources, cycle_memory
 from .supa import SupaReader
@@ -61,6 +68,7 @@ _URL_RE = re.compile(r"https?://\S+")
 class Result:
     name: str
     action: str                   # enviado | igual | fora da vez | erro | adiado | gravado | enviaria
+                                  # | na fila (passaria do teto do grupo: vai no ciclo seguinte)
     bytes: int | None = None      # como seria enviado (gzip quando o arquivo é gzip)
     raw_bytes: int | None = None  # JSON antes do gzip
     gz_bytes: int | None = None   # tamanho comprimido (referência, mesmo p/ os que vão em texto)
@@ -129,6 +137,26 @@ def _items(name: str, obj: dict) -> str:
         return f"{len(cos)} empresas, {sum(len(c.get('events') or []) for c in cos)} eventos"
     if name == "history-index.json":
         return f"{len(obj.get('items') or [])} históricos publicados"
+    if name == "mw-companies.json":
+        cos = obj.get("companies") or []
+        com_capital = sum(1 for c in cos if c.get("capital"))
+        return (f"{len(cos)} empresas ({com_capital} com capital), "
+                f"{len(obj.get('shortLatest') or [])} papéis no aluguel até {obj.get('lendingThrough')}")
+    if name == "mw-short-interest.json" or MW.company_from_file(name):
+        series = obj.get("series") or {}
+        rows = [r for s in series.values() for r in (s.get("rows") if isinstance(s, dict) else s) or []]
+        days = sorted(r[0] for r in rows if r)
+        span = f"{days[0]} a {days[-1]}" if days else "sem linhas"
+        return f"{len(series)} papéis, {len(rows)} linhas ({span})"
+    if name == "mw-buybacks.json":
+        it = obj.get("items") or []
+        return f"{len(it)} programas ({sum(1 for i in it if i.get('status'))} com situação)"
+    if name == "mw-insiders.json":
+        return f"{len(obj.get('rows') or [])} linhas desde {obj.get('from')}"
+    if name == "mw-filings.json":
+        it = obj.get("items") or []
+        return (f"{len(it)} comunicados ({sum(1 for i in it if not i.get('url'))} sem link, "
+                f"{sum(1 for i in it if i.get('docExcerpt'))} com trecho)")
     if H.ticker_from_file(name):
         def day(ts):
             return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d") if ts else "?"
@@ -170,8 +198,16 @@ def _after(spec, src, obj, action) -> None:
             log.warning("pós-envio falhou (%s: %s)", type(e).__name__, e)
 
 
+def _capped(spec, group_sent) -> str | None:
+    """O motivo de ficar na fila quando o grupo do arquivo já bateu o teto nesta execução."""
+    cap = GROUP_CAPS.get(spec.group) if spec.group else None
+    if cap is None or group_sent is None or group_sent[spec.group] < cap:
+        return None
+    return f"teto de {cap} envios do grupo {spec.group} por execução — vai no próximo ciclo"
+
+
 def _one(name, spec, *, st, src, mode, force, now, deadline, clock, feeder, published, out_dir,
-         secrets) -> Result:
+         secrets, group_sent=None) -> Result:
     files = st["files"]
     fs = dict(files.get(name) or {})
     if clock() >= deadline:
@@ -205,13 +241,23 @@ def _one(name, spec, *, st, src, mode, force, now, deadline, clock, feeder, publ
             return res
         send, reason, changed, rec = _decide(name, spec, fs, res.hash, published, now, force)
         res.changed, res.reason = changed, reason
+        queued = _capped(spec, group_sent) if send and due else None
         if mode == "dry":
-            res.action = ("enviaria" if send else "igual") if due else "fora da vez"
+            if queued:
+                res.action, res.reason = "na fila", queued
+            else:
+                res.action = ("enviaria" if send else "igual") if due else "fora da vez"
+                if res.action == "enviaria" and spec.group and group_sent is not None:
+                    group_sent[spec.group] += 1
             _after(spec, src, obj, res.action)
             return res
         if rec:
             fs.update(rec)
         if send:
+            if queued:                  # passaria do teto: sem o build registrado, vai no próximo
+                files[name] = fs
+                res.action, res.reason = "na fila", queued
+                return res
             if clock() >= deadline:
                 files[name] = fs
                 res.action, res.reason = "adiado", "orçamento de tempo"
@@ -220,6 +266,8 @@ def _one(name, spec, *, st, src, mode, force, now, deadline, clock, feeder, publ
                                          deadline=deadline)
             fs.update(hash=res.hash, sentAt=generated, revision=res.revision)
             res.action = "enviado"
+            if spec.group and group_sent is not None:
+                group_sent[spec.group] += 1
         else:
             res.action = "igual"
         fs.update(builtAt=generated, lastError=None, lastErrorAt=None)
@@ -303,24 +351,29 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
     src = Sources(supa, st, now=now, memory=cycle_memory() if memory is None else memory,
                   published=published, mode=mode, rebuild=rebuild, out_dir=out_dir,
                   weeks_arg=weeks if mode != "send" else None, news_path=news_state_path(path),
-                  first_week=first_week, history_arg=history)
+                  first_week=first_week, history_arg=history, mw_path=MW.mw_state_path(path))
     supa_url = env.get("SUPABASE_URL") or ""
     secrets = [env.get("DASHBOARD_FEEDER_API_KEY"), env.get("SUPABASE_SERVICE_KEY"), supa_url,
                urlsplit(supa_url).hostname if supa_url else None]
     kw = dict(st=st, src=src, mode=mode, force=force, now=now, deadline=deadline, clock=clock,
-              feeder=feeder, published=published, out_dir=out_dir, secrets=secrets)
+              feeder=feeder, published=published, out_dir=out_dir, secrets=secrets,
+              group_sent=Counter())
 
     explicit = [lab for lab in (W.label_from_file(n) for n in names) if lab]
     explicit_h = [t for t in (H.ticker_from_file(n) for n in names) if t]
-    entries = [n for n in names if not W.label_from_file(n) and not H.ticker_from_file(n)]
+    explicit_m = [co for co in (MW.company_from_file(n) for n in names) if co]
+    entries = [n for n in names if not W.label_from_file(n) and not H.ticker_from_file(n)
+               and not MW.company_from_file(n)]
     if explicit and WEEK_FAMILY not in entries:
         entries.append(WEEK_FAMILY)
     if (explicit_h or history) and HISTORY_FAMILY not in entries:
         entries.append(HISTORY_FAMILY)
+    if explicit_m and MW_FAMILY not in entries:
+        entries.append(MW_FAMILY)
     results = []
     for entry in sorted(entries, key=lambda n: (cadence_of(n), position(n))):
         todo = [entry]
-        if entry in (WEEK_FAMILY, HISTORY_FAMILY):
+        if entry in (WEEK_FAMILY, HISTORY_FAMILY, MW_FAMILY):
             if clock() >= deadline:
                 todo = []
                 results.append(Result(entry, "adiado", reason="orçamento de tempo"))
@@ -330,6 +383,9 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
                     if entry == WEEK_FAMILY:
                         todo = [W.file_name(lab) for lab in src.news().week_labels(
                             explicit=explicit, auto=WEEK_FAMILY in names)]
+                    elif entry == MW_FAMILY:
+                        todo = [n for n in (MW.file_name(co) for co in src.mw_family_plan(
+                            explicit=explicit_m, auto=MW_FAMILY in names, force=force)) if n]
                     else:
                         todo = [H.file_name(t) for t in src.history().plan(
                             explicit=explicit_h, auto=HISTORY_FAMILY in names)]
@@ -345,7 +401,8 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
 
     state_mod.save(path, st)
     src.save_news()
-    for store in (src.news_if_loaded(), src.history_if_loaded()):
+    src.save_mw()
+    for store in (src.news_if_loaded(), src.history_if_loaded(), src.mw_if_loaded()):
         note = store.end_note() if store is not None else None
         if note:
             log.info("%s", note)

@@ -3,10 +3,13 @@
     --env-file PATH   carrega as variáveis desse .env (sem ele, o .env da raiz, se existir)
     --only a,b        só esses arquivos (config, live, intraday, quotes-daily, news-latest,
                       news-digest, calendar, reports, news-week, news-index, quotes-monthly,
-                      commodities-daily, ratings, history, history-index; com ou sem .json;
+                      commodities-daily, ratings, mw-companies, mw-short-interest, mw-buybacks,
+                      mw-insiders, mw-filings, mw-short, history, history-index; com ou sem .json;
                       "news-week" = as semanas que o exportador escolhe; "news-week-2026-w45" =
                       aquela semana, relida do banco; "history" = a fila de históricos do loop;
-                      "history-vale3.sa" = o histórico daquele papel; "all" = todos)
+                      "history-vale3.sa" = o histórico daquele papel; "mw-short" = o aluguel de
+                      cada empresa do Market Watch (no --out, todas); "mw-short-klbn11" = o daquela
+                      empresa; "all" = todos)
     --all             todos (o padrão)
     --out DIR         grava os arquivos em DIR exatamente como seriam enviados (gzip inclusive)
                       e imprime a tabela nome/bytes/hash; não envia nem mexe no registro de envio
@@ -74,7 +77,9 @@ def _parser() -> argparse.ArgumentParser:
     sel.add_argument("--only", metavar="LISTA",
                      help="config,live,intraday,quotes-daily,news-latest,news-digest,calendar,"
                           "reports,news-week,news-index,quotes-monthly,commodities-daily,ratings,"
-                          "history,history-index (ou news-week-AAAA-wNN, history-<papel>)")
+                          "mw-companies,mw-short-interest,mw-buybacks,mw-insiders,mw-filings,"
+                          "mw-short,history,history-index (ou news-week-AAAA-wNN, history-<papel>, "
+                          "mw-short-<empresa>)")
     sel.add_argument("--all", action="store_true", help="todos os arquivos (padrão)")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--out", metavar="DIR", help="grava os arquivos em DIR, sem enviar")

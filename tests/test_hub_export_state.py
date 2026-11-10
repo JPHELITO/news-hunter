@@ -20,6 +20,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -29,6 +30,11 @@ import test_hub_export_fixtures as F  # noqa: E402
 from hub_export import state as S  # noqa: E402
 from hub_export.encode import gzip_bytes, to_json_bytes  # noqa: E402
 from hub_export.run import run_cycle  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _sem_teto_do_market_watch(monkeypatch):
+    F.no_mw_cap(monkeypatch)
 
 
 def run(http, path, **kw):

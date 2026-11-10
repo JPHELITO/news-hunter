@@ -24,6 +24,13 @@ run.py expande na vez dele (history.py diz quais papéis: a fila do loop, no má
 ou os pedidos pelo nome `history-vale3.sa`). A família vem por ÚLTIMO no COLD, antes do índice: se
 o orçamento de 90 s acabar, quem espera é ela. O arquivo de um papel tem cadência HOT no Spec porque
 a cadência da família é a da fila (history.py), não a do arquivo.
+
+Market Watch (Onda 2, WP2.4B, Apêndice F.6–F.11): mw-companies (texto) e mw-short-interest,
+mw-buybacks, mw-insiders e mw-filings (gzip), COLD; e a FAMÍLIA `mw-short` (`mw-short-<fileId>.json`,
+uma por empresa visível, gzip), cada arquivo COLD pelo seu último build (mw.py diz quais empresas). O
+mw-buybacks é montado de hora em hora, mas o dado só é RELIDO 2×/dia (mw.py: o `updated_at` dessas
+tabelas não serve de sonda). Os 5 fixos e a família formam o GRUPO `mw`, com TETO de envios por
+execução (GROUP_CAPS, O28): o que passa do teto fica "na fila" e vai no ciclo seguinte.
 """
 from __future__ import annotations
 
@@ -32,15 +39,22 @@ from functools import partial
 from typing import Callable
 
 from . import history as H
+from . import mw as MW
 from . import weeks as W
 from .exporters import (calendar, commodities_daily, config, history_file, history_index, intraday,
-                        live, news_digest, news_index, news_latest, news_week, quotes_daily,
-                        quotes_monthly, ratings, reports)
+                        live, mw_buybacks, mw_companies, mw_filings, mw_insiders, mw_short_file,
+                        mw_short_interest, news_digest, news_index, news_latest, news_week,
+                        quotes_daily, quotes_monthly, ratings, reports)
 from .schedule import COLD, HOT, PULSE_LIVE, WARM
 
 KB = 1024
 WEEK_FAMILY = W.PREFIX          # "news-week"
 HISTORY_FAMILY = H.PREFIX       # "history"
+MW_FAMILY = MW.PREFIX           # "mw-short"
+MW_GROUP = "mw"
+# envios por execução, por grupo (O28: a carga inicial do Market Watch são 16 arquivos — o Feeder pega
+# 10 revisões por ~60 s de TODOS os times; uma rajada nossa atrasaria as dos outros)
+GROUP_CAPS = {MW_GROUP: 4}
 
 
 @dataclass(frozen=True)
@@ -53,6 +67,7 @@ class Spec:
     after: Callable | None = None    # (src, obj, ação) depois da decisão de enviar
     urgent: Callable | None = None   # (src) → True = na vez fora da cadência
     forbidden: frozenset = field(default_factory=frozenset)   # chaves proibidas SÓ neste arquivo
+    group: str | None = None         # grupo com teto de envios por execução (GROUP_CAPS)
 
     @property
     def content_type(self) -> str:
@@ -76,16 +91,30 @@ FILES: dict[str, Spec] = {
                                    forbidden=ratings.FORBIDDEN),
     "history-index.json":     Spec(history_index.build,     COLD, False, None, 20 * KB,
                                    urgent=history_index.urgent),
+    "mw-companies.json":      Spec(mw_companies.build,      COLD, False, None, 20 * KB,
+                                   forbidden=mw_companies.FORBIDDEN, group=MW_GROUP),
+    "mw-short-interest.json": Spec(mw_short_interest.build, COLD, True,  None, 60 * KB,
+                                   forbidden=mw_short_interest.FORBIDDEN, group=MW_GROUP),
+    "mw-buybacks.json":       Spec(mw_buybacks.build,       COLD, True,  None, 100 * KB,
+                                   forbidden=mw_buybacks.FORBIDDEN, group=MW_GROUP),
+    "mw-insiders.json":       Spec(mw_insiders.build,       COLD, True,  None, 500 * KB,
+                                   forbidden=mw_insiders.FORBIDDEN, group=MW_GROUP),
+    # comunicados: ~1 KB cru por item com o trecho (medido em 10/11: 188 KB para 181) → ~620 KB nos 600
+    "mw-filings.json":        Spec(mw_filings.build,        COLD, True,  None, 700 * KB,
+                                   forbidden=mw_filings.FORBIDDEN, group=MW_GROUP),
 }
 WEEK_SPEC = dict(cadence=COLD, gzip=True, pulse=None, max_bytes=1024 * KB)
 HISTORY_SPEC = dict(cadence=HOT, gzip=True, pulse=None, max_bytes=300 * KB)
+MW_SHORT_SPEC = dict(cadence=COLD, gzip=True, pulse=None, max_bytes=100 * KB,
+                     forbidden=mw_short_interest.FORBIDDEN, group=MW_GROUP)
 
 # a ordem de processamento dentro de cada cadência (o run.py ordena por cadência, depois por esta)
 ORDER = ["live.json", "intraday.json", "news-latest.json", "news-digest.json", "config.json",
          "calendar.json", "quotes-daily.json", "reports.json", WEEK_FAMILY, "news-index.json",
-         "quotes-monthly.json", "commodities-daily.json", "ratings.json", HISTORY_FAMILY,
-         "history-index.json"]
-FAMILIES = (WEEK_FAMILY, HISTORY_FAMILY)
+         "quotes-monthly.json", "commodities-daily.json", "ratings.json", "mw-companies.json",
+         "mw-short-interest.json", "mw-buybacks.json", "mw-insiders.json", "mw-filings.json",
+         MW_FAMILY, HISTORY_FAMILY, "history-index.json"]
+FAMILIES = (WEEK_FAMILY, HISTORY_FAMILY, MW_FAMILY)
 
 
 def _after_week(label: str) -> Callable:
@@ -111,6 +140,9 @@ def spec_for(name: str) -> Spec:
     if ticker is not None:
         return Spec(partial(history_file.build, ticker=ticker), after=_after_history(ticker),
                     **HISTORY_SPEC)
+    company = MW.company_from_file(name)
+    if company is not None:
+        return Spec(partial(mw_short_file.build, company=company), **MW_SHORT_SPEC)
     raise KeyError(name)
 
 
@@ -126,6 +158,8 @@ def position(name: str) -> int:
         return ORDER.index(WEEK_FAMILY)
     if H.ticker_from_file(name):
         return ORDER.index(HISTORY_FAMILY)
+    if MW.company_from_file(name):
+        return ORDER.index(MW_FAMILY)
     return len(ORDER)
 
 
@@ -135,9 +169,10 @@ def valid_names() -> list[str]:
 
 def resolve(only=None) -> list[str]:
     """`None`/"all" → todos (com os marcadores das famílias); "config,live" (com ou sem `.json`) →
-    os nomes na ordem pedida; "news-week"/"history" = a família; "news-week-2026-w45" = aquela
-    semana; "history-vale3.sa" = o histórico daquele papel (só os do universo da Market).
-    Nome desconhecido → ValueError com a lista dos válidos."""
+    os nomes na ordem pedida; "news-week"/"history"/"mw-short" = a família; "news-week-2026-w45" =
+    aquela semana; "history-vale3.sa" = o histórico daquele papel (só os do universo da Market);
+    "mw-short-klbn11" = o aluguel daquela empresa (a empresa é conferida na montagem: tem de estar
+    visível no Market Watch). Nome desconhecido → ValueError com a lista dos válidos."""
     if only is None:
         return list(ORDER)
     parts = [p.strip() for p in (only.split(",") if isinstance(only, str) else only)]
@@ -151,9 +186,10 @@ def resolve(only=None) -> list[str]:
         else:
             name = p if p.endswith(".json") else p + ".json"
             if (name not in FILES and W.label_from_file(name) is None
-                    and H.ticker_from_file(name) is None):
+                    and H.ticker_from_file(name) is None and MW.company_from_file(name) is None):
                 raise ValueError(f"arquivo desconhecido: {p} (válidos: " + ", ".join(valid_names())
-                                 + ", news-week-AAAA-wNN, history-<papel> como history-vale3.sa)")
+                                 + ", news-week-AAAA-wNN, history-<papel> como history-vale3.sa, "
+                                   "mw-short-<empresa> como mw-short-vale3)")
         if name not in out:
             out.append(name)
     return out

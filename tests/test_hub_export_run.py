@@ -42,7 +42,13 @@ from hub_export.supa import SupaError, SupaReader  # noqa: E402
 
 
 FIRST_WEEKS = [f"news-week-{w}.json" for w in (F.WEEK_OLD, F.WEEK_PREV, F.WEEK_CUR)]
-ALL_FIRST = list(FILES) + FIRST_WEEKS          # o 1º ciclo: os fixos + carga da 43 + 44 e 45
+# o 1º ciclo: os fixos + carga da 43 + 44 e 45 + o aluguel de cada empresa do Market Watch
+ALL_FIRST = list(FILES) + FIRST_WEEKS + F.MW_FAMILY_FILES
+
+
+@pytest.fixture(autouse=True)
+def _sem_teto_do_market_watch(monkeypatch):
+    F.no_mw_cap(monkeypatch)
 
 
 def run(http, path, **kw):
@@ -102,7 +108,27 @@ def test_registro_bate_com_o_contrato():
         "commodities-daily.json": (3600, True, None, 150 * 1024, "application/gzip"),
         "ratings.json":           (3600, True, None, 100 * 1024, "application/gzip"),
         "history-index.json":     (3600, False, None, 20 * 1024, "application/json"),
+        "mw-companies.json":      (3600, False, None, 20 * 1024, "application/json"),
+        "mw-short-interest.json": (3600, True, None, 60 * 1024, "application/gzip"),
+        "mw-buybacks.json":       (3600, True, None, 100 * 1024, "application/gzip"),
+        "mw-insiders.json":       (3600, True, None, 500 * 1024, "application/gzip"),
+        "mw-filings.json":        (3600, True, None, 700 * 1024, "application/gzip"),
     }
+    # o Market Watch: o grupo com teto de envios por execução (O28) e as chaves proibidas de cada um
+    from hub_export.registry import GROUP_CAPS
+    assert GROUP_CAPS == {"mw": 4}
+    assert {n for n, s in FILES.items() if s.group == "mw"} == set(F.MW_FIXED)
+    assert {"cnpj", "cvm_code", "b3_code", "is_visible"} <= FILES["mw-companies.json"].forbidden
+    assert {"id", "updated_at"} <= FILES["mw-insiders.json"].forbidden
+    assert {"cvm_url", "b3_code"} <= FILES["mw-filings.json"].forbidden
+    m = spec_for("mw-short-klbn11.json")                     # a família do aluguel por empresa
+    assert (m.cadence, m.gzip, m.pulse, m.max_bytes, m.content_type, m.group) == \
+        (3600, True, None, 100 * 1024, "application/gzip", "mw")
+    for ruim in ("mw-short-KLBN11.json", "mw-short-klbn11", "mw-short-.json"):
+        with pytest.raises(KeyError):
+            spec_for(ruim)
+    assert spec_for("mw-short-interest.json") is FILES["mw-short-interest.json"]   # o fixo, não a família
+    assert ORDER.index("mw-filings.json") < ORDER.index("mw-short") < ORDER.index("history")
     w = spec_for("news-week-2026-w53.json")                  # a família semanal
     assert (w.cadence, w.gzip, w.pulse, w.max_bytes, w.content_type) == \
         (3600, True, None, 1024 * 1024, "application/gzip")
@@ -134,7 +160,8 @@ def test_live_intraday_e_quotes_daily_em_gzip_config_em_texto(tmp_path):
     assert up["config.json"].startswith(b'{"schemaVersion":1,"generatedAt":"2026-11-03T18:05:12Z"')
     tipos = {json.loads(c.data)["name"]: json.loads(c.data)["contentType"]
              for c in http.feeder_calls() if c.method == "POST" and c.url.endswith("/uploads")}
-    texto = {"config.json", "reports.json", "news-index.json", "history-index.json"}
+    texto = {"config.json", "reports.json", "news-index.json", "history-index.json",
+             "mw-companies.json"}
     assert tipos == {n: "application/json" if n in texto else "application/gzip" for n in ALL_FIRST}
     for n in ALL_FIRST:                                       # os novos também, determinísticos
         corpo = up[n] if n in texto else gzip.decompress(up[n])
@@ -406,7 +433,9 @@ def test_sem_variaveis_do_feeder_o_passo_do_loop_nao_faz_nada(tmp_path, caplog):
 def test_resolve_nomes():
     from hub_export.registry import ORDER
     assert resolve(None) == resolve("all") == resolve("ALL") == ORDER
-    assert set(ORDER) == set(FILES) | {"news-week", "history"}
+    assert set(ORDER) == set(FILES) | {"news-week", "history", "mw-short"}
+    assert resolve("mw-short,mw-short-klbn11,mw-short-interest") == \
+        ["mw-short", "mw-short-klbn11.json", "mw-short-interest.json"]
     assert resolve("config,live") == ["config.json", "live.json"]
     assert resolve("quotes-daily.json, intraday") == ["quotes-daily.json", "intraday.json"]
     assert resolve("news-week,news-week-2026-w53,news-index") == \
@@ -415,7 +444,8 @@ def test_resolve_nomes():
         ["history", "history-vale3.sa.json", "history-index.json", "ratings.json"]
     assert resolve("history.json,history-ibov.json") == ["history", "history-ibov.json"]
     for ruim in ("news", "news-week-2026-W45", "news-week-2025-w53", "news-week-2026-45",
-                 "history-VALE3.SA", "history-rio.l", "history-vale3", "quotes-monthy"):
+                 "history-VALE3.SA", "history-rio.l", "history-vale3", "quotes-monthy",
+                 "mw-short-KLBN11", "mw-shorts"):
         with pytest.raises(ValueError, match="desconhecido"):
             resolve(ruim)
 
@@ -424,7 +454,7 @@ def test_log_do_ciclo_sem_segredo_mesmo_com_erro(tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
     http = F.FakeHTTP(supa_error={"commodities": requests.ConnectionError(
         f"{F.SUPA_URL}/rest/v1/commodities?apikey={F.SUPA_KEY}")},
-        feeder_script={"PUT": [F.connection_error()] * 40})
+        feeder_script={"PUT": [F.connection_error()] * 200})
     feeder = FeederClient(F.FEEDER_URL, F.PROJECT_ID, F.FEEDER_KEY, http=http, retry_wait=0,
                           sleep=lambda s: None)
     res = run(http, tmp_path / "st.json", feeder=feeder)
