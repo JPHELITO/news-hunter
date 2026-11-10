@@ -877,6 +877,13 @@ class FakeHTTP:
         if is_rpc:
             src = self.database["rpc"][name]
             rows = src(self.database, json.loads(call.data or b"{}")) if callable(src) else src
+            # o PostgREST real só ORDENA resultado de RPC por coluna do select (medido em 10/11:
+            # 42703 "column record.<col> does not exist"); o filtro fora do select funciona
+            chosen = {i.strip().split(":", 1)[-1] for i in call.params["select"].split(",")}
+            for part in (call.params.get("order") or "").split(","):
+                col = part.strip().split(".", 1)[0]
+                if col and col not in chosen:
+                    raise PgError(400, "42703", f"column record.{col} does not exist")
         else:
             rows = self.database[name]
             known = NEWS_COLUMNS if name == "news_articles" else None

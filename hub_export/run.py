@@ -132,7 +132,8 @@ def _items(name: str, obj: dict) -> str:
     if H.ticker_from_file(name):
         def day(ts):
             return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d") if ts else "?"
-        return (f"{obj.get('points')} pontos, {day(obj.get('firstTs'))} → {day(obj.get('lastTs'))}"
+        # (sem seta: o console do Windows, cp1252, não imprime "→" e o CLI cairia na tabela final)
+        return (f"{obj.get('points')} pontos, {day(obj.get('firstTs'))} a {day(obj.get('lastTs'))}"
                 + (f", split {day(obj['lastSplitTs'])}" if obj.get("lastSplitTs") else ""))
     series = obj.get("series") or {}
     pts = sum(len(s.get("pts") or []) for s in series.values() if isinstance(s, dict))

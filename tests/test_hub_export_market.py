@@ -104,6 +104,20 @@ def test_rpc_all_contagem_que_nao_fecha_e_erro():
         reader(F.FakeHTTP()).rpc_all("get_big", "id", order="")
 
 
+def test_rpc_all_poe_no_select_a_coluna_da_ordem():
+    """Medido em 10/11 no PostgREST real: RPC só ORDENA por coluna do select (42703 "column
+    record.effective_date does not exist"); o filtro fora do select funciona. O falso faz igual, e
+    o rpc_all acrescenta a coluna da ordem que falta (ex.: o `id` dos insiders, que só ordena)."""
+    http = F.FakeHTTP()
+    r = reader(http)
+    with pytest.raises(SupaError, match="42703"):
+        r.rpc("get_rating_history", "ticker", order="effective_date.asc")
+    assert len(r.rpc("get_rating_history", "ticker", effective_date="gte.2026-01-01")) == 3
+    rows = r.rpc_all("get_rating_history", "ticker", order="ticker.asc,effective_date.desc.nullslast")
+    assert [x["effective_date"] for x in rows[:2]] == ["2026-10-16", "2026-11-20"]
+    assert http.supa_calls("rpc/get_rating_history")[-1].params["select"] == "ticker,effective_date"
+
+
 def test_rpc_aceita_filtro_ordem_e_pagina_sobre_o_resultado():
     http = F.FakeHTTP()
     rows = reader(http).rpc("get_rating_history", "ticker,effective_date",

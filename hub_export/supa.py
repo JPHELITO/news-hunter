@@ -82,6 +82,12 @@ def _header_bytes(resp) -> int:
     return 17 + sum(len(str(k)) + len(str(v)) + 4 for k, v in items) + 2
 
 
+def order_columns(order: str) -> list[str]:
+    """As colunas de um `order` do PostgREST (`ticker.asc,effective_date.desc.nullslast` →
+    [ticker, effective_date])."""
+    return [p.strip().split(".", 1)[0] for p in (order or "").split(",") if p.strip()]
+
+
 def _total(resp) -> int | None:
     """O total do `Content-Range` (`0-0/1234` ou `*/1234`); None se o servidor não contou."""
     h = resp.headers or {}
@@ -165,12 +171,21 @@ class SupaReader:
         (desempate único no fim): sem ele duas páginas podem repetir ou pular linha.
 
         A 1ª página pede a contagem (`Prefer: count=exact`, total no `Content-Range`; custa só o
-        cabeçalho). Com ela, a leitura para quando a soma chega ao total — sem a página vazia do
-        fim — e a soma é CONFERIDA: não fechou (linha entrou ou saiu no meio da paginação) →
-        SupaError, e o arquivo não sai pela metade (tenta de novo no ciclo seguinte). Sem
-        contagem na resposta, para na 1ª página incompleta."""
+        cabeçalho — medido em 10/11: 281 no `get_rating_history`, igual à soma das páginas). Com
+        ela, a leitura para quando a soma chega ao total — sem a página vazia do fim — e a soma é
+        CONFERIDA: não fechou (linha entrou ou saiu no meio da paginação) → SupaError, e o arquivo
+        não sai pela metade (tenta de novo no ciclo seguinte). Sem contagem, para na 1ª página
+        incompleta.
+
+        O PostgREST só ORDENA resultado de RPC por coluna que está no `select` (medido em 10/11:
+        HTTP 400, 42703 "column record.<col> does not exist"; o FILTRO por coluna fora do select
+        funciona). Por isso as colunas da ordem que faltam entram no `select` aqui — o construtor,
+        de lista branca, simplesmente não as copia (ex.: o `id` dos insiders só ordena)."""
         if not (order or "").strip():
             raise ValueError(f"rpc/{fn}: paginação exige order estável")
+        chosen = {c.strip().split(":", 1)[-1] for c in select.split(",")}
+        missing = [c for c in order_columns(order) if c not in chosen]
+        select = ",".join([select, *missing]) if missing else select
         out: list[dict] = []
         total = None
         for n in range(max_pages):
