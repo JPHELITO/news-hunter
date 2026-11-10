@@ -548,3 +548,83 @@ def test_conferencia_por_found_at_ignora_linha_de_antes_do_arquivo(tmp_path):
     res = run(http, p, now=utc("2026-11-04T05:10:00Z"))
     assert "contagem" in kinds(http) and "semana" not in kinds(http)   # bateu: não releu
     assert "news-week-2026-w43.json" not in res or res["news-week-2026-w43.json"].action != "enviado"
+
+
+# ── Mindassets parado: a armadilha de 05–09/11/2026 (pesquisa 2-dados §4.6; O28) ─────────────────
+# O Feeder aceitava tudo, mas o publicador não publicava: os arquivos novos davam 404 e cada
+# partida a frio (~4,4 por dia) relia o horizonte e refazia a carga (~929 KB por runner). Agora as
+# leituras caras só acontecem com o Mindassets publicando, ou na hora diária (06 UTC).
+def _parado(**files) -> dict:
+    """O que o Mindassets serve quando o publicador travou: o live.json de 3 dias atrás (+ o pedido)."""
+    velho = {"schemaVersion": 1, "generatedAt": "2026-10-31T09:00:00Z", "quotes": {"items": []}}
+    return {"live.json": gzip.compress(json.dumps(velho).encode()), **files}
+
+
+def test_mindassets_parado_horizonte_e_carga_so_na_hora_diaria(tmp_path):
+    # runner novo às 10 UTC, nada das notícias publicado (404) e o Mindassets parado
+    http = F.FakeHTTP(published=_parado())
+    res = run(http, tmp_path / "a.json", now=utc("2026-11-04T10:00:00Z"), first_week="2026-w39")
+    assert kinds(http) == []                                 # nem horizonte, nem carga
+    assert res["news-latest.json"].action == "erro" and "06 UTC" in res["news-latest.json"].reason
+    assert res["news-week"].action == "erro" and res["news-index.json"].action == "erro"
+    assert http.feeder_calls() == []
+    st = N.load_news(N.news_state_path(tmp_path / "a.json"))
+    assert not st["seeded"] and not st["weeksSeeded"]       # o 404 parado não vira "nada publicado"
+    # o runner seguinte, ainda fora da hora: o mesmo (nada do banco)
+    http = F.FakeHTTP(published=_parado())
+    run(http, tmp_path / "b.json", now=utc("2026-11-04T15:30:00Z"), first_week="2026-w39")
+    assert kinds(http) == []
+    # o runner que atravessa as 06 UTC lê o horizonte UMA vez e segue no incremental
+    http = F.FakeHTTP(published=_parado())
+    res = run(http, tmp_path / "c.json", now=utc("2026-11-05T06:10:00Z"), first_week="2026-w39")
+    assert kinds(http) == ["horizonte"]                     # sem a carga das semanas antigas
+    assert res["news-latest.json"].action == "enviado"
+    assert res["news-index.json"].action == "erro"          # índice parcial nunca
+    http = F.FakeHTTP(published=_parado())
+    run(http, tmp_path / "c.json", now=utc("2026-11-05T06:15:00Z"), first_week="2026-w39")
+    assert kinds(http) == ["incremental"]
+
+
+def test_mindassets_fora_do_ar_tambem_espera(tmp_path):
+    import requests
+
+    class SemRede(F.FakeHTTP):
+        def request(self, method, url, **kw):
+            if url.startswith(F.PUBLIC_BASE):
+                self.calls.append(F.Call(method, url, {}, {}, None, kw.get("timeout")))
+                raise requests.ConnectTimeout("timeout")
+            return super().request(method, url, **kw)
+    http = SemRede()
+    res = run(http, tmp_path / "st.json", now=utc("2026-11-04T10:00:00Z"))
+    assert kinds(http) == [] and res["news-latest.json"].action == "erro"
+    assert len([c for c in http.calls if c.url.startswith(F.PUBLIC_BASE)]) == 1   # um timeout só
+
+
+def test_mindassets_parado_com_copias_velhas_semeia_sem_varrer_o_horizonte(tmp_path):
+    """Publicador travado com as notícias JÁ publicadas (velhas): a semente vem delas (como
+    sempre), mas a varredura do horizonte da semente velha fica para as 06 UTC; o índice publicado
+    semeia o registro e a carga das antigas também espera a hora diária."""
+    def varre_horizonte(http):     # a varredura do horizonte = desde a segunda da semana anterior
+        return [c for c in http.supa_calls("news_articles")
+                if c.params.get("or", "").startswith("(published_at.gte.2026-10-26T00:00:00Z")]
+    primeiro = F.FakeHTTP()
+    run(primeiro, tmp_path / "a.json", first_week="2026-w39")    # publica 42…45 (carga parcial)
+    pub = _parado(**primeiro.uploads)
+    http = F.FakeHTTP(published=pub)
+    res = run(http, tmp_path / "b.json", now=utc("2026-11-04T10:00:00Z"), first_week="2026-w39")
+    assert varre_horizonte(http) == [] and "semana" not in kinds(http)   # nem varredura nem carga
+    assert kinds(http)[:2] == ["incremental", "varredura"]              # a de 80 h continua
+    assert res["news-latest.json"].action == "enviado"
+    # com o Mindassets publicando (live.json ausente = nada dele publicado ainda), a mesma semente
+    # velha varre o horizonte na hora e a carga anda (como antes)
+    http = F.FakeHTTP(published=dict(primeiro.uploads))
+    run(http, tmp_path / "c.json", now=utc("2026-11-04T10:00:00Z"), first_week="2026-w39")
+    assert len(varre_horizonte(http)) == 1 and "semana" in kinds(http)
+
+
+def test_primeiro_envio_com_o_mindassets_publicando_continua_igual(tmp_path):
+    """404 com o Mindassets publicando (nada publicado ainda, live.json ausente ou fresco) = 1º
+    envio: lê o horizonte na hora, a qualquer hora, como antes."""
+    http = F.FakeHTTP()
+    res = run(http, tmp_path / "st.json", now=utc("2026-11-04T10:00:00Z"))
+    assert kinds(http)[0] == "horizonte" and res["news-index.json"].action == "enviado"

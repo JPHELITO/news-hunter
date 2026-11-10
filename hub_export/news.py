@@ -39,6 +39,18 @@ SEMANAS (COLD):
     e até 300 KB de Supabase por estado — medido em 05/11: ~167 KB por semana, então 2 semanas por
     runner, ≈ 1,4 MB/dia com ~4 runners por dia (as 21 semanas antigas em ~2,5 dias, sem passar
     dos 5 MB/dia do exportador inteiro) —, retomando pelo índice publicado.
+MINDASSETS PARADO (a armadilha de 05–09/11/2026, pesquisa 2-dados §4.6; decisão O28): o Feeder
+aceitava tudo, mas o publicador não publicava — os arquivos novos davam 404 e cada partida a frio
+(~4,4 por dia) relia o horizonte do banco e refazia a carga (~929 KB por runner). Agora, quando a
+cópia publicada falta E o Mindassets está parado (`PublishedCopies.healthy`: o live.json publicado
+tem mais de 2 h, ou não responde), as leituras CARAS — horizonte e carga — só acontecem na hora
+diária (06 UTC, a mesma da varredura do horizonte): 1×/dia por runner que a atravessa. Fora dela os
+arquivos de notícia esperam (erro com o motivo; nada é montado de um cache vazio), e a semente
+publicada VELHA (o publicador travado) não dispara a varredura do horizonte na partida a frio (fica
+para a das 06 UTC; a de 80 h continua). O 404 com o Mindassets publicando continua sendo "nunca
+publicado" (1º envio: lê na hora). E o news-index.json não sai com o registro desconhecido: um
+índice parcial publicado faria a partida a frio seguinte achar que faltam todas as semanas e
+refazer a carga.
 """
 from __future__ import annotations
 
@@ -78,6 +90,10 @@ URL_BATCH = 30                            # `url=in.(…)` cabe na URL do PostgR
 RULE_FILES = ("news_take_classifier.py", "filter.py", "classify.py", "config.py", "cvm_filings.py")
 HUNTER_DIR = Path(__file__).resolve().parents[1] / "hunter"
 ISO = "%Y-%m-%dT%H:%M:%SZ"
+
+
+class NewsWaiting(RuntimeError):
+    """Sem cópia publicada e com o Mindassets parado: o horizonte só é relido na hora diária."""
 
 
 def news_state_path(main_path) -> Path:
@@ -204,6 +220,14 @@ class NewsStore:
         if label >= self.first_week and label < self.complete_from:
             self.st["pending"].setdefault(label, {})[url] = value
 
+    def _heavy_ok(self) -> bool:
+        """Pode fazer as leituras CARAS (horizonte inteiro, carga inicial)? Sempre com o Mindassets
+        publicando (ou no --out, no --rebuild, sem Mindassets configurado); com ele parado ou fora
+        do ar, só na hora diária (06 UTC) — senão cada partida a frio as refaria."""
+        if self.rebuild or self.mode == "out" or self.pub is None:
+            return True
+        return self.now.hour == HORIZON_SWEEP_HOUR or self.pub.healthy(self.now)
+
     # ── sincronização (1× por execução) ─────────────────────────────────────────────────────
     def sync(self) -> None:
         """Uma vez por execução. Se falhar (banco fora), TODO arquivo de notícias desta execução
@@ -239,7 +263,10 @@ class NewsStore:
             sw["last"] = _iso(self.now)
             sw["due"] = [d for d in sw["due"] if d > _iso(self.now)]
         today = self.now.date().isoformat()
-        if sw["staleSeed"] or (self.now.hour == HORIZON_SWEEP_HOUR and sw["horizonDay"] != today):
+        # semente velha (> 3 h) → varre o horizonte já — salvo com o Mindassets parado, quando a
+        # cópia "velha" é só o publicador travado: aí fica para a varredura diária das 06 UTC
+        if ((sw["staleSeed"] and self._heavy_ok())
+                or (self.now.hour == HORIZON_SWEEP_HOUR and sw["horizonDay"] != today)):
             self._sweep(self.horizon_start, "horizonte")
             sw["horizonDay"] = today
             sw["staleSeed"] = False
@@ -273,13 +300,15 @@ class NewsStore:
         return doc if isinstance(doc, dict) and doc.get("schemaVersion") == 1 else None
 
     def _seed_registry(self) -> None:
-        """O registro das semanas publicadas nasce do news-index.json PUBLICADO. 404 = nada
-        publicado ainda; fora do ar = tenta de novo na próxima execução (sem carga inicial)."""
+        """O registro das semanas publicadas nasce do news-index.json PUBLICADO. 404 com o
+        Mindassets publicando = nada publicado ainda; fora do ar, ilegível ou 404 com o Mindassets
+        PARADO (pode ser "enviado e não publicado") = tenta de novo na próxima execução, sem carga
+        inicial e sem news-index.json."""
         if self.pub is None:
             return
         doc = self._doc("news-index.json")
         status = self.pub.status("news-index.json")
-        if doc is None and status != "ausente":
+        if doc is None and not (status == "ausente" and self.pub.healthy(self.now)):
             return
         reg = {}
         for w in (doc or {}).get("weeks") or []:
@@ -326,6 +355,9 @@ class NewsStore:
             self.notes.append(f"semente publicada {len(rows)}")
             self._incremental()
             return
+        if not self._heavy_ok():
+            raise NewsWaiting("sem a cópia publicada das notícias e o Mindassets parado — "
+                              f"horizonte relido do banco só às {HORIZON_SWEEP_HOUR:02d} UTC (1×/dia)")
         self._read_horizon()
 
     def _read_horizon(self) -> None:
@@ -561,6 +593,10 @@ class NewsStore:
         room = ARCHIVE_PER_HOUR - len(ar["loads"])
         if room <= 0 or ar["spent"] >= ARCHIVE_STATE_BYTES:
             return []
+        if not self._heavy_ok():
+            self.notes.append(f"carga inicial em espera: Mindassets parado (só às "
+                              f"{HORIZON_SWEEP_HOUR:02d} UTC)")
+            return []
         return list(reversed(missing))[:room]
 
     def after_week(self, label: str, items: list[dict], updated_at, action: str) -> None:
@@ -680,6 +716,9 @@ class NewsStore:
         self.sync()
         if self.mode == "out":
             return self._out_registry()
+        if self.pub is not None and not self.st["weeksSeeded"]:
+            raise RuntimeError("news-index: o índice publicado não pôde ser lido e o Mindassets está "
+                               "parado — não publica índice parcial")
         return {**self.registry, **self.run_reg}
 
     def index_seed(self) -> dict:
