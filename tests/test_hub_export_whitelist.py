@@ -46,10 +46,13 @@ def _sujo(obj):
 
 def mundo_sujo():
     http = F.FakeHTTP()
+    http.database["quote_history"] = F.quote_history()
     # Onda 1b também: as linhas de notícia, o resumo (inclusive os itens jsonb), os relatórios e
-    # o calendário (inclusive a regra de recorrência e os links) vêm com as chaves proibidas
+    # o calendário (inclusive a regra de recorrência e os links) vêm com as chaves proibidas;
+    # Onda 2: a série longa, o histórico de recomendações e as empresas do Stock Guide também
     for nome in ("quotes", "commodities", "macro_indicators", "news_articles", "news_digest",
-                 "exec_calendar_events", "exec_calendar_categories", "exec_calendar_data_windows"):
+                 "exec_calendar_events", "exec_calendar_categories", "exec_calendar_data_windows",
+                 "quote_history", "stock_guide_rating_history", "stock_guide_companies"):
         http.database[nome] = _sujo(http.database[nome])
     http.database["rpc_rows"]["reports"] = _sujo(http.database["rpc_rows"]["reports"])
     for fn in ("get_heatmap_tickers", "get_commodity_groups"):   # nas flags, "key" é a coluna
@@ -61,13 +64,20 @@ def mundo_sujo():
 
 
 def payloads(http, mem, state=None):
+    from hub_export import history as H
     from hub_export import weeks as W
     from hub_export.registry import spec_for
+    if not http.database.get("quote_history"):
+        http.database["quote_history"] = F.quote_history()
     src, _ = F.make_sources(http=http, mem=mem,
                             state=F.previous_state() if state is None else state)
     out = {name: spec.builder(src) for name, spec in FILES.items()}
     for lab in (F.WEEK_OLD, F.WEEK_PREV, F.WEEK_CUR):
         out[W.file_name(lab)] = spec_for(W.file_name(lab)).builder(src)
+    for r in F.QUOTE_HISTORY:                                 # Onda 2: os históricos (os da Market)
+        name = H.file_name(r["ticker"])
+        if name:
+            out[name] = spec_for(name).builder(src)
     return out
 
 
@@ -94,13 +104,31 @@ def test_nenhuma_chave_proibida_nos_payloads_das_fixtures():
 
 
 def test_nem_com_banco_e_memoria_sujos():
+    from hub_export.registry import spec_for
     http, mem = mundo_sujo()
     for name, obj in payloads(http, mem).items():
-        assert forbidden_keys(obj) == [], name
+        assert forbidden_keys(obj, extra=spec_for(name).forbidden) == [], name
     # o caminho do CLI (sem memória, lendo tudo do banco) também
     http, _ = mundo_sujo()
     for name, obj in payloads(http, None, state=S.empty_state()).items():
-        assert forbidden_keys(obj) == [], name
+        assert forbidden_keys(obj, extra=spec_for(name).forbidden) == [], name
+
+
+def test_onda_2_sem_colunas_internas_nem_codigo_pago():
+    """Os campos que NUNCA saem na Onda 2 (Apêndice F): `note`, `source`, ids e carimbos de usuário
+    do histórico de recomendações; a série paga de `commodities.daily`; o `model_url` do Stock Guide."""
+    http, mem = mundo_sujo()
+    out = payloads(http, mem)
+    rt = json.dumps(out["ratings.json"])
+    for interno in ('"note"', '"source"', '"id"', '"updated_by"', '"updatedBy"', '"created_at"',
+                    "Import BBG", "uuid-admin", "sharepoint", '"import"', '"manual"'):
+        assert interno not in rt, interno
+    assert set(out["commodities-daily.json"]["series"]) == set(F.FREE_CODES)
+    hist = [n for n in out if n.startswith("history-") and n != "history-index.json"]
+    assert hist and all(set(out[n]) == {"schemaVersion", "generatedAt", "ticker", "updatedAt",
+                                        "firstTs", "lastTs", "points", "lastSplitTs", "pts"}
+                        for n in hist)
+    assert "history-rio.l.json" not in out
 
 
 def test_nenhum_valor_leva_url_do_supabase_ou_segredo():

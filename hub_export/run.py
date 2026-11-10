@@ -12,10 +12,11 @@ cadência, a ordem do registro: as semanas antes do índice):
      manda reenviar; sem envio no estado (runner novo) → compara com a cópia PUBLICADA
      (igual = registra e não envia);
   4. envia (initialize → PUT → complete) e grava hash/enviado em/revisão.
-A família `news-week` é expandida na vez dela (news.py diz quais semanas vão nesta execução).
-Erro num arquivo vira uma linha de aviso e NÃO impede os outros (e o arquivo tenta de novo no
-ciclo seguinte). Orçamento de 90 s por execução no loop: arquivo que não coube fica para o
-próximo ciclo.
+As famílias são expandidas na vez delas: `news-week` (news.py diz quais semanas vão nesta execução)
+e `history` (history.py: a fila do loop, no máximo 2 por execução, ou os papéis pedidos pelo nome
+ou pelo `--history`). Erro num arquivo vira uma linha de aviso e NÃO impede os outros (e o arquivo
+tenta de novo no ciclo seguinte). Orçamento de 90 s por execução no loop: arquivo que não coube
+fica para o próximo ciclo — a família `history` vem por último no COLD, então é ela que espera.
 
 Modos: "send" (o normal), "dry" (monta e diz o que enviaria) e "out" (grava os arquivos numa
 pasta exatamente como seriam enviados — gzip inclusive). "dry" e "out" NUNCA mexem no registro
@@ -38,12 +39,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from . import history as H
 from . import state as state_mod
 from . import weeks as W
 from .encode import content_hash, forbidden_keys, gzip_bytes, iso_utc, to_json_bytes
 from .feeder import FeederClient, missing_env
 from .news import news_state_path
-from .registry import WEEK_FAMILY, cadence_of, position, resolve, spec_for
+from .registry import HISTORY_FAMILY, WEEK_FAMILY, cadence_of, position, resolve, spec_for
 from .schedule import is_due, pulse_due
 from .sources import Sources, cycle_memory
 from .supa import SupaReader
@@ -122,6 +124,16 @@ def _items(name: str, obj: dict) -> str:
         return (f"{len(ev)} eventos ({sum(1 for e in ev if e.get('recurrence'))} recorrentes), "
                 f"{len(obj.get('categories') or [])} categorias, "
                 f"{len(obj.get('dataWindows') or [])} janelas de dado")
+    if name == "ratings.json":
+        cos = obj.get("companies") or []
+        return f"{len(cos)} empresas, {sum(len(c.get('events') or []) for c in cos)} eventos"
+    if name == "history-index.json":
+        return f"{len(obj.get('items') or [])} históricos publicados"
+    if H.ticker_from_file(name):
+        def day(ts):
+            return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d") if ts else "?"
+        return (f"{obj.get('points')} pontos, {day(obj.get('firstTs'))} → {day(obj.get('lastTs'))}"
+                + (f", split {day(obj['lastSplitTs'])}" if obj.get("lastSplitTs") else ""))
     series = obj.get("series") or {}
     pts = sum(len(s.get("pts") or []) for s in series.values() if isinstance(s, dict))
     return f"{len(series)} séries, {pts} pontos"
@@ -174,7 +186,7 @@ def _one(name, spec, *, st, src, mode, force, now, deadline, clock, feeder, publ
     generated = src.generated_at
     try:
         obj = spec.builder(src)
-        proibidas = forbidden_keys(obj)
+        proibidas = forbidden_keys(obj, extra=spec.forbidden)
         if proibidas:           # rede embaixo da lista branca: arquivo público não sai assim
             raise ValueError("chave proibida no arquivo: " + ", ".join(proibidas[:5]))
         raw = to_json_bytes(obj)
@@ -257,10 +269,11 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
               now: datetime | None = None, env=None, http=None, supa=None, feeder=None,
               published=None, memory: dict | None = None, state_file=None,
               budget_s: float = BUDGET_S, clock=time.monotonic, rebuild: bool = False,
-              weeks=None, first_week: str | None = None) -> list[Result]:
-    """Uma execução do exportador. Devolve um `Result` por arquivo processado (as semanas da
-    família, uma a uma). `weeks` (só --out/--dry-run): quantas semanas mais recentes montar (int)
-    ou "all"; `rebuild`: relê do banco em vez das sementes e dos caches."""
+              weeks=None, first_week: str | None = None, history=None) -> list[Result]:
+    """Uma execução do exportador. Devolve um `Result` por arquivo processado (os das famílias, um
+    a um). `weeks` (só --out/--dry-run): quantas semanas mais recentes montar (int) ou "all";
+    `history` (só --out/--dry-run): os papéis cujo histórico montar (lista) ou "all";
+    `rebuild`: relê do banco em vez das sementes e dos caches."""
     if mode not in MODES:
         raise ValueError(f"modo inválido: {mode}")
     env = os.environ if env is None else env
@@ -285,10 +298,11 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
     st = state_mod.load(path)
     if published is None:
         published = state_mod.PublishedCopies(http=http, env=env)
+    history = history if mode != "send" else None
     src = Sources(supa, st, now=now, memory=cycle_memory() if memory is None else memory,
                   published=published, mode=mode, rebuild=rebuild, out_dir=out_dir,
                   weeks_arg=weeks if mode != "send" else None, news_path=news_state_path(path),
-                  first_week=first_week)
+                  first_week=first_week, history_arg=history)
     supa_url = env.get("SUPABASE_URL") or ""
     secrets = [env.get("DASHBOARD_FEEDER_API_KEY"), env.get("SUPABASE_SERVICE_KEY"), supa_url,
                urlsplit(supa_url).hostname if supa_url else None]
@@ -296,24 +310,31 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
               feeder=feeder, published=published, out_dir=out_dir, secrets=secrets)
 
     explicit = [lab for lab in (W.label_from_file(n) for n in names) if lab]
-    entries = [n for n in names if not W.label_from_file(n)]
+    explicit_h = [t for t in (H.ticker_from_file(n) for n in names) if t]
+    entries = [n for n in names if not W.label_from_file(n) and not H.ticker_from_file(n)]
     if explicit and WEEK_FAMILY not in entries:
         entries.append(WEEK_FAMILY)
+    if (explicit_h or history) and HISTORY_FAMILY not in entries:
+        entries.append(HISTORY_FAMILY)
     results = []
     for entry in sorted(entries, key=lambda n: (cadence_of(n), position(n))):
         todo = [entry]
-        if entry == WEEK_FAMILY:
+        if entry in (WEEK_FAMILY, HISTORY_FAMILY):
             if clock() >= deadline:
                 todo = []
-                results.append(Result(WEEK_FAMILY, "adiado", reason="orçamento de tempo"))
+                results.append(Result(entry, "adiado", reason="orçamento de tempo"))
                 _log_result(results[-1])
             else:
                 try:
-                    todo = [W.file_name(lab) for lab in
-                            src.news().week_labels(explicit=explicit, auto=WEEK_FAMILY in names)]
+                    if entry == WEEK_FAMILY:
+                        todo = [W.file_name(lab) for lab in src.news().week_labels(
+                            explicit=explicit, auto=WEEK_FAMILY in names)]
+                    else:
+                        todo = [H.file_name(t) for t in src.history().plan(
+                            explicit=explicit_h, auto=HISTORY_FAMILY in names)]
                 except Exception as e:
                     todo = []
-                    results.append(Result(WEEK_FAMILY, "erro",
+                    results.append(Result(entry, "erro",
                                           reason=_scrub(f"{type(e).__name__}: {e}", secrets)))
                     _log_result(results[-1])
         for name in todo:
@@ -323,9 +344,9 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
 
     state_mod.save(path, st)
     src.save_news()
-    store = src.news_if_loaded()
-    note = store.end_note() if store is not None else None
-    if note:
-        log.info("%s", note)
+    for store in (src.news_if_loaded(), src.history_if_loaded()):
+        note = store.end_note() if store is not None else None
+        if note:
+            log.info("%s", note)
     log.info("%s", traffic_line(supa, src, clock() - t0))
     return results

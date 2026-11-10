@@ -10,7 +10,9 @@ Regras de tráfego (PLANO §2.4/10; o plano grátis conta CABEÇALHOS e mede o t
     descomprimido para referência. Tudo também POR FONTE (`tag`: "news:sweep", "calendar"…;
     sem tag, o nome da tabela/RPC). O run.py loga isso numa linha por ciclo;
   • contagem barata: `count()` = HEAD com `Prefer: count=exact` (só cabeçalhos, sem corpo);
-    `select_count()` = a leitura com o total do `Content-Range` junto (sonda "contagem + max").
+    `select_count()` = a leitura com o total do `Content-Range` junto (sonda "contagem + max");
+  • paginação por `limit`/`offset` na QUERY (nunca pelo cabeçalho `Range`): `select_all` (tabela)
+    e `rpc_all` (RPC, com a soma conferida com a contagem) — o PostgREST corta em 1.000 linhas.
 
 Nada de URL, chave ou corpo de resposta em mensagem de erro: o log do Actions é PÚBLICO e o
 endereço do projeto do Supabase é segredo do repositório. O erro guarda o status HTTP e o código
@@ -146,12 +148,45 @@ class SupaReader:
         raise SupaError(f"{table}: mais de {max_pages * page} linhas — leitura interrompida")
 
     def rpc(self, fn: str, select: str, args: dict | None = None, *,
-            tag: str | None = None) -> list[dict]:
-        """POST /rest/v1/rpc/<função>?select=… (funções que devolvem `setof <tabela>` ou
-        `table(...)`)."""
-        rows, _ = self._call("POST", f"/rest/v1/rpc/{fn}", f"rpc/{fn}", select, {}, args or {},
-                             tag=tag)
+            tag: str | None = None, **params) -> list[dict]:
+        """POST /rest/v1/rpc/<função>?select=…[&filtros] (funções que devolvem `setof <tabela>` ou
+        `table(...)`). O PostgREST aplica `select`, filtro, `order`, `limit` e `offset` sobre o
+        RESULTADO da função (medido em 09/11) — e corta em 1.000 linhas, calado: RPC que pode
+        passar disso vai pelo `rpc_all`."""
+        rows, _ = self._call("POST", f"/rest/v1/rpc/{fn}", f"rpc/{fn}", select, params,
+                             args or {}, tag=tag)
         return rows
+
+    def rpc_all(self, fn: str, select: str, args: dict | None = None, *, order: str,
+                tag: str | None = None, page: int = PAGE_ROWS, max_pages: int = 200,
+                **params) -> list[dict]:
+        """A RPC INTEIRA, em páginas de `limit`/`offset` NA QUERY (o cabeçalho `Range` não
+        funciona atrás da Cloudflare do Supabase, que o trata como bytes). Exige `order` estável
+        (desempate único no fim): sem ele duas páginas podem repetir ou pular linha.
+
+        A 1ª página pede a contagem (`Prefer: count=exact`, total no `Content-Range`; custa só o
+        cabeçalho). Com ela, a leitura para quando a soma chega ao total — sem a página vazia do
+        fim — e a soma é CONFERIDA: não fechou (linha entrou ou saiu no meio da paginação) →
+        SupaError, e o arquivo não sai pela metade (tenta de novo no ciclo seguinte). Sem
+        contagem na resposta, para na 1ª página incompleta."""
+        if not (order or "").strip():
+            raise ValueError(f"rpc/{fn}: paginação exige order estável")
+        out: list[dict] = []
+        total = None
+        for n in range(max_pages):
+            rows, t = self._call("POST", f"/rest/v1/rpc/{fn}", f"rpc/{fn}", select,
+                                 {**params, "order": order, "limit": page, "offset": n * page},
+                                 args or {}, tag=tag, count=n == 0)
+            if n == 0:
+                total = t
+            out.extend(rows)
+            if len(rows) < page or (total is not None and len(out) >= total):
+                break
+        else:
+            raise SupaError(f"rpc/{fn}: mais de {max_pages * page} linhas — leitura interrompida")
+        if total is not None and len(out) != total:
+            raise SupaError(f"rpc/{fn}: {len(out)} linhas lidas, a contagem diz {total}")
+        return out
 
     # ── interno ──────────────────────────────────────────────────────────────────────────────
     def _account(self, tag: str, wire: int, headers: int) -> None:

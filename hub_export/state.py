@@ -19,6 +19,11 @@ O QUE GUARDA:
               `home_digest` e é HOT: lê a flag no máximo a cada 15 min, junto com o config);
   digest      as últimas janelas do resumo da hora (imutáveis: lidas só nas janelas de gravação);
   calendar    a sonda (contagem + max(updated_at)), a última leitura completa e o calendário.
+Onda 2:
+  commDaily   as séries das 3 commodities de número livre (sonda do último ponto + leitura do dia);
+  ratings     a sonda do histórico de recomendações e a última leitura da RPC;
+  history     o registro dos history-<id>.json publicados, a sonda da quote_history, os papéis
+              que vão pela leitura inteira e o orçamento da carga (ver history.py).
 
 Arquivo ilegível/corrompido = começar do zero (nunca derruba o ciclo).
 
@@ -26,6 +31,12 @@ PARTIDA A FRIO de um arquivo (sem hash no estado): antes de enviar, baixa a cóp
 Mindassets, descomprime se for gzip e calcula o mesmo hash. Igual → registra e não envia.
 404 ou qualquer erro → envia. Se o endereço não responde (rede), as demais checagens da mesma
 execução nem tentam: cada uma esperaria o timeout de novo e estouraria o orçamento de tempo.
+
+MINDASSETS PARADO (05 a 09/11/2026: o Feeder aceitava tudo, mas o publicador não publicava — os
+arquivos antigos seguiam no ar, velhos, e os novos davam 404): `PublishedCopies.healthy()` diz se o
+Mindassets está publicando, pela idade do live.json publicado (vai a cada ≤ 10 min). É o que separa
+"404 porque nunca foi publicado" (1º envio: pode ler do banco) de "404 porque o publicador parou"
+(as releituras caras ficam para 1×/dia — news.py e history.py).
 """
 from __future__ import annotations
 
@@ -33,12 +44,13 @@ import json
 import logging
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
 
-from .encode import content_hash, maybe_gunzip
+from .encode import content_hash, iso_utc, maybe_gunzip
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +59,8 @@ STATE_VERSION = 1
 DEFAULT_PUBLIC_BASE = ("https://mindassets.cloud.itau.com.br/research/equity/market-data/"
                        "metals-mining-pulp-paper_commodities-datahouse")
 PUBLIC_TIMEOUT_S = 10.0
+HEALTH_FILE = "live.json"            # vai ao menos a cada 10 min (pulsação) enquanto o loop roda
+HEALTH_MAX_AGE_S = 2 * 3600          # publicado há mais que isto = Mindassets parado (ou loop parado)
 
 
 def state_path(env=None) -> Path:
@@ -65,7 +79,12 @@ def empty_state() -> dict:
             "flags": {"at": None, "rows": []},
             "digest": {"rows": [], "seeded": False, "readAt": None},
             "calendar": {"probe": None, "fullAt": None, "metaAt": None, "range": None,
-                         "categories": [], "windows": [], "events": None}}
+                         "categories": [], "windows": [], "events": None},
+            "commDaily": {"rows": {}, "seeded": False, "fullAt": None},
+            "ratings": {"probe": None, "fullAt": None, "data": None},
+            "history": {"seeded": False, "published": {}, "probe": None, "needLong": [],
+                        "failedAt": {},
+                        "bucket": {"since": None, "spent": 0, "day": None, "daySpent": 0}}}
 
 
 def load(path: Path, empty=empty_state, version: int = STATE_VERSION) -> dict:
@@ -164,3 +183,17 @@ class PublishedCopies:
     def content_hash(self, name: str) -> str | None:
         doc = self.get(name)
         return content_hash(doc) if doc is not None else None
+
+    def healthy(self, now) -> bool:
+        """O Mindassets está publicando? Pela cópia do live.json: ausente (404) = nada publicado
+        ainda (1º envio — conta como saudável: o 404 dos outros arquivos é "nunca publicado");
+        fora do ar, ilegível ou gerada há mais de 2 h = parado (o 404 dos outros pode ser
+        "enviado e não publicado", como de 05 a 09/11/2026)."""
+        doc = self.get(HEALTH_FILE)
+        if self.status(HEALTH_FILE) == "ausente":
+            return True
+        gen = iso_utc((doc or {}).get("generatedAt"))
+        if gen is None:
+            return False
+        then = datetime.strptime(gen, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return (now - then).total_seconds() <= HEALTH_MAX_AGE_S

@@ -65,3 +65,21 @@ EXCHANGES = {
 # Bolsa que surgir no QUOTES_LIST sem entrada acima: sai com o código como nome e o fuso de
 # omissão do site, e o run loga aviso (o teste já falha antes disso chegar ao ar).
 FALLBACK_TZ = "America/Sao_Paulo"
+
+# ── universo da aba Market (Onda 2: família history-<id>.json, PLANO Apêndice F.1) ───────────────
+# Porte do `KNOWN` da market.html (origin/main f636222, linhas 778-801) sem os `@` das commodities:
+# os grupos do heatmap acima + as linhas da B3 de Vale e Aura (a cobertura da Market usa VALE3.SA e
+# AURA33.SA; a da Home, as ADRs). É decisão de PUBLICAÇÃO (quais históricos vão ao Mindassets), por
+# isso mora aqui e não no config.json; os 5 papéis da quote_history que a Market não mostra (BHP.AX,
+# GLEN.L, MT.AS, RIO.L, SP500_FUT, insumos do blast) não saem. O teste confere contra a lista do site.
+# A ORDEM é a prioridade da carga inicial (O28) e a do history-index.json: os 20 da cobertura (na
+# ordem do G_COVERAGE da Market), depois os índices, depois os pares (na ordem do KNOWN do site).
+MARKET_COVERAGE = ["AURA33.SA", "SUZB3.SA", "VALE3.SA", "GMEXICOB.MX", "CMIN3.SA", "SCCO",
+                   "KLBN11.SA", "TX", "CSNA3.SA", "CMPC.SN", "USIM5.SA", "RANI3.SA", "GGBR4.SA",
+                   "COPEC.SN", "CS.TO", "ERO", "HBM.TO", "LUN.TO", "ARA.TO", "VMM.AX"]
+MARKET_PEERS = ["GGB", "MT", "NUE", "CMC", "GOAU4.SA", "STLD",                  # aço
+                "VALE", "FMG.AX", "RIO", "BHP", "AAL.L", "CAP.SN", "BRAP3.SA",  # minério
+                "AUGO", "ARIS", "BVN", "AEM", "B", "HOC.L",                     # ouro
+                "MEI.AX",                                                       # terras raras
+                "SW", "IP", "UPM.HE", "STERV.HE"]                               # papel e celulose
+MARKET_UNIVERSE = MARKET_COVERAGE + G_INDEX + MARKET_PEERS                      # 20 + 11 + 24 = 55

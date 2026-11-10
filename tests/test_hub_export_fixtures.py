@@ -30,13 +30,26 @@ janela do news-latest desde 01/11 18:00 UTC):
   • relatórios da RPC com link do SharePoint com token, sem link, sem data e sem nome;
   • calendário com categoria inativa, janela de dado inativa, evento da B3, recorrente (com chave
     de depuração na regra), oculto, antigo demais e links/descrição com endereço do Storage.
+Onda 2 (WP2.1B):
+  • `quote_history` (a série LONGA) de 7 papéis da Market + 1 de fora (RIO.L), montada de modo que
+    a série leve das cotações acima seja EXATAMENTE a redução dela (`light_of`, o porte do
+    `append_quote_history`; um teste confere): VALE3.SA desde 2020 com pontos que a redução mensal
+    descarta, IBOV, SCCO com split, os curtos; AUGO sem histórico. A tabela nasce VAZIA no `db()`
+    (os testes de 1a/1b andam o relógio e não podem ver a carga dos históricos começar): quem testa
+    a família põe `quote_history()` no banco;
+  • `commodities.daily` das 3 de número livre (IRON_ORE_62 do TE, COPPER e GOLD do Yahoo) E das
+    pagas (IRON_ORE 61% Platts, HRC China, BHKP China) — as pagas nunca podem sair;
+  • histórico de recomendações (tabela, empresas do Stock Guide e a RPC `get_rating_history`, que
+    só devolve com a flag `market_ratings` ligada e esconde a empresa oculta), com `note`, `source`,
+    ids e carimbos de usuário que não podem vazar.
 
 Nada aqui fala com a rede: o `FakeHTTP` faz o papel do `requests.Session` para o Supabase (um
-mini-PostgREST: select com alias e `->>`; filtros `eq./neq./gt./gte./lt./lte./is./in./like.`,
-`not.` e as árvores `or=(…)`/`and=(…)`; `order` com várias colunas, `limit`, `offset`; HEAD e
-`Prefer: count=exact` com `Content-Range`; RPC com argumentos; colunas e tipos conferidos onde o
-banco real recusaria), para o Feeder (roteiro de respostas por etapa, com falhas sob encomenda) e
-para a cópia publicada no Mindassets.
+mini-PostgREST: select com alias, `->>` e `->` com chave ou índice (inclusive negativo:
+`last:daily->-1`); filtros `eq./neq./gt./gte./lt./lte./is./in./like.`, `not.` e as árvores
+`or=(…)`/`and=(…)`, também sobre o resultado de RPC; `order` com várias colunas, `limit`, `offset`
+e o corte de 1.000 linhas por resposta; HEAD e `Prefer: count=exact` com `Content-Range`; RPC com
+argumentos; colunas e tipos conferidos onde o banco real recusaria), para o Feeder (roteiro de
+respostas por etapa, com falhas sob encomenda) e para a cópia publicada no Mindassets.
 """
 from __future__ import annotations
 
@@ -165,21 +178,39 @@ def _spark(asof, v=2, ph=None, extra=None):
     return sp
 
 
+D_1030, D_1102, D_1103 = 1793318400, 1793577600, 1793664000      # 00:00 UTC de 30/10, 02/11, 03/11
 COMMODITIES = [
+    # PAGA (Platts 61%): o robô ACUMULA o assessment em `daily` — a série nunca pode sair
     {"code": "IRON_ORE", "name": "IO Fines 61%", "unit": "USD/dmt", "price": 99.05,
      "change_pct": -0.4, "assessed_at": "2026-11-02", "updated_at": "2026-11-03T17:32:39.736573+00:00",
-     "spark": _spark("2026-11-02")},
+     "spark": _spark("2026-11-02"),
+     "daily": [[D_1030, 98.5], [D_1102, 99.05]], "daily_updated_at": "2026-11-03T01:00:00.5+00:00"},
     {"code": "COPPER", "name": "Copper", "unit": "USD/lb", "price": 5.1234, "change_pct": 0.8,
      "assessed_at": "2026-11-03", "updated_at": "2026-11-03T18:04:05.1+00:00",
-     "spark": _spark("2026-11-03", ph=0)},
+     "spark": _spark("2026-11-03", ph=0),
+     "daily": [[1631232000, 4.31], [D_1030, 5.02], [D_1102, 5.08], [D_1103, 5.1234]],
+     "daily_updated_at": "2026-11-03T01:12:00.123+00:00"},
     {"code": "HRC_CHINA", "name": "HRC China", "unit": "USD/mt", "price": 455.0,
      "change_pct": None, "assessed_at": "2026-10-31", "updated_at": "2026-11-03T17:32:39.7+00:00",
-     "spark": None},
+     "spark": None, "daily": [[D_1030, 450.0], [D_1102, 455.0]],
+     "daily_updated_at": "2026-11-03T01:00:00+00:00"},
     # chave de depuração dentro do spark: a lista branca tem de barrar
     {"code": "PULP_BHKP_CHINA", "name": "BHKP China Net", "unit": "USD/t", "price": 560.0,
      "change_pct": 0.0, "assessed_at": "2026-10-30", "updated_at": "2026-11-03T11:00:00+00:00",
-     "spark": _spark("2026-10-30", extra={"_debug": {"token": "x"}})},
+     "spark": _spark("2026-10-30", extra={"_debug": {"token": "x"}}),
+     "daily": [[1792800000, 555.0], [D_1030, 560.0]], "daily_updated_at": "2026-11-03T11:00:00+00:00"},
+    # LIVRES (Onda 2): minério 62% do Trading Economics (~10 anos) e ouro do Yahoo (~5 anos)
+    {"code": "IRON_ORE_62", "name": "Iron Ore 62% CFR China", "unit": "USD/t", "price": 104.6,
+     "change_pct": 0.35, "assessed_at": "2026-11-03", "updated_at": "2026-11-03T14:38:50.5+00:00",
+     "spark": None, "daily": [[1478995200, 72.5], [D_1030, 103.9], [D_1102, 104.25], [D_1103, 104.6]],
+     "daily_updated_at": "2026-11-03T14:38:50.5+00:00"},
+    {"code": "GOLD", "name": "Gold", "unit": "USD/oz", "price": 4012.3, "change_pct": -0.2,
+     "assessed_at": "2026-11-03", "updated_at": "2026-11-03T15:24:00+00:00", "spark": None,
+     "daily": [[1631232000, 1794.5], [D_1102, 4020.4], [D_1103, 4012.3]],
+     "daily_updated_at": "2026-11-03T15:24:00.25+00:00"},
 ]
+FREE_CODES = ("IRON_ORE_62", "COPPER", "GOLD")
+PAID_CODES = ("IRON_ORE", "HRC_CHINA", "PULP_BHKP_CHINA")
 
 FLAGS = [
     {"key": "heatmap", "enabled": True},
@@ -191,6 +222,7 @@ FLAGS = [
     {"key": "quarterly", "enabled": False},
     {"key": "hub_quarterly", "enabled": True},   # o hub manda: quarterly → true
     {"key": "home_digest", "enabled": True},     # o resumo da hora é fail-closed: só com true
+    {"key": "market_ratings", "enabled": True},  # Onda 2: o ratings.json é fail-closed também
     # internas do site: fora da lista branca, nunca saem (nem com hub_)
     {"key": "clipinator", "enabled": True},
     {"key": "research_team", "enabled": True},
@@ -397,6 +429,107 @@ CAL_EVENTS = [
 ]
 
 
+# ── Onda 2: a série LONGA (quote_history) ─────────────────────────────────────────────────────
+def _epoch(iso: str) -> int:
+    return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp())
+
+
+def light_of(long_pts, dua: str) -> list[list]:
+    """A série LEVE que o `append_quote_history` (site, admin/supabase_quote_history.sql) deriva da
+    longa: o último pregão de cada mês UTC antes de `v_cut` + todos os pontos ≥ `v_cut`, com
+    `v_cut` = `daily_updated_at` − 372 dias."""
+    cut = _epoch(dua) - 372 * 86400
+    monthly = {}
+    for ts, v in long_pts:
+        if ts < cut:
+            d = datetime.fromtimestamp(ts, timezone.utc)
+            ym = (d.year, d.month)
+            if ym not in monthly or ts > monthly[ym][0]:
+                monthly[ym] = [ts, v]
+    return sorted(monthly.values()) + [[ts, v] for ts, v in long_pts if ts >= cut]
+
+
+def _qh(ticker, daily, split=0):
+    q = next((r for r in QUOTES if r["ticker"] == ticker), None)
+    dua = q["daily_updated_at"] if q else "2026-11-02T23:10:00+00:00"
+    return {"ticker": ticker, "daily": daily, "points": len(daily), "first_ts": daily[0][0],
+            "last_ts": daily[-1][0], "last_split_ts": split, "source": "yahoo", "updated_at": dua}
+
+
+SPLIT_SCCO = 1793716200
+QUOTE_HISTORY = [
+    # 01/01/2020 e 15/09/2025: a redução mensal descarta (não são o último pregão do mês)
+    _qh("VALE3.SA", [[1577883600, 39.5], [1577970000, 40.0], [1757941200, 54.0], [1759168800, 55.0],
+                     [1759323600, 56.0], [1793365200, 59.9], [1793451600, 60.1], [1793624400, 60.48]]),
+    _qh("IBOV", [[1577883600, 114500.0], [1577970000, 115000.0], [1793365200, 127100.0],
+                 [1793624400, 127785.82]]),
+    _qh("SCCO", [[1793367000, 110.0], [1793629800, 113.36]], split=SPLIT_SCCO),
+    _qh("CMPC.SN", [[1793365200, 1340.0], [1793624400, 1354.0]]),
+    _qh("VMM.AX", [[1793365200, 0.58]]),
+    _qh("HBM.TO", [[1793367000, 24.9]]),
+    _qh("AAL.L", [[1793365200, 2300.0]]),
+    # insumo do blast, FORA do universo da Market: nunca vira arquivo
+    _qh("RIO.L", [[1793365200, 6000.0]]),
+]
+
+
+def quote_history() -> list[dict]:
+    return copy.deepcopy(QUOTE_HISTORY)
+
+
+# ── Onda 2: histórico de recomendações (Stock Guide) ──────────────────────────────────────────
+SG_COMPANIES = [
+    {"ticker": "VALE", "company_name": "Vale", "yahoo_symbol": "VALE", "is_hidden": False,
+     "model_url": "https://tenant.sharepoint.com/modelo-vale.xlsm", "updated_by": "uuid-admin",
+     "updated_at": "2026-11-06T15:39:00.5+00:00"},
+    {"ticker": "AUGO", "company_name": "Aura", "yahoo_symbol": "AUGO", "is_hidden": False,
+     "model_url": None, "updated_by": "uuid-admin", "updated_at": "2026-11-06T15:30:00+00:00"},
+    {"ticker": "ARA", "company_name": "Aclara Resources", "yahoo_symbol": "ARA.TO", "is_hidden": False,
+     "model_url": None, "updated_by": None, "updated_at": "2026-11-06T15:20:00+00:00"},
+    # oculta no Stock Guide: a RPC não devolve
+    {"ticker": "CSNA3", "company_name": "CSN", "yahoo_symbol": "CSNA3.SA", "is_hidden": True,
+     "model_url": None, "updated_by": None, "updated_at": "2026-11-01T10:00:00+00:00"},
+]
+
+
+def _rh(rid, ticker, day, rating, target, ccy, listing, *, note="Import BBG: comentário interno",
+        source="import", upd="2026-11-06T15:07:53.123+00:00"):
+    return {"id": rid, "ticker": ticker, "effective_date": day, "rating": rating,
+            "target_price": target, "currency": ccy, "listing": listing, "note": note, "source": source,
+            "created_at": "2026-11-06T15:00:00+00:00", "updated_at": upd, "updated_by": "uuid-admin"}
+
+
+RATING_HISTORY = [
+    _rh(1, "VALE", "2025-10-28", "MP", 13, "USD", "VALE"),
+    _rh(2, "VALE", "2026-08-17", "OP", 18, "USD", None, source="stock_guide"),    # listing nulo → símbolo
+    _rh(4, "AUGO", "2021-08-10", "MP", 26.67, "BRL", "AURA33.SA"),
+    _rh(3, "AUGO", "2024-11-04", "NR", None, None, "AURA33.SA"),                  # NR: sem alvo e moeda
+    _rh(5, "AUGO", "2026-11-20", "OP", 98, "USD", "AUGO", note=None, source="manual"),  # no futuro: o hub descarta
+    _rh(6, "CSNA3", "2026-01-10", "UP", 8, "BRL", "CSNA3.SA"),                    # empresa oculta
+    _rh(7, "ARA", "2026-10-16", "OP", 4.37, "CAD", "ARA.TO", upd="2026-11-05T12:00:00+00:00"),
+]
+
+
+def _rpc_rating_history(database, args):
+    """O corpo de `get_rating_history()`: com a service key (não é admin) só devolve linhas com a
+    flag `market_ratings` ligada; empresa oculta no Stock Guide fica de fora; ordem (ticker, data).
+    Devolve também `note` (a tabela da RPC tem) — o `select` do exportador não pede."""
+    flags = {r["key"]: r["enabled"] for r in database["rpc"]["get_dashboard_flags"]}
+    if flags.get("market_ratings") is not True:
+        return []
+    cos = {c["ticker"]: c for c in database["stock_guide_companies"]}
+    out = []
+    for r in database["stock_guide_rating_history"]:
+        c = cos.get(r["ticker"])
+        if c is None or c["is_hidden"]:
+            continue
+        out.append({"ticker": r["ticker"], "company_name": c["company_name"],
+                    "yahoo_symbol": c["yahoo_symbol"], "effective_date": r["effective_date"],
+                    "rating": r["rating"], "target_price": r["target_price"],
+                    "currency": r["currency"], "listing": r["listing"], "note": r["note"]})
+    return sorted(out, key=lambda r: (r["ticker"], r["effective_date"]))
+
+
 def _rpc_reports(database, args):
     return database["rpc_rows"]["reports"][:max(1, min(int(args.get("p_limit") or 10), 20))]
 
@@ -426,6 +559,9 @@ def db() -> dict:
                           "exec_calendar_events": CAL_EVENTS,
                           "exec_calendar_categories": CAL_CATEGORIES,
                           "exec_calendar_data_windows": CAL_WINDOWS,
+                          "quote_history": [],          # vazia: quem testa a família põe quote_history()
+                          "stock_guide_rating_history": RATING_HISTORY,
+                          "stock_guide_companies": SG_COMPANIES,
                           "rpc_rows": {"reports": REPORTS},
                           "rpc": {"get_dashboard_flags": FLAGS,
                                   "get_heatmap_tickers": HEATMAP_ADMIN,
@@ -433,7 +569,8 @@ def db() -> dict:
                                   "get_recent_reports_v3": _rpc_reports,
                                   "get_exec_calendar_categories": _rpc_categories,
                                   "get_exec_calendar_data_windows": _rpc_windows,
-                                  "get_exec_calendar_events": _rpc_events}})
+                                  "get_exec_calendar_events": _rpc_events,
+                                  "get_rating_history": _rpc_rating_history}})
 
 
 # ── a memória do ciclo, como o update_quotes/update_macro monta ───────────────────────────────
@@ -497,12 +634,27 @@ class Call:
         return None
 
 
+_ARROW = re.compile(r"(->>|->)")
+
+
 def _arrow(row: dict, expr: str):
-    col, key = expr.split("->>", 1)
-    obj = row.get(col)
-    val = obj.get(key) if isinstance(obj, dict) else None
-    if val is None:
-        return None
+    """`col->chave`, `col->índice` (negativo conta do fim, como no Postgres) e `->>` no último
+    passo (devolve TEXTO: número vira string, booleano vira "true"/"false")."""
+    parts = _ARROW.split(expr)
+    val = row.get(parts[0].strip())
+    text = False
+    for i in range(1, len(parts), 2):
+        op, key = parts[i], parts[i + 1].strip()
+        if isinstance(val, dict):
+            val = val.get(key)
+        elif isinstance(val, list) and re.fullmatch(r"-?\d+", key):
+            k = int(key)
+            val = val[k] if -len(val) <= k < len(val) else None
+        else:
+            val = None
+        text = op == "->>"
+    if val is None or not text:
+        return copy.deepcopy(val)
     if isinstance(val, bool):
         return "true" if val else "false"
     return val if isinstance(val, str) else json.dumps(val)
@@ -513,7 +665,7 @@ def _project(row: dict, select: str) -> dict:
     for item in select.split(","):
         item = item.strip()
         alias, expr = item.split(":", 1) if ":" in item else (item, item)
-        out[alias] = _arrow(row, expr) if "->>" in expr else copy.deepcopy(row.get(expr))
+        out[alias] = _arrow(row, expr) if "->" in expr else copy.deepcopy(row.get(expr))
     return out
 
 
@@ -680,7 +832,8 @@ def _order(rows: list[dict], spec: str) -> list[dict]:
 @dataclass
 class FakeHTTP:
     """`requests.Session` falso. `feeder_script[etapa]` = lista de respostas (status ou exceção)
-    consumidas na ordem; vazia = sucesso. Etapas: initialize, PUT, complete, failed."""
+    consumidas na ordem; vazia = sucesso. Etapas: initialize, PUT, complete, failed.
+    `max_rows` = o corte do PostgREST do Supabase (1.000 linhas por resposta, calado)."""
     database: dict = field(default_factory=db)
     published: dict = field(default_factory=dict)          # nome → bytes (cópia no Mindassets)
     feeder_script: dict = field(default_factory=dict)
@@ -688,6 +841,7 @@ class FakeHTTP:
     calls: list = field(default_factory=list)
     uploads: dict = field(default_factory=dict)             # nome → bytes recebidos no PUT
     revision: int = 0
+    max_rows: int | None = 1000
 
     def request(self, method, url, headers=None, params=None, data=None, json=None,
                 timeout=None, stream=False):
@@ -727,7 +881,7 @@ class FakeHTTP:
             rows = self.database[name]
             known = NEWS_COLUMNS if name == "news_articles" else None
             if known is not None:
-                asked = {i.split(":", 1)[-1].split("->>")[0].strip()
+                asked = {_ARROW.split(i.split(":", 1)[-1])[0].strip()
                          for i in call.params["select"].split(",")} | _filter_cols(call.params)
                 for col in sorted(asked - known):
                     raise PgError(400, "42703", f"column {name}.{col} does not exist")
@@ -739,6 +893,8 @@ class FakeHTTP:
         rows = rows[off:]
         if "limit" in call.params:
             rows = rows[:int(call.params["limit"])]
+        if self.max_rows is not None:
+            rows = rows[:self.max_rows]
         headers = {}
         if "count=exact" in (call.headers.get("Prefer") or ""):
             headers["Content-Range"] = (f"{off}-{off + len(rows) - 1}/{total}" if rows
@@ -893,3 +1049,34 @@ def test_mini_postgrest_entende_or_and_datas_contagem_e_rpc():
     r = http.request("GET", SUPA_URL + "/rest/v1/news_articles",
                      params={"select": "url", "url": f'in.("{U_SMM}","{U_CVM}")'})
     assert {x["url"] for x in r.json()} == {U_SMM, U_CVM}
+
+
+def test_fixtures_onda2_cobrem_os_casos_do_brief():
+    from hub_export import history as H
+    qh = {r["ticker"]: r for r in QUOTE_HISTORY}
+    assert qh["SCCO"]["last_split_ts"] == SPLIT_SCCO                      # split
+    assert "RIO.L" in qh and "RIO.L" not in H.UNIVERSE                    # um de fora
+    assert "AUGO" not in qh                                               # papel sem histórico
+    for t, r in qh.items():                                               # metadados coerentes
+        assert (r["points"], r["first_ts"], r["last_ts"]) == \
+            (len(r["daily"]), r["daily"][0][0], r["daily"][-1][0]), t
+    # a redução mensal descarta pontos da longa da VALE (é o que a junção precisa respeitar)
+    vale_q = next(q for q in QUOTES if q["ticker"] == "VALE3.SA")
+    assert len(qh["VALE3.SA"]["daily"]) > len(vale_q["daily"])
+    codes = {c["code"]: c for c in COMMODITIES}
+    assert all(codes[c]["daily"] for c in FREE_CODES + PAID_CODES)       # a paga também acumula
+    assert any(c["is_hidden"] for c in SG_COMPANIES)
+    assert any(r["note"] for r in RATING_HISTORY) and any(r["listing"] is None for r in RATING_HISTORY)
+    assert {"market_ratings"} <= {f["key"] for f in FLAGS}
+
+
+def test_mini_postgrest_corta_em_mil_linhas():
+    http = FakeHTTP()
+    http.database["quote_history"] = [{"ticker": f"T{i}", "points": i} for i in range(1500)]
+    r = http.request("GET", SUPA_URL + "/rest/v1/quote_history",
+                     params={"select": "ticker", "order": "points.asc"},
+                     headers={"Prefer": "count=exact"})
+    assert len(r.json()) == 1000 and r.headers["Content-Range"] == "0-999/1500"
+    r = http.request("GET", SUPA_URL + "/rest/v1/quote_history",
+                     params={"select": "ticker", "order": "points.asc", "offset": "1000"})
+    assert len(r.json()) == 500

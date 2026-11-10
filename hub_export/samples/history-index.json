@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-11-03T00:29:08Z",
+  "items": [
+    {
+      "ticker": "VALE3.SA",
+      "file": "history-vale3.sa.json",
+      "firstTs": 1577883600,
+      "lastTs": 1793624400,
+      "points": 8,
+      "lastSplitTs": null
+    },
+    {
+      "ticker": "SCCO",
+      "file": "history-scco.json",
+      "firstTs": 1793367000,
+      "lastTs": 1793629800,
+      "points": 2,
+      "lastSplitTs": 1793716200
+    },
+    {
+      "ticker": "IBOV",
+      "file": "history-ibov.json",
+      "firstTs": 1577883600,
+      "lastTs": 1793624400,
+      "points": 4,
+      "lastSplitTs": null
+    }
+  ]
+}

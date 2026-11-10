@@ -47,7 +47,7 @@ def test_config_forma_exata():
                        "commodityGroups", "coveredCompanies"]
     assert c["schemaVersion"] == 1 and c["generatedAt"] == F.GENERATED
     assert c["flags"] == {"heatmap": True, "commodities": True, "market": False, "news_feed": False,
-                          "quarterly": True, "home_digest": True}
+                          "quarterly": True, "home_digest": True, "market_ratings": True}
     hm = c["heatmap"]
     assert list(hm) == ["max", "groups", "coverage", "hidden", "benchmarkByExchange",
                         "benchmarkLabels"]
@@ -138,18 +138,20 @@ def test_flags_so_da_lista_branca_de_blocos_de_cliente():
     assert config.CLIENT_FLAGS == (
         "heatmap", "commodities", "news_feed", "market_pulse", "home_digest", "exec_calendar",
         "stock_guide", "stock_guide_sensitivity", "stock_guide_peers", "market", "market_watch",
-        "quarterly", "data_page", "whats_new", "sector_steel", "sector_pp", "pred_model")
+        "market_ratings", "quarterly", "data_page", "whats_new", "sector_steel", "sector_pp",
+        "pred_model")
     src, _ = hunt_sources()
     flags = config.build(src)["flags"]
     for interna in ("clipinator", "research_team", "tutorial"):
         assert interna not in flags
     assert set(flags) <= set(config.CLIENT_FLAGS)
-    # todas as 19 do banco de verdade (03/11/2026): saem as 17 de cliente, ficam fora as 2 internas
+    # as 20 do banco de verdade (03/11/2026 + `market_ratings`, criada em 05/11 e ligada em 06/11):
+    # saem as 18 de cliente, ficam fora as 2 internas
     reais = [{"key": k, "enabled": True} for k in
              ("quarterly", "sector_steel", "sector_pp", "market", "market_pulse", "home_digest",
               "commodities", "news_feed", "research_team", "heatmap", "pred_model", "stock_guide",
               "stock_guide_sensitivity", "stock_guide_peers", "exec_calendar", "market_watch",
-              "data_page", "whats_new", "clipinator")]
+              "data_page", "whats_new", "clipinator", "market_ratings")]
     assert set(config._flags(reais)) == set(config.CLIENT_FLAGS)
 
 

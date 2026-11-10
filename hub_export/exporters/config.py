@@ -17,6 +17,9 @@ coveredCompanies (Onda 1b, Apêndice E.8; aditivo, `schemaVersion` continua 1) a
             desk}` (constante em news_reference). Serve às etiquetas do feed, ao Market Pulse e ao
             "All S&M"/"All P&P" dos relatórios. A chave é `code` (`token` é chave proibida).
             `home_digest` e `exec_calendar` são fail-closed na tela (ausente = desligado).
+Onda 2 (Apêndice F.12): `market_ratings` entra na lista branca (Ratings, "Since last update" e
+            "Our rating" da Market). `market`, `market_watch` e `market_ratings` são fail-closed na
+            tela; o ratings.json também é fail-closed no DADO (desligada → `companies: []`).
 """
 from __future__ import annotations
 
@@ -35,8 +38,8 @@ log = logging.getLogger(__name__)
 # internas do site (clipinator, research_team, tutorial…) não têm o que fazer no Mindassets.
 CLIENT_FLAGS = ("heatmap", "commodities", "news_feed", "market_pulse", "home_digest",
                 "exec_calendar", "stock_guide", "stock_guide_sensitivity", "stock_guide_peers",
-                "market", "market_watch", "quarterly", "data_page", "whats_new", "sector_steel",
-                "sector_pp", "pred_model")
+                "market", "market_watch", "market_ratings", "quarterly", "data_page", "whats_new",
+                "sector_steel", "sector_pp", "pred_model")
 
 
 def _flags(rows: list[dict]) -> dict[str, bool]:

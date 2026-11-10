@@ -31,6 +31,18 @@ Onda 1b:
   calendário                sonda "contagem + max(updated_at)" dos visíveis (1 chamada) a cada
                             WARM; leitura completa quando muda, na partida a frio e 1×/dia depois
                             das 23:45 UTC; categorias e janelas de dado a cada 60 min.
+Onda 2 (PLANO, Apêndice F; pesquisa 2-dados §4):
+  cauda mensal              o MESMO cache do diário (zero leitura nova): entrada lida do banco tem a
+                            série leve inteira; a semeada da cópia publicada do quotes-daily.json
+                            (400 dias) completa a cauda com a cópia PUBLICADA do quotes-monthly.json
+                            quando ela é do mesmo mês do corte; senão relê só aquele papel.
+  commodities livres        sonda do último ponto das 3 (`last:daily->-1`, ~1,3 KB); relê só o código
+                            cujo último ponto mudou, mais 1 leitura completa por dia (06 UTC: o TE
+                            reescreve 10 anos a cada ~3 h); partida a frio semeada da cópia publicada.
+  recomendações             sonda "contagem + max(updated_at)" do histórico e das empresas do Stock
+                            Guide; RPC `get_rating_history` (paginada) quando muda, na partida a
+                            frio e 1×/dia (06 UTC). Flag `market_ratings` desligada: nada é lido.
+  histórico longo           history.py (família history-<id>.json + history-index.json).
 
 Tudo é normalizado aqui (datas `…Z`, números finitos ou None, `session` válida ou None) e
 guardado assim no estado — os construtores só renomeiam campo a campo.
@@ -66,6 +78,10 @@ REPORTS_COLS = "name,sector,link,date,companies"
 REPORTS_LIMIT = 20
 CALENDAR_META_EVERY_S = 3600
 CALENDAR_DAILY_UTC = (23, 45)        # depois do robô da B3 (update_b3_calendar.yml, 23:20 UTC)
+COMM_DAILY_PROBE_COLS = "code,unit,daily_updated_at,last:daily->-1"
+COMM_DAILY_COLS = "code,unit,daily,daily_updated_at"
+COMM_DAILY_FULL_UTC = (6, 0)         # 1 leitura completa por dia das séries livres
+RATINGS_FULL_UTC = (6, 0)            # 1 leitura da RPC por dia, mesmo sem a sonda mudar
 _ISO = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -82,13 +98,45 @@ def digest_window_open(now: datetime) -> bool:
     return b.hour in DIGEST_HOURS and DIGEST_MINUTES[0] <= b.minute < DIGEST_MINUTES[1]
 
 
-def calendar_daily_mark(now: datetime) -> str:
-    """O último 23:45 UTC já passado: leitura completa anterior a ele está vencida."""
-    h, m = CALENDAR_DAILY_UTC
-    mark = now.astimezone(timezone.utc).replace(hour=h, minute=m, second=0, microsecond=0)
+def daily_mark(now: datetime, hour: int, minute: int = 0) -> str:
+    """O último HH:MM UTC já passado: leitura "diária" anterior a ele está vencida."""
+    mark = now.astimezone(timezone.utc).replace(hour=hour, minute=minute, second=0, microsecond=0)
     if mark > now:
         mark -= timedelta(days=1)
     return iso_utc(mark)
+
+
+def calendar_daily_mark(now: datetime) -> str:
+    """O último 23:45 UTC já passado: leitura completa anterior a ele está vencida."""
+    return daily_mark(now, *CALENDAR_DAILY_UTC)
+
+
+def _text(v) -> str | None:
+    return (v.strip() or None) if isinstance(v, str) else None
+
+
+def _rebuild_light(entry: dict, pub) -> list | None:
+    """A série leve de um papel cujo cache veio CORTADO em 400 dias (semente da cópia publicada do
+    quotes-daily.json): a cauda da cópia publicada do quotes-monthly.json + o trecho do cache.
+    Só vale se a cópia é do MESMO mês do corte (`v_cut`) — o arquivo só é reenviado quando o mês
+    vira, então a cópia de outro mês está sem o mês que entrou — e se bate com o cache no trecho em
+    comum (um split depois do último envio mudaria os valores). Não valeu → None (relê o papel)."""
+    from .exporters.quotes_monthly import cut_month
+    if not isinstance(pub, dict):
+        return None
+    m_now = cut_month(entry.get("at"))
+    if m_now is None or cut_month(iso_utc(pub.get("updatedAt"))) != m_now:
+        return None
+    tail = points(pub.get("pts"))
+    pts = [list(p) for p in entry.get("pts") or []]
+    if not pts:
+        return tail
+    first = pts[0][0]
+    cur = {p[0]: p[1] for p in pts}
+    for ts, v in tail:
+        if ts >= first and (ts not in cur or cur[ts] != v):
+            return None
+    return [p for p in tail if p[0] < first] + pts
 
 
 # ── universos (a ordem do arquivo é a das listas do robô) ──────────────────────────────────────
@@ -162,7 +210,7 @@ class Sources:
     def __init__(self, supa, state: dict, *, now: datetime | None = None,
                  memory: dict | None = None, published=None, mode: str = "send",
                  rebuild: bool = False, out_dir=None, weeks_arg=None, news_path=None,
-                 first_week: str | None = None):
+                 first_week: str | None = None, history_arg=None):
         self.supa = supa
         self.state = state
         self.now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -175,12 +223,14 @@ class Sources:
         self.weeks_arg = weeks_arg
         self.news_path = news_path
         self.first_week = first_week
+        self.history_arg = history_arg
         self.quote_universe = quote_universe()
         self.macro_universe = macro_universe()
         self.used_memory = {"quotes": None, "macro": None}
         self._memo: dict = {}
         self._news = None
         self._news_state = None
+        self._history = None
 
     # ── cotações (+ curva do dia) ───────────────────────────────────────────────────────────
     def quotes(self) -> dict[str, dict]:
@@ -313,8 +363,10 @@ class Sources:
                 for r in self.supa.select("quotes", "ticker,daily,daily_updated_at",
                                           tag="quotes:daily", **params):
                     if r.get("ticker") in want:
+                        # `full`: a série leve INTEIRA (com a cauda mensal) — a semente da cópia
+                        # publicada vem cortada em 400 dias (ver monthly())
                         cache[r["ticker"]] = {"at": iso_utc(r.get("daily_updated_at")),
-                                              "pts": points(r.get("daily"))}
+                                              "pts": points(r.get("daily")), "full": True}
             for t in [t for t in cache if t not in want]:
                 del cache[t]
             st["probe"] = top
@@ -344,6 +396,158 @@ class Sources:
         if out:
             log.info("diário: %d séries semeadas da cópia publicada", len(out))
         return out
+
+    def daily_full(self, tickers) -> None:
+        """Relê do banco a série leve INTEIRA (com a cauda mensal) destes papéis, no cache."""
+        d = self.daily()
+        want = [t for t in tickers if t in d]
+        if not want:
+            return
+        for r in self.supa.select("quotes", "ticker,daily,daily_updated_at", tag="quotes:mensal",
+                                  ticker=_in(want)):
+            if r.get("ticker") in d:
+                d[r["ticker"]] = {"at": iso_utc(r.get("daily_updated_at")),
+                                  "pts": points(r.get("daily")), "full": True}
+
+    # ── cauda mensal da série leve (quotes-monthly.json, Onda 2) ───────────────────────────────
+    def monthly(self) -> dict[str, dict]:
+        """papel → {updatedAt, pts}: a cauda mensal (quotes_monthly.monthly_part) de cada papel do
+        cache do diário. Zero leitura nova quando a cópia publicada vale (ver `_rebuild_light`)."""
+        if "monthly" in self._memo:
+            return self._memo["monthly"]
+        from .exporters.quotes_monthly import monthly_part
+        d = self.daily()
+        pub = {}
+        if not self.rebuild and self.published is not None:
+            doc = self.published.get("quotes-monthly.json")
+            if (isinstance(doc, dict) and doc.get("schemaVersion") == 1
+                    and isinstance(doc.get("series"), dict)):
+                pub = doc["series"]
+        out, need = {}, []
+        for t, _n, _e in self.quote_universe:
+            e = d.get(t)
+            if not e:
+                continue
+            light = e.get("pts") if e.get("full") else _rebuild_light(e, pub.get(t))
+            if light is None:
+                need.append(t)
+                continue
+            out[t] = {"updatedAt": e.get("at"), "pts": monthly_part(light, e.get("at"))}
+        if need:
+            self.daily_full(need)
+            for t in need:
+                e = d.get(t)
+                if e and e.get("full"):
+                    out[t] = {"updatedAt": e.get("at"), "pts": monthly_part(e.get("pts"), e.get("at"))}
+            log.info("cauda mensal: %d papel(éis) relido(s) do banco (sem cópia publicada que valha)",
+                     len(need))
+        self._memo["monthly"] = out
+        return out
+
+    # ── commodities de número livre (commodities-daily.json, Onda 2) ───────────────────────────
+    def commodities_daily(self) -> dict[str, dict]:
+        """código → {at, unit, pts} só dos códigos da lista branca (FREE_SERIES). Nenhum outro
+        código é pedido ao banco nem guardado (a série paga em números nunca sai)."""
+        if "commDaily" in self._memo:
+            return self._memo["commDaily"]
+        from .exporters.commodities_daily import FREE_SERIES
+        st = self.state["commDaily"]
+        codes = list(FREE_SERIES)
+        cache = {} if self.rebuild else {c: e for c, e in (st.get("rows") or {}).items()
+                                         if c in FREE_SERIES and isinstance(e, dict)}
+        full_at = None if self.rebuild else st.get("fullAt")
+        if not cache and not st.get("seeded") and not self.rebuild and self.published is not None:
+            seed, gen = self._seed_comm_daily(FREE_SERIES)
+            if seed:
+                cache.update(seed)
+                full_at = full_at or gen
+        seen = {}
+        for r in self.supa.select("commodities", COMM_DAILY_PROBE_COLS,
+                                  tag="commodities:livres:sonda", code=_in(codes)):
+            c = r.get("code")
+            if c in FREE_SERIES:
+                last = points([r.get("last")])
+                seen[c] = {"at": iso_utc(r.get("daily_updated_at")), "unit": _text(r.get("unit")),
+                           "last": last[0] if last else None}
+        full = not full_at or full_at < daily_mark(self.now, *COMM_DAILY_FULL_UTC)
+
+        def last_of(c):
+            pts = (cache.get(c) or {}).get("pts") or []
+            return pts[-1] if pts else None
+        need = [c for c in codes if c in seen and (full or c not in cache or last_of(c) != seen[c]["last"])]
+        if need:
+            for r in self.supa.select("commodities", COMM_DAILY_COLS, tag="commodities:livres",
+                                      code=_in(need)):
+                c = r.get("code")
+                if c in FREE_SERIES:
+                    cache[c] = {"at": iso_utc(r.get("daily_updated_at")), "unit": _text(r.get("unit")),
+                                "pts": points(r.get("daily"))}
+        for c in list(cache):
+            if c not in seen:
+                del cache[c]                          # sumiu do banco: não sai
+            elif c not in need:
+                cache[c].update(at=seen[c]["at"], unit=seen[c]["unit"])   # carimbo e unidade da sonda
+        # só depois de todas as leituras: uma que falhe não deixa o estado meio novo
+        st.update(rows=cache, seeded=True, fullAt=self.generated_at if full else full_at)
+        self._memo["commDaily"] = cache
+        return cache
+
+    def _seed_comm_daily(self, free) -> tuple[dict, str | None]:
+        """Partida a frio: as séries da cópia PUBLICADA (zero Supabase); a sonda diz quem relê."""
+        doc = self.published.get("commodities-daily.json")
+        if (not isinstance(doc, dict) or doc.get("schemaVersion") != 1
+                or not isinstance(doc.get("series"), dict)):
+            return {}, None
+        out = {}
+        for c, s in doc["series"].items():
+            if c in free and isinstance(s, dict):
+                out[c] = {"at": iso_utc(s.get("updatedAt")), "unit": _text(s.get("unit")),
+                          "pts": points(s.get("pts"))}
+        return out, iso_utc(doc.get("generatedAt"))
+
+    # ── histórico de recomendações (ratings.json, Onda 2) ──────────────────────────────────────
+    def ratings(self) -> dict:
+        """{updatedAt, companies}. Flag `market_ratings` desligada (fail-closed, regra `hub_`) →
+        nada é lido e `companies: []`. Ligada: 2 sondas baratas; a RPC (paginada, contagem
+        conferida) só quando a sonda muda, na partida a frio e 1×/dia."""
+        if "ratings" in self._memo:
+            return self._memo["ratings"]
+        from .exporters import ratings as rt
+        from .exporters.config import _flags
+        st = self.state["ratings"]
+        if _flags(self._flag_rows()).get("market_ratings") is not True:
+            st.update(probe=None, fullAt=None, data=None)          # religada: relê tudo
+            out = {"updatedAt": None, "companies": []}
+        else:
+            hist, n_hist = self.supa.select_count("stock_guide_rating_history", "updated_at",
+                                                  tag="ratings:sonda",
+                                                  order="updated_at.desc.nullslast", limit=1)
+            cos, n_cos = self.supa.select_count("stock_guide_companies", "updated_at",
+                                                tag="ratings:sonda",
+                                                order="updated_at.desc.nullslast", limit=1)
+            top = iso_utc(hist[0].get("updated_at")) if hist else None
+            probe = [n_hist, top, n_cos, iso_utc(cos[0].get("updated_at")) if cos else None]
+            data = None if self.rebuild else st.get("data")
+            if (data is None or probe != st.get("probe") or not st.get("fullAt")
+                    or st["fullAt"] < daily_mark(self.now, *RATINGS_FULL_UTC)):
+                data = rt.companies(self.supa.rpc_all("get_rating_history", rt.COLS,
+                                                      order=rt.ORDER, tag="ratings"))
+                st.update(data=data, fullAt=self.generated_at)
+            st["probe"] = probe
+            out = {"updatedAt": top, "companies": data}
+        self._memo["ratings"] = out
+        return out
+
+    # ── histórico longo (history.py) ────────────────────────────────────────────────────────────
+    def history(self):
+        """O HistoryStore desta execução (registro, sonda, fila e orçamento da carga)."""
+        if self._history is None:
+            from .history import HistoryStore
+            self._history = HistoryStore(self, explicit=self.history_arg)
+        return self._history
+
+    def history_if_loaded(self):
+        return self._history
 
     # ── configuração do /admin ──────────────────────────────────────────────────────────────
     def flags(self) -> list[dict]:

@@ -70,20 +70,29 @@ def content_hash(obj) -> str:
     return hashlib.sha256(canonical_bytes(obj)).hexdigest()
 
 
-def forbidden_keys(obj, path: str = "$") -> list[str]:
-    """Caminhos das chaves proibidas (FORBIDDEN_KEYS, sem diferenciar maiúsculas) em qualquer
-    nível. Lista vazia = pode publicar."""
+def forbidden_keys(obj, path: str = "$", *, extra=frozenset()) -> list[str]:
+    """Caminhos das chaves proibidas (FORBIDDEN_KEYS + as `extra` do arquivo, sem diferenciar
+    maiúsculas) em qualquer nível. Lista vazia = pode publicar.
+
+    `extra` = as proibidas SÓ naquele arquivo (Spec.forbidden no registro): ex. `source` e `note`
+    no ratings.json (colunas internas do histórico de recomendações), que não podem ser globais
+    porque o commodities-daily.json TEM um `source` de contrato e o calendar.json, um `note`."""
+    banned = FORBIDDEN_KEYS | {str(k).lower() for k in extra}
+    return _forbidden(obj, path, banned)
+
+
+def _forbidden(obj, path: str, banned) -> list[str]:
     found = []
     if isinstance(obj, dict):
         for k, v in obj.items():
             here = f"{path}.{k}"
-            if isinstance(k, str) and k.lower() in FORBIDDEN_KEYS:
+            if isinstance(k, str) and k.lower() in banned:
                 found.append(here)
-            found.extend(forbidden_keys(v, here))
+            found.extend(_forbidden(v, here, banned))
     elif isinstance(obj, list):
         for i, v in enumerate(obj):
             if isinstance(v, (dict, list)):
-                found.extend(forbidden_keys(v, f"{path}[{i}]"))
+                found.extend(_forbidden(v, f"{path}[{i}]", banned))
     return found
 
 

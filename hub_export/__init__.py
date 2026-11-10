@@ -21,8 +21,16 @@ Onda 1b (contrato: PLANO.md, Apêndice E):
     news-digest.json   HOT  (ciclo)    as últimas 48 janelas do resumo da hora (fail-closed)
     reports.json       COLD (60 min)   últimos relatórios (RPC get_recent_reports_v3)
     calendar.json      WARM (15 min)   eventos (recorrência como regra), categorias, janelas de dado
-  live, intraday, quotes-daily, news-latest, news-week-*, news-digest e calendar vão com conteúdo
-  GZIP e nome .json (o hub reconhece pelos bytes); config, reports e news-index vão em texto.
+Onda 2 (contrato: PLANO.md, Apêndice F):
+    quotes-monthly.json     COLD       a cauda mensal da série leve (meses inteiros antes do corte)
+    commodities-daily.json  COLD       a série diária SÓ das 3 de fonte livre (minério 62% TE, cobre, ouro)
+    ratings.json            COLD       histórico OP/MP/UP/NR + alvo (fail-closed na `market_ratings`)
+    history-<id>.json       família    histórico diário completo por papel da Market (55; nome F.0);
+                                       ~1×/dia útil por papel, no máximo 2 por execução (history.py)
+    history-index.json      COLD       os históricos já publicados
+  live, intraday, quotes-daily, news-latest, news-week-*, news-digest, calendar, quotes-monthly,
+  commodities-daily, ratings e history-* vão com conteúdo GZIP e nome .json (o hub reconhece pelos
+  bytes); config, reports, news-index e history-index vão em texto.
 
 USO
   No loop: o fim de cada ciclo do hunt.py chama `run_cycle()` quando HUB_EXPORT_ENABLED=1 (variável
@@ -30,6 +38,8 @@ USO
   não exporta. Qualquer erro vira uma linha de aviso e o ciclo do robô segue.
   À mão (da raiz do repositório):
       python -m hub_export --env-file <.env> --all --out <pasta>   # grava, não envia (prévia local)
+      python -m hub_export --env-file <.env> --out <pasta> --only history,history-index \
+          --history VALE3.SA,SPX                                    # só alguns históricos
       python -m hub_export --env-file <.env> --all --dry-run       # diz o que enviaria
       python -m hub_export --env-file <.env> --dry-run --check     # conferências do banco
       python -m hub_export --only config,live [--force]            # envia

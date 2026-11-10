@@ -75,7 +75,9 @@ def test_cadencia_no_ciclo(tmp_path):
                      "config.json": "fora da vez", "calendar.json": "fora da vez",
                      "quotes-daily.json": "fora da vez", "reports.json": "fora da vez",
                      "news-week-2026-w44.json": "fora da vez",
-                     "news-week-2026-w45.json": "fora da vez", "news-index.json": "fora da vez"}
+                     "news-week-2026-w45.json": "fora da vez", "news-index.json": "fora da vez",
+                     "quotes-monthly.json": "fora da vez", "commodities-daily.json": "fora da vez",
+                     "ratings.json": "fora da vez", "history-index.json": "fora da vez"}
     assert not http.supa_calls("rpc/get_dashboard_flags")      # fora da vez nem lê
     assert not [c for c in http.supa_calls("quotes") if "daily" in c.params["select"]]
     assert not http.supa_calls("rpc/get_recent_reports_v3")

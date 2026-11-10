@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-11-06T15:07:53Z",
+  "companies": [
+    {
+      "code": "ARA",
+      "name": "Aclara Resources",
+      "symbol": "ARA.TO",
+      "events": [
+        {
+          "date": "2026-10-16",
+          "rating": "OP",
+          "targetPrice": 4.37,
+          "currency": "CAD",
+          "listing": "ARA.TO"
+        }
+      ]
+    },
+    {
+      "code": "AUGO",
+      "name": "Aura",
+      "symbol": "AUGO",
+      "events": [
+        {
+          "date": "2021-08-10",
+          "rating": "MP",
+          "targetPrice": 26.67,
+          "currency": "BRL",
+          "listing": "AURA33.SA"
+        },
+        {
+          "date": "2024-11-04",
+          "rating": "NR",
+          "targetPrice": null,
+          "currency": null,
+          "listing": "AURA33.SA"
+        },
+        {
+          "date": "2026-11-20",
+          "rating": "OP",
+          "targetPrice": 98,
+          "currency": "USD",
+          "listing": "AUGO"
+        }
+      ]
+    },
+    {
+      "code": "VALE",
+      "name": "Vale",
+      "symbol": "VALE",
+      "events": [
+        {
+          "date": "2025-10-28",
+          "rating": "MP",
+          "targetPrice": 13,
+          "currency": "USD",
+          "listing": "VALE"
+        },
+        {
+          "date": "2026-08-17",
+          "rating": "OP",
+          "targetPrice": 18,
+          "currency": "USD",
+          "listing": "VALE"
+        }
+      ]
+    }
+  ]
+}

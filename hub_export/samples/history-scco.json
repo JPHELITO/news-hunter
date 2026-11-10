@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "ticker": "SCCO",
+  "updatedAt": "2026-11-02T23:55:46Z",
+  "firstTs": 1793367000,
+  "lastTs": 1793629800,
+  "points": 2,
+  "lastSplitTs": 1793716200,
+  "pts": [
+    [1793367000, 110.0],
+    [1793629800, 113.36]
+  ]
+}

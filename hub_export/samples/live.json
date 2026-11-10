@@ -769,6 +769,16 @@
         }
       },
       {
+        "code": "GOLD",
+        "name": "Gold",
+        "unit": "USD/oz",
+        "price": 4012.3,
+        "changePct": -0.2,
+        "assessedAt": "2026-11-03",
+        "updatedAt": "2026-11-03T15:24:00Z",
+        "spark": null
+      },
+      {
         "code": "HRC_CHINA",
         "name": "HRC China",
         "unit": "USD/mt",
@@ -815,6 +825,16 @@
             "b": 0
           }
         }
+      },
+      {
+        "code": "IRON_ORE_62",
+        "name": "Iron Ore 62% CFR China",
+        "unit": "USD/t",
+        "price": 104.6,
+        "changePct": 0.35,
+        "assessedAt": "2026-11-03",
+        "updatedAt": "2026-11-03T14:38:50Z",
+        "spark": null
       },
       {
         "code": "PULP_BHKP_CHINA",

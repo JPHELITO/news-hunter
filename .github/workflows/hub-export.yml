@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       files:
-        description: "Arquivos: all, ou lista (config,live,intraday,quotes-daily,news-latest,news-digest,calendar,reports,news-week,news-index; uma semana: news-week-2026-w45)"
+        description: "Arquivos: all, ou lista (config,live,intraday,quotes-daily,news-latest,news-digest,calendar,reports,news-week,news-index,quotes-monthly,commodities-daily,ratings,history,history-index; uma semana: news-week-2026-w45; o histórico de um papel: history-vale3.sa)"
         type: string
         default: all
       force:

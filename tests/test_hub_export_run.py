@@ -85,7 +85,7 @@ def test_na_vez_e_mudou_envia_igual_pula(tmp_path):
 
 def test_registro_bate_com_o_contrato():
     """Cadência, gzip, pulsação, meta de tamanho e tipo de cada arquivo (PLANO §2.5, 03/11/2026,
-    e Apêndice E, 05/11/2026)."""
+    Apêndice E, 05/11/2026, e Apêndice F, 09/11/2026)."""
     from hub_export.registry import ORDER, spec_for
     tabela = {n: (s.cadence, s.gzip, s.pulse, s.max_bytes, s.content_type) for n, s in FILES.items()}
     assert tabela == {
@@ -98,6 +98,10 @@ def test_registro_bate_com_o_contrato():
         "calendar.json":     (900, True, None, 300 * 1024, "application/gzip"),
         "reports.json":      (3600, False, None, 20 * 1024, "application/json"),
         "news-index.json":   (3600, False, None, 20 * 1024, "application/json"),
+        "quotes-monthly.json":    (3600, True, None, 400 * 1024, "application/gzip"),
+        "commodities-daily.json": (3600, True, None, 150 * 1024, "application/gzip"),
+        "ratings.json":           (3600, True, None, 100 * 1024, "application/gzip"),
+        "history-index.json":     (3600, False, None, 20 * 1024, "application/json"),
     }
     w = spec_for("news-week-2026-w53.json")                  # a família semanal
     assert (w.cadence, w.gzip, w.pulse, w.max_bytes, w.content_type) == \
@@ -105,6 +109,16 @@ def test_registro_bate_com_o_contrato():
     assert ORDER.index("news-week") < ORDER.index("news-index.json")   # índice depois das semanas
     with pytest.raises(KeyError):
         spec_for("news-week-2026-W45.json")                  # maiúscula não é nome válido
+    # a família de históricos: a cadência é a da fila (history.py), gzip, ≤ 300 KB
+    h = spec_for("history-vale3.sa.json")
+    assert (h.cadence, h.gzip, h.pulse, h.max_bytes, h.content_type) == \
+        (0, True, None, 300 * 1024, "application/gzip")
+    for ruim in ("history-VALE3.SA.json", "history-rio.l.json", "history-index2.json"):
+        with pytest.raises(KeyError):
+            spec_for(ruim)                                   # caixa errada / fora do universo
+    # por último no COLD, o índice depois da família; o ratings proíbe as colunas internas
+    assert ORDER[-2:] == ["history", "history-index.json"]
+    assert {"note", "source", "id", "updated_by"} <= FILES["ratings.json"].forbidden
 
 
 def test_live_intraday_e_quotes_daily_em_gzip_config_em_texto(tmp_path):
@@ -120,7 +134,7 @@ def test_live_intraday_e_quotes_daily_em_gzip_config_em_texto(tmp_path):
     assert up["config.json"].startswith(b'{"schemaVersion":1,"generatedAt":"2026-11-03T18:05:12Z"')
     tipos = {json.loads(c.data)["name"]: json.loads(c.data)["contentType"]
              for c in http.feeder_calls() if c.method == "POST" and c.url.endswith("/uploads")}
-    texto = {"config.json", "reports.json", "news-index.json"}
+    texto = {"config.json", "reports.json", "news-index.json", "history-index.json"}
     assert tipos == {n: "application/json" if n in texto else "application/gzip" for n in ALL_FIRST}
     for n in ALL_FIRST:                                       # os novos também, determinísticos
         corpo = up[n] if n in texto else gzip.decompress(up[n])
@@ -392,12 +406,16 @@ def test_sem_variaveis_do_feeder_o_passo_do_loop_nao_faz_nada(tmp_path, caplog):
 def test_resolve_nomes():
     from hub_export.registry import ORDER
     assert resolve(None) == resolve("all") == resolve("ALL") == ORDER
-    assert set(ORDER) == set(FILES) | {"news-week"}
+    assert set(ORDER) == set(FILES) | {"news-week", "history"}
     assert resolve("config,live") == ["config.json", "live.json"]
     assert resolve("quotes-daily.json, intraday") == ["quotes-daily.json", "intraday.json"]
     assert resolve("news-week,news-week-2026-w53,news-index") == \
         ["news-week", "news-week-2026-w53.json", "news-index.json"]
-    for ruim in ("news", "news-week-2026-W45", "news-week-2025-w53", "news-week-2026-45"):
+    assert resolve("history,history-vale3.sa,history-index,ratings") == \
+        ["history", "history-vale3.sa.json", "history-index.json", "ratings.json"]
+    assert resolve("history.json,history-ibov.json") == ["history", "history-ibov.json"]
+    for ruim in ("news", "news-week-2026-W45", "news-week-2025-w53", "news-week-2026-45",
+                 "history-VALE3.SA", "history-rio.l", "history-vale3", "quotes-monthy"):
         with pytest.raises(ValueError, match="desconhecido"):
             resolve(ruim)
 

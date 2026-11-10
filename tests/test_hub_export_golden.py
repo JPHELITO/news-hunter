@@ -3,7 +3,10 @@ Saída DOURADA dos arquivos do hub (hub_export/samples/*.json), montada do banco
 fixtures (test_hub_export_fixtures.py) no cenário do loop: memória do ciclo + estado anterior.
 Onda 1a: config, live, intraday, quotes-daily. Onda 1b: news-latest, três semanais
 (news-week-2026-w43/w44/w45: a antiga da carga inicial, a anterior e a corrente), news-index (com
-as três já "publicadas"), news-digest, reports e calendar.
+as três já "publicadas"), news-digest, reports e calendar. Onda 2: quotes-monthly,
+commodities-daily, ratings, três históricos (history-vale3.sa: desde 2020, com pontos que a redução
+mensal descarta; history-ibov: índice; history-scco: com split) e o history-index (com os três já
+"publicados").
 
 Por que existe: o hub (React) começa as telas por estas amostras — o orquestrador as copia para
 `__tests__/fixtures` do lado do hub a cada mudança de contrato. Qualquer mudança no que sai daqui
@@ -28,12 +31,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import test_hub_export_fixtures as F  # noqa: E402
+from hub_export import history as H  # noqa: E402
 from hub_export import weeks as W  # noqa: E402
 from hub_export.encode import forbidden_keys  # noqa: E402
 from hub_export.registry import FILES, spec_for  # noqa: E402
 
 SAMPLES = Path(__file__).resolve().parents[1] / "hub_export" / "samples"
 GOLDEN_WEEKS = (F.WEEK_OLD, F.WEEK_PREV, F.WEEK_CUR)
+GOLDEN_HISTORY = ("VALE3.SA", "IBOV", "SCCO")
+INDEXES = ("news-index.json", "history-index.json")
 _SCALAR = r'(?:-?\d[\d.eE+-]*|null|true|false|"[^"\\\[\]{}]*")'
 _SCALAR_ARRAY = re.compile(r"\[\s*(" + _SCALAR + r"(?:,\s*" + _SCALAR + r")*)\s*\]")
 
@@ -46,8 +52,10 @@ def pretty(obj) -> str:
 
 
 def golden_objects() -> dict[str, dict]:
-    src, _ = F.make_sources(state=F.previous_state())
-    out = {name: spec.builder(src) for name, spec in FILES.items() if name != "news-index.json"}
+    http = F.FakeHTTP()
+    http.database["quote_history"] = F.quote_history()
+    src, _ = F.make_sources(http=http, state=F.previous_state())
+    out = {name: spec.builder(src) for name, spec in FILES.items() if name not in INDEXES}
     store = src.news()
     for lab in GOLDEN_WEEKS:
         name = W.file_name(lab)
@@ -55,6 +63,13 @@ def golden_objects() -> dict[str, dict]:
         store.after_week(lab, obj["items"], obj["updatedAt"], "enviado")   # como se publicada
         out[name] = obj
     out["news-index.json"] = FILES["news-index.json"].builder(src)
+    hist = src.history()
+    for t in GOLDEN_HISTORY:
+        name = H.file_name(t)
+        obj = spec_for(name).builder(src)
+        hist.after(t, obj, "enviado")                                      # como se publicado
+        out[name] = obj
+    out["history-index.json"] = FILES["history-index.json"].builder(src)
     return out
 
 
