@@ -51,10 +51,18 @@ def maybe_gunzip(data: bytes) -> bytes:
     return gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data
 
 
+def _nested(seq, kinds=(dict, list, tuple)) -> bool:
+    """A lista tem algum dict/lista dentro? Pelo conjunto dos TIPOS (`map` em C): uma lista de 274
+    mil números da base bruta não passa por uma chamada Python por elemento."""
+    return any(issubclass(t, kinds) for t in set(map(type, seq)))
+
+
 def _strip_stamps(obj):
     if isinstance(obj, dict):
         return {k: _strip_stamps(v) for k, v in obj.items() if k not in HASH_IGNORED_KEYS}
     if isinstance(obj, (list, tuple)):
+        if not _nested(obj):
+            return obj                    # só escalares: nada a tirar (o JSON de tupla = lista)
         return [_strip_stamps(v) for v in obj]
     return obj
 
@@ -89,7 +97,7 @@ def _forbidden(obj, path: str, banned) -> list[str]:
             if isinstance(k, str) and k.lower() in banned:
                 found.append(here)
             found.extend(_forbidden(v, here, banned))
-    elif isinstance(obj, list):
+    elif isinstance(obj, list) and _nested(obj, (dict, list)):
         for i, v in enumerate(obj):
             if isinstance(v, (dict, list)):
                 found.extend(_forbidden(v, f"{path}[{i}]", banned))

@@ -68,6 +68,19 @@ def test_hash_nao_depende_da_ordem_das_chaves_mas_depende_da_ordem_das_listas():
     assert E.content_hash({"l": [1, 2]}) != E.content_hash({"l": [2, 1]})
 
 
+def test_hash_e_proibidas_com_listas_so_de_escalares_e_mistas():
+    """Lista só de escalares (a base bruta: colunas de 274 mil números) é pulada pelo TIPO dos
+    elementos; lista que tem um dict/lista em qualquer posição continua sendo percorrida."""
+    a = {"data": [[1, 2.5, None, "x"], [3, {"updatedAt": "a", "v": 1}]], "t": (1, 2)}
+    b = {"data": [[1, 2.5, None, "x"], [3, {"updatedAt": "b", "v": 1}]], "t": [1, 2]}
+    assert E.content_hash(a) == E.content_hash(b)
+    b["data"][1][1]["v"] = 2
+    assert E.content_hash(a) != E.content_hash(b)
+    assert E.forbidden_keys({"x": [1, 2, [3, {"token": 1}]]}) == ["$.x[2][1].token"]
+    assert E.forbidden_keys({"x": list(range(10_000)) + [{"Key": 1}]}) == ["$.x[10000].Key"]
+    assert E.forbidden_keys({"x": list(range(10_000))}) == []
+
+
 def test_hash_sobrevive_a_ida_e_volta_pelo_json():
     """A partida a frio compara o hash do que foi PUBLICADO (relido do JSON) com o montado agora."""
     import json
