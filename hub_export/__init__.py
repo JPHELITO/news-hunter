@@ -37,10 +37,23 @@ Onda 2 (contrato: PLANO.md, Apêndice F):
     mw-insiders.json        COLD       14 meses de insiders, TODAS as linhas (paginado), em colunas
     mw-filings.json         COLD       os 600 comunicados mais recentes (link do ENET filtrado)
     Os textos livres saem com e-mails e telefones mascarados (contacts.py, decisão U6).
+Onda 3 (contrato: PLANO.md, Apêndice G; sectors.py) — Steel & Mining e Pulp & Paper, dos dois bancos
+SQLite do repositório PÚBLICO do site, pela API do GitHub (github.py; zero Supabase); cadência EVENT
+(só quando o banco muda: sonda do SHA do blob a cada 15 min), grupo `sectors` com teto de 4 envios
+por execução, o índice de cada setor por último:
+    mm-index.json, pp-index.json       "Data through" por fonte, o blob de origem e a base bruta (N linhas)
+    mm-trade.json                      SECEX aço por categoria (4), mensal desde 1997, com a receita
+    mm-domestic.json                   IABr (produção, consumo aparente, vendas) + INDA
+    mm-prediction.json                 o modelo preditivo: laranja (SECEX) e preta (aduana de origem)
+    mm-countries-<imp|exp>-<total|flat|long|semi>.json   SECEX aço por país × mês, em corridas (8)
+    pp-pulp-exports.json               celulose por porto e por destino × produto + dias úteis
+    pp-woodchips.json, pp-paper.json, pp-corrugated.json   GACC; IBÁ papel; Empapel
+    mm-raw-<tabela>.json (11), pp-raw-<tabela>.json (8)   a base bruta "⤓ Data": cada tabela inteira
   live, intraday, quotes-daily, news-latest, news-week-*, news-digest, calendar, quotes-monthly,
-  commodities-daily, ratings, history-* e mw-* (salvo o mw-companies) vão com conteúdo GZIP e nome
-  .json (o hub reconhece pelos bytes); config, reports, news-index, history-index e mw-companies vão
-  em texto.
+  commodities-daily, ratings, history-*, mw-* (salvo o mw-companies) e os dos setores (salvo os
+  índices, o mm-prediction e o pp-corrugated) vão com conteúdo GZIP e nome .json (o hub reconhece
+  pelos bytes); config, reports, news-index, history-index, mw-companies, mm-index, pp-index,
+  mm-prediction e pp-corrugated vão em texto.
 
 USO
   No loop: o fim de cada ciclo do hunt.py chama `run_cycle()` quando HUB_EXPORT_ENABLED=1 (variável
@@ -61,6 +74,10 @@ VARIÁVEIS
   HUB_EXPORT_ENABLED     "1" liga o passo no hunt.py (padrão: desligado)
   HUB_EXPORT_STATE_DIR   pasta do estado fora do Actions (padrão: a temporária do sistema)
   HUB_EXPORT_PUBLIC_BASE endereço da cópia publicada (padrão: o Mindassets acima)
+  GH_TOKEN               leitura da API do GitHub (os bancos dos setores); no Actions, o GITHUB_TOKEN
+                         do job. Sem ele, o ENVIO deixa os setores fora (uma linha de log)
+  HUB_EXPORT_SECTORS_DB_DIR  só no --out/--dry-run: pasta com steel_sm_web.db.gz e pulp_paper.db
+                         (os arquivos do repositório do site) — os setores sem rede
 
 ESTADO
   $RUNNER_TEMP/hub_export_state.json no Actions (morre com o job, ~6 h); fora dele,

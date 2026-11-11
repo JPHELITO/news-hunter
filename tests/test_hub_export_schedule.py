@@ -120,6 +120,8 @@ def test_force_ignora_cadencia_e_hash(tmp_path):
     ciclo(F.FakeHTTP(), p, 0)
     http = F.FakeHTTP()
     acoes = ciclo(http, p, 1, force=True)
+    from hub_export import sectors as SE
     from hub_export.registry import FILES
     assert set(acoes.values()) == {"enviado"}
-    assert len(http.uploads) == len(FILES) + 2 + len(F.MW_FAMILY_FILES)  # + 44 e 45 + o aluguel
+    # + 44 e 45 + o aluguel; os 36 dos setores ficam fora sem GH_TOKEN (test_hub_export_sectors)
+    assert len(http.uploads) == len(FILES) - len(SE.ALL_FILES) + 2 + len(F.MW_FAMILY_FILES)

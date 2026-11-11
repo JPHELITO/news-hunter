@@ -72,9 +72,11 @@ def payloads(http, mem, state=None):
     from hub_export.registry import spec_for
     if not http.database.get("quote_history"):
         http.database["quote_history"] = F.quote_history()
+    from hub_export import sectors as SE
     src, _ = F.make_sources(http=http, mem=mem,
                             state=F.previous_state() if state is None else state)
-    out = {name: spec.builder(src) for name, spec in FILES.items()}
+    out = {name: spec.builder(src) for name, spec in FILES.items() if not SE.sector_of(name)}
+    out.update(F.sector_objects(src))                         # Onda 3: os 36 dos setores
     for lab in (F.WEEK_OLD, F.WEEK_PREV, F.WEEK_CUR):
         out[W.file_name(lab)] = spec_for(W.file_name(lab)).builder(src)
     for r in F.QUOTE_HISTORY:                                 # Onda 2: os históricos (os da Market)

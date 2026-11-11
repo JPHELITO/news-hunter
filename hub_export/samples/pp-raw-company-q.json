@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "table": "company_q",
+  "columns": ["quarter", "year", "q", "klabin_packaging", "klabin_corr_mi", "klabin_corr_me", "klabin_sacks_mi", "klabin_sacks_me", "klabin_cardboard", "klabin_card_mi", "klabin_card_me", "suzano_total", "suzano_pw", "suzano_pw_mi", "suzano_pw_me", "suzano_cardboard", "suzano_card_mi", "suzano_card_me", "suzano_tissue", "iba_packaging", "iba_pw", "iba_cardboard", "iba_tissue"],
+  "data": [
+    ["1T22", "2T22"],
+    [2022, 2022],
+    [1, 2],
+    [377.323, 171.593],
+    [164.607, 361.285],
+    [257.333, 718.075],
+    [284.33, 457.487],
+    [267.642, 615.118],
+    [903.471, 428.835],
+    [467.008, 960.875],
+    [682.016, 295.994],
+    [696.242, 181.984],
+    [198.294, 918.48],
+    [208.562, 441.39],
+    [306.934, 648.384],
+    [940.387, 353.311],
+    [419.799, 508.42],
+    [530.401, 808.95],
+    [716.238, 595.572],
+    [845.459, 457.494],
+    [586.3, 438.113],
+    [750.294, 685.72],
+    [585.455, 729.857]
+  ],
+  "dict": {}
+}

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import test_hub_export_fixtures as F  # noqa: E402
 import hub_export.__main__ as cli  # noqa: E402
+from hub_export import sectors as SE  # noqa: E402
 from hub_export import state as S  # noqa: E402
 from hub_export.feeder import FeederClient  # noqa: E402
 from hub_export.registry import FILES, resolve  # noqa: E402
@@ -42,8 +43,10 @@ from hub_export.supa import SupaError, SupaReader  # noqa: E402
 
 
 FIRST_WEEKS = [f"news-week-{w}.json" for w in (F.WEEK_OLD, F.WEEK_PREV, F.WEEK_CUR)]
-# o 1º ciclo: os fixos + carga da 43 + 44 e 45 + o aluguel de cada empresa do Market Watch
-ALL_FIRST = list(FILES) + FIRST_WEEKS + F.MW_FAMILY_FILES
+# o 1º ciclo: os fixos + carga da 43 + 44 e 45 + o aluguel de cada empresa do Market Watch. Os 36 dos
+# setores (Onda 3) não entram: sem GH_TOKEN no envio, eles ficam fora do ciclo (test_hub_export_sectors)
+NOT_SECTORS = [n for n in FILES if not SE.sector_of(n)]
+ALL_FIRST = NOT_SECTORS + FIRST_WEEKS + F.MW_FAMILY_FILES
 
 
 @pytest.fixture(autouse=True)
@@ -93,7 +96,8 @@ def test_registro_bate_com_o_contrato():
     """Cadência, gzip, pulsação, meta de tamanho e tipo de cada arquivo (PLANO §2.5, 03/11/2026,
     Apêndice E, 05/11/2026, e Apêndice F, 09/11/2026)."""
     from hub_export.registry import ORDER, spec_for
-    tabela = {n: (s.cadence, s.gzip, s.pulse, s.max_bytes, s.content_type) for n, s in FILES.items()}
+    tabela = {n: (s.cadence, s.gzip, s.pulse, s.max_bytes, s.content_type) for n, s in FILES.items()
+              if not SE.sector_of(n)}                       # os setores: test_hub_export_sectors
     assert tabela == {
         "config.json":       (900, False, None, 20 * 1024, "application/json"),
         "live.json":         (0, True, 600, 80 * 1024, "application/gzip"),
@@ -116,7 +120,7 @@ def test_registro_bate_com_o_contrato():
     }
     # o Market Watch: o grupo com teto de envios por execução (O28) e as chaves proibidas de cada um
     from hub_export.registry import GROUP_CAPS
-    assert GROUP_CAPS == {"mw": 4}
+    assert GROUP_CAPS == {"mw": 4, "sectors": 4}
     assert {n for n, s in FILES.items() if s.group == "mw"} == set(F.MW_FIXED)
     assert {"cnpj", "cvm_code", "b3_code", "is_visible"} <= FILES["mw-companies.json"].forbidden
     assert {"id", "updated_at"} <= FILES["mw-insiders.json"].forbidden
@@ -142,8 +146,10 @@ def test_registro_bate_com_o_contrato():
     for ruim in ("history-VALE3.SA.json", "history-rio.l.json", "history-index2.json"):
         with pytest.raises(KeyError):
             spec_for(ruim)                                   # caixa errada / fora do universo
-    # por último no COLD, o índice depois da família; o ratings proíbe as colunas internas
-    assert ORDER[-2:] == ["history", "history-index.json"]
+    # por último no COLD, o índice depois da família (e só os EVENT dos setores depois dele); o
+    # ratings proíbe as colunas internas
+    i = ORDER.index("history-index.json")
+    assert ORDER[i - 1:i + 1] == ["history", "history-index.json"] and ORDER[i + 1:] == SE.ALL_FILES
     assert {"note", "source", "id", "updated_by"} <= FILES["ratings.json"].forbidden
 
 
@@ -311,7 +317,7 @@ def test_contador_de_bytes_e_linha_de_trafego(tmp_path, caplog):
     assert len(linha) == 1
     n = len(http.supa_calls())
     assert f"Supabase: {n} chamada(s)" in linha[0] and "memória do ciclo: 7 cotações, 2 macro" in linha[0]
-    for nome in FILES:                                              # uma linha por arquivo
+    for nome in NOT_SECTORS:                                        # uma linha por arquivo
         assert any(r.getMessage().startswith(nome + " ") for r in caplog.records)
 
 

@@ -58,6 +58,19 @@ oculta como as de verdade):
   • comunicados: com link do ENET, SEM link, com link recusado pelo filtro (credencial), política
     de fato relevante (R), trecho com e-mail/telefone (+55 (21) …, 55 21 ….…, 0800) e com o e-mail
     CORTADO no fim do trecho; `published_at` com fuso -03:00 (como o robô grava).
+Onda 3 (WP3.1B, setores — os bancos SQLite do repositório do site, servidos por um GitHub FALSO):
+  • os dois bancos PEQUENOS de fixture ficam em `hub_export/samples/sectors/` (`steel_sm_web.db.gz` e
+    `pulp_paper.db`, com os esquemas de verdade): bytes fixos no git, então o SHA do blob (que vai no
+    índice dourado) não depende da versão do SQLite de quem roda; `sector_fixture_dbs()` os gera (o
+    teste confere que o conteúdo bate e o `UPDATE_GOLDEN=1` regrava). Os casos: país com 3 meses
+    vazios (fica no trecho, como `null`) e com 4 (trecho novo), linha com volume 0 × mês sem linha,
+    valor minúsculo (1e-06), nomes com acento (ordem de código Unicode: "Áustria" e "Índia" depois de
+    "Japão"), mês faltando no fim de uma série (o eixo comum), o `Wire Rod` só na linha laranja, o
+    GACC com os primeiros meses de volume 0 (o corte) e o último também (o "Data through" pelo
+    `volume_bdmt > 0`), porto com 3 e 4 meses vazios, `exprev_*`/`iba_pulp`/`company_q` que só a
+    base bruta leva, colunas NULL;
+  • o `FakeGitHub` (sonda `contents/`, download `git/blobs/<sha>`, `commits?path=`), com falha sob
+    encomenda (status, exceção, limite de taxa) e o conteúdo adulterado (SHA que não confere).
 
 Nada aqui fala com a rede: o `FakeHTTP` faz o papel do `requests.Session` para o Supabase (um
 mini-PostgREST: select com alias, `->>` e `->` com chave ou índice (inclusive negativo:
@@ -65,23 +78,36 @@ mini-PostgREST: select com alias, `->>` e `->` com chave ou índice (inclusive n
 `or=(…)`/`and=(…)`, também sobre o resultado de RPC; `order` com várias colunas, `limit`, `offset`
 e o corte de 1.000 linhas por resposta; HEAD e `Prefer: count=exact` com `Content-Range`; RPC com
 argumentos; colunas e tipos conferidos onde o banco real recusaria), para o Feeder (roteiro de
-respostas por etapa, com falhas sob encomenda) e para a cópia publicada no Mindassets.
+respostas por etapa, com falhas sob encomenda), para a cópia publicada no Mindassets e para a API do
+GitHub (os bancos dos setores).
 """
 from __future__ import annotations
 
+import atexit
 import copy
+import gzip
+import hashlib
 import json
 import re
+import shutil
+import sqlite3
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from hub_export import sectors as SE  # noqa: E402
 from hub_export import state as hub_state  # noqa: E402
+from hub_export.github import API as GITHUB_API  # noqa: E402
+from hub_export.github import OWNER as GITHUB_OWNER  # noqa: E402
+from hub_export.github import REPO as GITHUB_REPO  # noqa: E402
+from hub_export.github import git_blob_sha  # noqa: E402
 
 # ── endereços e segredos FALSOS (os testes conferem que nunca aparecem em log) ─────────────────
 SUPA_URL = "https://projeto-secreto.supabase.co"
@@ -945,6 +971,359 @@ def previous_state() -> dict:
     return st
 
 
+# ── Onda 3: os bancos dos setores (SQLite do repositório do site) ──────────────────────────────
+SECTOR_SAMPLES = Path(__file__).resolve().parents[1] / "hub_export" / "samples" / "sectors"
+SECTOR_FILE = {SE.MM: "steel_sm_web.db.gz", SE.PP: "pulp_paper.db"}
+SECTOR_COMMITS = {SE.MM: (("c0ffee" * 7)[:40], "2026-11-06T18:51:02Z"),
+                  SE.PP: (("beef01" * 7)[:40], "2026-11-06T23:15:29Z")}
+GH_TOKEN = "ghs_TOKEN-FALSO-NAO-PODE-VAZAR-123"
+
+# os esquemas como estão nos bancos de verdade (`sqlite_master`, f636222)
+STEEL_DDL = [
+    """CREATE TABLE iabr_production (
+        period     TEXT PRIMARY KEY,
+        year       INTEGER, month INTEGER,
+        crude_steel REAL, flat REAL, long_prod REAL,
+        semi REAL, slabs REAL, billets REAL, pig_iron REAL,
+        updated_at TEXT
+    )""",
+    """CREATE TABLE iabr_consumption (
+        period TEXT PRIMARY KEY,
+        year INTEGER, month INTEGER,
+        total REAL, flat REAL, long_prod REAL,
+        updated_at TEXT
+    )""",
+    """CREATE TABLE iabr_exports (
+        period TEXT PRIMARY KEY,
+        year INTEGER, month INTEGER,
+        flat_ktons REAL, long_ktons REAL, semi_ktons REAL,
+        total_ktons REAL, total_usd_mn REAL,
+        updated_at TEXT
+    )""",
+    """CREATE TABLE iabr_imports (
+        period TEXT PRIMARY KEY,
+        year INTEGER, month INTEGER,
+        flat_ktons REAL, long_ktons REAL, semi_ktons REAL,
+        total_ktons REAL, total_usd_mn REAL,
+        updated_at TEXT
+    )""",
+    """CREATE TABLE iabr_domestic_sales (
+        period TEXT PRIMARY KEY,
+        year INTEGER, month INTEGER,
+        total REAL, flat REAL, long_prod REAL, semi REAL,
+        updated_at TEXT
+    , slabs REAL, billets REAL)""",
+    """CREATE TABLE secex_exports (
+        period   TEXT,
+        category TEXT,
+        revenue_usd_mn REAL, volume_ktons REAL,
+        price_usd_ton  REAL, working_days INTEGER,
+        yoy_revenue REAL,   yoy_volume REAL,
+        updated_at TEXT,
+        PRIMARY KEY (period, category)
+    )""",
+    """CREATE TABLE secex_imports (
+        period   TEXT,
+        category TEXT,
+        revenue_usd_mn REAL, volume_ktons REAL,
+        price_usd_ton  REAL, working_days INTEGER,
+        yoy_revenue REAL,   yoy_volume REAL,
+        updated_at TEXT,
+        PRIMARY KEY (period, category)
+    )""",
+    """CREATE TABLE inda_distribution (
+        period TEXT PRIMARY KEY,
+        year INTEGER, month INTEGER,
+        inventories REAL, inv_months REAL,
+        purchases REAL, sales REAL,
+        working_days INTEGER, inv_yoy REAL,
+        hist_avg REAL, sales_ltm REAL, sales_ma3 REAL,
+        updated_at TEXT
+    )""",
+    """CREATE TABLE import_prediction (
+        period  TEXT,
+        product TEXT,
+        country TEXT,
+        value_usd REAL,
+        volume_kg REAL,
+        updated_at TEXT,
+        PRIMARY KEY (period, product, country)
+    )""",
+    """CREATE TABLE pred_exports (
+        period     TEXT,
+        country    TEXT,
+        product    TEXT,
+        value_usd  REAL,
+        volume_kg  REAL,
+        updated_at TEXT,
+        PRIMARY KEY (period, country, product)
+    )""",
+    'CREATE TABLE "secex_country" ("period" TEXT, "direction" TEXT, "category" TEXT, "country" TEXT, '
+    '"volume_ktons" REAL, "revenue_usd_mn" REAL, "updated_at" TEXT, PRIMARY KEY ("direction", '
+    '"category", "period", "country")) WITHOUT ROWID',
+]
+_IBA_PAPER_COLS = ([f"{f}_{g}" for f in ("prod", "dom", "exp", "imp")
+                    for g in ("total", "packaging", "pw", "newsprint", "cardboard", "other")]
+                   + ["app_cons", "exprev_total", "exprev_latam", "exprev_europe", "exprev_namerica",
+                      "exprev_africa", "exprev_asia", "exprev_china"])
+_IBA_PULP_COLS = ["prod_total", "prod_hw", "prod_sw", "prod_hy", "dom_total", "dom_hw", "dom_sw",
+                  "dom_hy", "exp_total", "exp_hw", "exp_sw", "exp_hy", "imp_total", "imp_hw", "imp_sw",
+                  "imp_hy", "app_cons", "exprev_total", "exprev_latam", "exprev_europe",
+                  "exprev_namerica", "exprev_africa", "exprev_asia", "exprev_china", "imprev_total"]
+_COMPANY_Q_COLS = ["klabin_packaging", "klabin_corr_mi", "klabin_corr_me", "klabin_sacks_mi",
+                   "klabin_sacks_me", "klabin_cardboard", "klabin_card_mi", "klabin_card_me",
+                   "suzano_total", "suzano_pw", "suzano_pw_mi", "suzano_pw_me", "suzano_cardboard",
+                   "suzano_card_mi", "suzano_card_me", "suzano_tissue", "iba_packaging", "iba_pw",
+                   "iba_cardboard", "iba_tissue"]
+PULP_DDL = [
+    "CREATE TABLE iba_paper (period TEXT, year INT, month INT, "
+    + ", ".join(f"{c} REAL" for c in _IBA_PAPER_COLS) + ")",
+    "CREATE TABLE iba_pulp (period TEXT, year INT, month INT, "
+    + ", ".join(f"{c} REAL" for c in _IBA_PULP_COLS) + ")",
+    "CREATE TABLE secex_pulp_port (period TEXT, year INT, month INT, port TEXT, volume_ktons REAL, "
+    "revenue_usd_mn REAL)",
+    "CREATE TABLE company_q (quarter TEXT, year INT, q INT, "
+    + ", ".join(f"{c} REAL" for c in _COMPANY_Q_COLS) + ")",
+    "CREATE TABLE calendar (period TEXT, year INT, month INT, working_days INT)",
+    "CREATE TABLE empapel (period TEXT, year INT, month INT, shipments_kton REAL, working_days REAL, "
+    "exp_per_day REAL, ltm_shipments REAL)",
+    "CREATE TABLE gacc_woodchips (period TEXT, year INT, month INT, fibre TEXT, country TEXT, "
+    "volume_bdmt REAL, revenue_usd_mn REAL)",
+    """CREATE TABLE secex_pulp_country (
+        period TEXT NOT NULL, year INT, month INT, country TEXT NOT NULL, product TEXT NOT NULL,
+        volume_ktons REAL, revenue_usd_mn REAL,
+        PRIMARY KEY (period, country, product)) WITHOUT ROWID""",
+]
+
+# os meses: índice 0 = 2022-01
+SECTOR_FROM = "2022-01"
+
+
+def mon(i: int) -> str:
+    return f"{2022 + i // 12}-{i % 12 + 1:02d}"
+
+
+def _num(*key, scale=1000.0, places=4) -> float:
+    """Um número determinístico (o mesmo em toda máquina) a partir da chave."""
+    h = int(hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:8], 16)
+    return round((h % 900_000 + 100_000) / 1_000_000 * scale, places)
+
+
+# secex_country: (direção, categoria FOLHA, país, meses com linha). Os pais (flat, long, semi) são a
+# soma das folhas por (direção, mês, país), como no banco de verdade.
+COUNTRY_SERIES = [
+    ("imp", "hrc", "China", range(18)),
+    ("imp", "hrc", "Coreia do Sul", [0, 1, 2, 3, 7, 8, 9, 14, 15, 16, 17]),   # 3 vazios / 4 vazios
+    ("imp", "crc", "Alemanha", [0, 1, 2, 4, 5]),                               # mês 2 = 0; 3 sem linha
+    ("imp", "coated", "Japão", [16, 17]),
+    ("imp", "rebar", "China", range(0, 18, 2)),
+    ("imp", "bar", "Índia", [9]),
+    ("imp", "placa", "China", range(12, 18)),
+    ("exp", "hrc", "Estados Unidos", range(18)),
+    ("exp", "heavy_plate", "Estados Unidos", [3, 4, 5]),
+    ("exp", "coated", "Japão", [5]),                                           # valor minúsculo
+    ("exp", "wire_rod", "Áustria", [0, 17]),
+    ("exp", "shapes", "China", range(6, 12)),
+    ("exp", "ingot_billet", "Estados Unidos", range(10, 18)),
+    ("exp", "placa", "Áustria", [1, 2, 3]),
+]
+ZERO_ROW = ("imp", "crc", "Alemanha", 2)
+TINY_ROW = ("exp", "coated", "Japão", 5)
+PARENT = {c: p for p, cs in SE.COUNTRY_TABS.items() if p != "total" for c in cs if c != p}
+STAMP_OLD, STAMP_NEW = "2026-10-07T18:20:13.5", "2026-11-06T18:49:41.212755"
+
+
+def _steel_rows(con) -> None:
+    leaves: dict = {}
+    for d, cat, ctry, months in COUNTRY_SERIES:
+        for i in months:
+            v = 0.0 if (d, cat, ctry, i) == ZERO_ROW else (
+                1e-06 if (d, cat, ctry, i) == TINY_ROW else _num(d, cat, ctry, i, scale=90.0, places=6))
+            leaves[(d, cat, ctry, i)] = v
+    parents: dict = {}
+    for (d, cat, ctry, i), v in leaves.items():
+        k = (d, PARENT[cat], ctry, i)
+        parents[k] = parents.get(k, 0.0) + v
+    for (d, cat, ctry, i), v in {**leaves, **parents}.items():
+        con.execute('INSERT INTO "secex_country" VALUES (?,?,?,?,?,?,?)',
+                    (mon(i), d, cat, ctry, v, round(v * _num(cat, scale=1.5, places=3), 6),
+                     STAMP_NEW if i >= 16 else STAMP_OLD))
+    for table, stamp_ in (("secex_imports", "2026-11-06T18:49:41.212755"),
+                          ("secex_exports", "2026-11-06T18:49:40.1")):
+        vols: dict = {}
+        for cat in ("total", "flat", "long", "semi", "hrc", "rebar"):
+            for i in range(18):
+                if table == "secex_imports" and ((cat == "rebar" and 3 <= i <= 5)
+                                                 or (cat == "semi" and i == 17)):
+                    continue                                  # mês sem linha (o eixo comum leva null)
+                vol = _num(table, cat, i, scale=900.0)
+                rev = round(vol * _num(table, cat, scale=1.2, places=3), 4)
+                vols[(cat, i)] = (vol, rev)
+                prev = vols.get((cat, i - 12))
+                yoy_v = round(vol / prev[0] - 1, 4) if prev else None
+                yoy_r = round(rev / prev[1] - 1, 4) if prev else None
+                con.execute(f"INSERT INTO {table} VALUES (?,?,?,?,?,?,?,?,?)",
+                            (mon(i), cat, rev, vol, round(rev * 1000 / vol, 2), None, yoy_r, yoy_v,
+                             stamp_))
+    for i in range(12, 18):                                   # IABr: 2023-01 … 2023-06
+        p, y, m = mon(i), 2022 + i // 12, i % 12 + 1
+        st = "2026-10-15T20:39:52" if i == 17 else "2026-10-15T20:39:51.5"
+        con.execute("INSERT INTO iabr_production VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (p, y, m, *(_num("prod", c, i) for c in ("crude", "flat", "long", "semi",
+                                                              "slabs", "billets", "pig")), st))
+        if i < 17:                                            # o consumo para 1 mês antes
+            con.execute("INSERT INTO iabr_consumption VALUES (?,?,?,?,?,?,?)",
+                        (p, y, m, *(_num("cons", c, i) for c in ("total", "flat", "long")), st))
+        con.execute("INSERT INTO iabr_domestic_sales (period, year, month, total, flat, long_prod, "
+                    "semi, updated_at, slabs, billets) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (p, y, m, *(_num("dom", c, i) for c in ("total", "flat", "long", "semi")), st,
+                     _num("dom", "slabs", i), _num("dom", "billets", i)))
+        for t in ("iabr_exports", "iabr_imports"):
+            con.execute(f"INSERT INTO {t} VALUES (?,?,?,?,?,?,?,?,?)",
+                        (p, y, m, *(_num(t, c, i) for c in ("flat", "long", "semi", "total", "usd")),
+                         st))
+    for i in range(10, 18):                                   # INDA: 2022-11 … 2023-06
+        con.execute("INSERT INTO inda_distribution VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (mon(i), 2022 + i // 12, i % 12 + 1, _num("inv", i),
+                     _num("months", i, scale=5.0, places=1),
+                     _num("buy", i), _num("sell", i), 20 + i % 3, _num("yoy", i, scale=0.5),
+                     None if i == 13 else 812.4, None if i < 12 else _num("ltm", i, scale=9000.0),
+                     _num("ma3", i), "2026-10-28T19:39:19.120000"))
+    for i in range(9, 18):                                    # laranja: 2022-10 … 2023-06
+        for prod in ("HRC", "CRC", "Coated", "Wire Rod"):
+            for ctry in ("Korea", "China"):
+                if (prod == "Wire Rod" and ctry == "Korea") or (prod, ctry, i) == ("HRC", "Korea", 11):
+                    continue
+                kg = _num("imp", prod, ctry, i, scale=4e7, places=1)
+                con.execute("INSERT INTO import_prediction VALUES (?,?,?,?,?,?)",
+                            (mon(i), prod, ctry, round(kg * 0.62, 1), kg,
+                             STAMP_NEW if i == 17 else STAMP_OLD))
+    for i in range(10, 17):                                   # preta: 2022-11 … 2023-05
+        for ctry in ("Korea", "China"):
+            for prod in ("HRC", "CRC", "Coated"):
+                if (prod, ctry, i) == ("Coated", "Korea", 10):
+                    continue                                  # a série da Coreia começa depois
+                kg = _num("exp", prod, ctry, i, scale=4e7, places=1)
+                con.execute("INSERT INTO pred_exports VALUES (?,?,?,?,?,?)",
+                            (mon(i), ctry, prod, round(kg * 0.6, 1), kg, "2026-10-20T15:02:13.4"))
+
+
+PORT_SERIES = [("Santos", range(18)), ("Paranaguá", [0, 1, 6, 7, 8]),   # 4 vazios: trecho novo
+               ("Vitória", [0, 1, 2, 6, 7]), ("Barcarena", [5]), ("Rio Grande", [17])]
+DEST_SERIES = [("China", "hardwood", range(18)), ("Netherlands", "hardwood", range(0, 18, 3)),
+               ("United States", "softwood", range(6)), ("Italy", "ukp", [4]),
+               ("Türkiye", "dissolving", [10, 11]), ("Belgium", "other", [17])]
+GACC_SUPPLIERS = ("Vietnam", "Australia", "Chile", "Others")
+
+
+def _pulp_rows(con) -> None:
+    for port, months in PORT_SERIES:
+        for i in months:
+            zero = port == "Barcarena"
+            v = 0.0 if zero else _num("port", port, i, scale=600.0)
+            con.execute("INSERT INTO secex_pulp_port VALUES (?,?,?,?,?,?)",
+                        (mon(i), 2022 + i // 12, i % 12 + 1, port, v,
+                         0.0 if zero else round(v * 0.55, 4)))
+    for ctry, prod, months in DEST_SERIES:
+        for i in months:
+            v = round(_num("dest", ctry, prod, i, scale=400.0), 3)
+            con.execute("INSERT INTO secex_pulp_country VALUES (?,?,?,?,?,?,?)",
+                        (mon(i), 2022 + i // 12, i % 12 + 1, ctry, prod, v, round(v * 0.52, 4)))
+    for i in range(-1, 18):                                   # 2021-12 (fora do eixo) … 2023-06
+        con.execute("INSERT INTO calendar VALUES (?,?,?,?)",
+                    (mon(i), 2022 + i // 12, i % 12 + 1, 19 + (i % 4)))
+    for i in range(-2, 6):                                    # GACC: 2021-11 … 2022-06
+        for fibre in ("HW", "SW"):
+            vols = {}
+            for ctry in GACC_SUPPLIERS:
+                zero = i < 0 or i == 5 or (fibre == "SW" and ctry == "Chile")
+                vols[ctry] = (0.0, 0.0) if zero else (_num("gacc", fibre, ctry, i, scale=0.8, places=9),
+                                                       _num("gaccrev", fibre, ctry, i, scale=90.0))
+            vols["Total"] = (round(sum(v for v, _r in vols.values()), 9),
+                             round(sum(r for _v, r in vols.values()), 4))
+            for ctry in sorted(vols):                         # o robô grava em ordem alfabética
+                con.execute("INSERT INTO gacc_woodchips VALUES (?,?,?,?,?,?,?)",
+                            (mon(i), 2022 + i // 12, i % 12 + 1, fibre, ctry, *vols[ctry]))
+    for i in range(7, 13):                                    # IBÁ papel: 2022-08 … 2023-01
+        vals = [None if (c.startswith("exprev_") and i < 9) else _num("iba", c, i)
+                for c in _IBA_PAPER_COLS]
+        con.execute(f"INSERT INTO iba_paper VALUES (?,?,?,{','.join('?' * len(vals))})",
+                    (mon(i), 2022 + i // 12, i % 12 + 1, *vals))
+    for i in range(0, 3):                                     # IBÁ celulose (morto na tela)
+        vals = [None if c.endswith("_hy") else _num("pulp", c, i) for c in _IBA_PULP_COLS]
+        con.execute(f"INSERT INTO iba_pulp VALUES (?,?,?,{','.join('?' * len(vals))})",
+                    (mon(i), 2022, i + 1, *vals))
+    for i in range(4, 14):                                    # Empapel: 2022-05 … 2023-02
+        ship = _num("empapel", i, scale=350.0, places=6)
+        days = 24.0 + i % 3
+        con.execute("INSERT INTO empapel VALUES (?,?,?,?,?,?,?)",
+                    (mon(i), 2022 + i // 12, i % 12 + 1, ship, days, round(ship / days, 6),
+                     _num("ltm", i, scale=4000.0, places=6)))
+    for q in (1, 2):
+        con.execute(f"INSERT INTO company_q VALUES (?,?,?,{','.join('?' * len(_COMPANY_Q_COLS))})",
+                    (f"{q}T22", 2022, q, *(_num("cq", c, q) for c in _COMPANY_Q_COLS)))
+
+
+def build_sector_db(path, sector: str, mutate=None) -> None:
+    """Monta o banco de fixture do setor em `path` (página de 1 KB, compactado). `mutate(con)` roda
+    no fim — é como os testes tiram uma coluna ou repetem uma linha."""
+    path = Path(path)
+    if path.exists():
+        path.unlink()
+    con = sqlite3.connect(path)
+    con.execute("PRAGMA page_size = 1024")
+    for ddl in (STEEL_DDL if sector == SE.MM else PULP_DDL):
+        con.execute(ddl)
+    (_steel_rows if sector == SE.MM else _pulp_rows)(con)
+    if mutate is not None:
+        mutate(con)
+    con.commit()
+    con.execute("VACUUM")
+    con.close()
+
+
+def sector_db_bytes(sector: str, mutate=None) -> bytes:
+    """Os bytes do arquivo como ficam no REPOSITÓRIO do site (o banco do aço vai em gzip)."""
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "x.db"
+        build_sector_db(p, sector, mutate)
+        raw = p.read_bytes()
+    return gzip.compress(raw, compresslevel=9, mtime=0) if SE.DBS[sector].gz else raw
+
+
+_SECTOR_BYTES: dict = {}
+
+
+def sector_files() -> dict[str, bytes]:
+    """caminho no repositório → bytes: os bancos de fixture GUARDADOS em hub_export/samples/sectors."""
+    if not _SECTOR_BYTES:
+        for s in SE.SECTORS:
+            _SECTOR_BYTES[SE.DBS[s].path] = (SECTOR_SAMPLES / SECTOR_FILE[s]).read_bytes()
+    return dict(_SECTOR_BYTES)
+
+
+def sector_blob(sector: str) -> str:
+    return git_blob_sha(sector_files()[SE.DBS[sector].path])
+
+
+_CACHE_DIR = tempfile.mkdtemp(prefix="hub_export_test_")
+atexit.register(shutil.rmtree, _CACHE_DIR, True)
+
+
+def sector_objects(src) -> dict[str, dict]:
+    """Os 36 arquivos dos setores montados direto pelos construtores, "como se publicados" (o índice
+    só sai com a fila vazia)."""
+    from hub_export.registry import FILES
+    out = {}
+    for s in SE.SECTORS:
+        for name in SE.queue_of(s):
+            obj = FILES[name].builder(src)
+            FILES[name].after(src, obj, "enviado")
+            out[name] = obj
+        out[SE.INDEX[s]] = FILES[SE.INDEX[s]].builder(src)
+    return out
+
+
 # ── o HTTP falso ──────────────────────────────────────────────────────────────────────────────
 class FakeResp:
     def __init__(self, status: int = 200, body=b"", headers: dict | None = None):
@@ -1174,11 +1553,71 @@ def _order(rows: list[dict], spec: str) -> list[dict]:
     return out
 
 
+GITHUB_REPO_URL = f"{GITHUB_API}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/"
+
+
+@dataclass
+class FakeGitHub:
+    """A API do GitHub para os bancos dos setores. `files` = caminho → bytes do arquivo na `main`
+    (trocar = um commit novo; os blobs antigos continuam baixáveis); `commits` = setor → (sha, data);
+    `fail[etapa]` (sonda, download, commit) = status HTTP, exceção ou FakeResp pronto, a cada chamada;
+    `corrupt` = o download devolve um byte trocado (o SHA não confere)."""
+    files: dict = field(default_factory=sector_files)
+    commits: dict = field(default_factory=lambda: dict(SECTOR_COMMITS))
+    fail: dict = field(default_factory=dict)
+    corrupt: bool = False
+    blobs: dict = field(default_factory=dict)
+
+    def handle(self, call):
+        rest = call.url[len(GITHUB_REPO_URL):]
+        for data in self.files.values():
+            self.blobs.setdefault(git_blob_sha(data), data)
+        if rest.startswith("contents/"):
+            step = "sonda"
+        elif rest.startswith("git/blobs/"):
+            step = "download"
+        elif rest == "commits":
+            step = "commit"
+        else:
+            raise AssertionError(f"rota do GitHub inesperada no teste: {rest}")
+        err = self.fail.get(step)
+        if isinstance(err, BaseException):
+            raise err
+        if isinstance(err, FakeResp):
+            return err
+        if isinstance(err, int):
+            return FakeResp(err, {"message": "erro falso do GitHub"})
+        if step == "sonda":
+            path = unquote(rest[len("contents/"):])
+            assert call.params.get("ref") == "main", call.params
+            data = self.files.get(path)
+            if data is None:
+                return FakeResp(404, {"message": "Not Found"})
+            return FakeResp(200, {"type": "file", "name": path.rsplit("/", 1)[-1], "path": path,
+                                  "sha": git_blob_sha(data), "size": len(data), "content": "",
+                                  "encoding": "none"})
+        if step == "download":
+            assert call.headers.get("Accept") == "application/vnd.github.raw+json", call.headers
+            data = self.blobs.get(rest[len("git/blobs/"):])
+            if data is None:
+                return FakeResp(404, {"message": "Not Found"})
+            if self.corrupt:
+                data = data[:-1] + bytes([data[-1] ^ 1])
+            return FakeResp(200, data)
+        path = call.params.get("path")
+        sector = next((s for s in SE.SECTORS if SE.DBS[s].path == path), None)
+        assert sector and call.params.get("sha") == "main" and call.params.get("per_page") == "1"
+        sha, when = self.commits[sector]
+        return FakeResp(200, [{"sha": sha, "commit": {"committer": {"date": when},
+                                                      "message": "data: robô do site"}}])
+
+
 @dataclass
 class FakeHTTP:
     """`requests.Session` falso. `feeder_script[etapa]` = lista de respostas (status ou exceção)
     consumidas na ordem; vazia = sucesso. Etapas: initialize, PUT, complete, failed.
-    `max_rows` = o corte do PostgREST do Supabase (1.000 linhas por resposta, calado)."""
+    `max_rows` = o corte do PostgREST do Supabase (1.000 linhas por resposta, calado).
+    `github` = a API do GitHub dos bancos dos setores (FakeGitHub)."""
     database: dict = field(default_factory=db)
     published: dict = field(default_factory=dict)          # nome → bytes (cópia no Mindassets)
     feeder_script: dict = field(default_factory=dict)
@@ -1187,6 +1626,7 @@ class FakeHTTP:
     uploads: dict = field(default_factory=dict)             # nome → bytes recebidos no PUT
     revision: int = 0
     max_rows: int | None = 1000
+    github: FakeGitHub = field(default_factory=FakeGitHub)
 
     def request(self, method, url, headers=None, params=None, data=None, json=None,
                 timeout=None, stream=False):
@@ -1196,6 +1636,8 @@ class FakeHTTP:
             return self._supa(call)
         if url.startswith(FEEDER_URL) or url.startswith(PUT_HOST):
             return self._feeder(call)
+        if url.startswith(GITHUB_REPO_URL):
+            return self.github.handle(call)
         if url.startswith(PUBLIC_BASE):
             name = url[len(PUBLIC_BASE) + 1:]
             if name in self.published:
@@ -1302,6 +1744,15 @@ class FakeHTTP:
     def feeder_calls(self) -> list[Call]:
         return [c for c in self.calls if c.url.startswith((FEEDER_URL, PUT_HOST))]
 
+    def github_calls(self, step: str | None = None) -> list[Call]:
+        """As chamadas à API do GitHub (`sonda`, `download`, `commit` ou todas)."""
+        def kind(c):
+            rest = c.url[len(GITHUB_REPO_URL):]
+            return ("sonda" if rest.startswith("contents/") else
+                    "download" if rest.startswith("git/blobs/") else "commit")
+        return [c for c in self.calls if c.url.startswith(GITHUB_REPO_URL)
+                and (step is None or kind(c) == step)]
+
 
 def connection_error():
     return requests.ConnectionError(f"HTTPSConnectionPool: falhou {PUT_HOST}/x?X-Amz-Signature=SIG")
@@ -1316,6 +1767,8 @@ def make_sources(http=None, state=None, mem="default", published=None, now=NOW, 
     supa = SupaReader(SUPA_URL, SUPA_KEY, http=http)
     st = hub_state.empty_state() if state is None else state
     kw.setdefault("first_week", ARCHIVE_FIRST)
+    kw.setdefault("http", http)                    # o GitHub falso dos setores
+    kw.setdefault("cache_dir", _CACHE_DIR)
     return Sources(supa, st, now=now, memory=memory() if mem == "default" else mem,
                    published=published, **kw), http
 

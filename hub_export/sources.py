@@ -47,6 +47,10 @@ Onda 2 (PLANO, Apêndice F; pesquisa 2-dados §4):
   Market Watch              mw.py (WP2.4B): as RPCs `get_mw_*`, sondas pela RPC (contagem +
                             máximo, ~1 KB), estado próprio (`<estado>_mw.json`), partida a frio pelas
                             cópias publicadas e a família mw-short-<empresa>.json.
+Onda 3 (PLANO, Apêndice G):
+  setores (mm-*, pp-*)      sectors.py: os dois bancos SQLite do repositório PÚBLICO do site, pela
+                            API do GitHub (github.py) — sonda do SHA do blob a cada 15 min, download só
+                            quando muda, conferido. ZERO Supabase.
 
 Tudo é normalizado aqui (datas `…Z`, números finitos ou None, `session` válida ou None) e
 guardado assim no estado — os construtores só renomeiam campo a campo.
@@ -214,7 +218,8 @@ class Sources:
     def __init__(self, supa, state: dict, *, now: datetime | None = None,
                  memory: dict | None = None, published=None, mode: str = "send",
                  rebuild: bool = False, out_dir=None, weeks_arg=None, news_path=None,
-                 first_week: str | None = None, history_arg=None, mw_path=None):
+                 first_week: str | None = None, history_arg=None, mw_path=None, env=None,
+                 http=None, cache_dir=None):
         self.supa = supa
         self.state = state
         self.now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -231,6 +236,10 @@ class Sources:
         self.mw_path = mw_path
         self._mw = None
         self._mw_state = None
+        self.env = {} if env is None else env       # setores: GH_TOKEN, HUB_EXPORT_SECTORS_DB_DIR
+        self.http = http                            # o GitHub usa o mesmo cliente HTTP (testes)
+        self.cache_dir = cache_dir                  # o banco baixado (ao lado do estado)
+        self._sectors = None
         self.quote_universe = quote_universe()
         self.macro_universe = macro_universe()
         self.used_memory = {"quotes": None, "macro": None}
@@ -556,6 +565,21 @@ class Sources:
 
     def history_if_loaded(self):
         return self._history
+
+    # ── setores: Steel & Mining e Pulp & Paper (sectors.py, Onda 3) ──────────────────────────────
+    def sectors(self):
+        """O SectorStore desta execução (sonda do GitHub, fila, banco baixado, índice)."""
+        if self._sectors is None:
+            from .sectors import SectorStore
+            self._sectors = SectorStore(self, env=self.env, http=self.http, cache_dir=self.cache_dir)
+        return self._sectors
+
+    def sectors_if_loaded(self):
+        return self._sectors
+
+    def finish_sectors(self) -> None:
+        if self._sectors is not None:
+            self._sectors.finish()
 
     # ── Market Watch (mw.py) ────────────────────────────────────────────────────────────────────
     def mw(self):

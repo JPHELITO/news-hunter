@@ -9,7 +9,10 @@ mensal descarta; history-ibov: índice; history-scco: com split) e o history-ind
 "publicados"). Onda 2 (WP2.4B, Market Watch): mw-companies (com os fatos de cada empresa),
 mw-short-interest (visão "Todas", 100 dias), mw-buybacks, mw-insiders (MAIS DE 1.000 linhas: o
 caso do corte do PostgREST — é a amostra grande, ~190 KB) e mw-filings, mais o aluguel de cada
-empresa visível (mw-short-<empresa>: ON, PN, PNA/PNB, UNIT, BDR).
+empresa visível (mw-short-<empresa>: ON, PN, PNA/PNB, UNIT, BDR). Onda 3 (WP3.1B, setores): os 36
+arquivos `mm-*`/`pp-*` montados dos dois bancos PEQUENOS de fixture (`samples/sectors/`, servidos
+pelo GitHub falso), com os índices "depois de publicados" os arquivos de dado (o índice só sai com
+a fila do blob vazia) — o SHA do blob no índice é o do arquivo guardado.
 
 Por que existe: o hub (React) começa as telas por estas amostras — o orquestrador as copia para
 `__tests__/fixtures` do lado do hub a cada mudança de contrato. Qualquer mudança no que sai daqui
@@ -36,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import test_hub_export_fixtures as F  # noqa: E402
 from hub_export import history as H  # noqa: E402
 from hub_export import mw as MW  # noqa: E402
+from hub_export import sectors as SE  # noqa: E402
 from hub_export import weeks as W  # noqa: E402
 from hub_export.encode import forbidden_keys  # noqa: E402
 from hub_export.registry import FILES, spec_for  # noqa: E402
@@ -59,7 +63,9 @@ def golden_objects() -> dict[str, dict]:
     http = F.FakeHTTP()
     http.database["quote_history"] = F.quote_history()
     src, _ = F.make_sources(http=http, state=F.previous_state())
-    out = {name: spec.builder(src) for name, spec in FILES.items() if name not in INDEXES}
+    out = {name: spec.builder(src) for name, spec in FILES.items()
+           if name not in INDEXES and not SE.sector_of(name)}
+    out.update(F.sector_objects(src))                        # os 36 dos setores, índices por último
     store = src.news()
     for lab in GOLDEN_WEEKS:
         name = W.file_name(lab)

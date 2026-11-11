@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "source": {
+    "blob": "935adde95d1cb734f08ba64ebf1b7ce124dbf7f6",
+    "commit": "beef01beef01beef01beef01beef01beef01beef",
+    "committedAt": "2026-11-06T23:15:29Z"
+  },
+  "dataThrough": {
+    "secex": "2023-06",
+    "iba": "2023-01",
+    "empapel": "2023-02",
+    "gacc": "2022-05"
+  },
+  "raw": [
+    {
+      "table": "secex_pulp_port",
+      "rows": 30
+    },
+    {
+      "table": "secex_pulp_country",
+      "rows": 34
+    },
+    {
+      "table": "gacc_woodchips",
+      "rows": 80
+    },
+    {
+      "table": "iba_pulp",
+      "rows": 3
+    },
+    {
+      "table": "iba_paper",
+      "rows": 6
+    },
+    {
+      "table": "empapel",
+      "rows": 10
+    },
+    {
+      "table": "company_q",
+      "rows": 2
+    },
+    {
+      "table": "calendar",
+      "rows": 19
+    }
+  ]
+}

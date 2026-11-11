@@ -31,6 +31,14 @@ uma por empresa visível, gzip), cada arquivo COLD pelo seu último build (mw.py
 mw-buybacks é montado de hora em hora, mas o dado só é RELIDO 2×/dia (mw.py: o `updated_at` dessas
 tabelas não serve de sonda). Os 5 fixos e a família formam o GRUPO `mw`, com TETO de envios por
 execução (GROUP_CAPS, O28): o que passa do teto fica "na fila" e vai no ciclo seguinte.
+
+Onda 3 (Apêndice G, WP3.1B; sectors.py): os 36 arquivos dos setores — Steel & Mining (`mm-*`) e Pulp &
+Paper (`pp-*`): os 15 de dado da tela, os 19 da base bruta (`*-raw-<tabela>`, G.11) e os 2 índices —,
+ENTRADAS FIXAS (nomes fechados: os 8 de país são um conjunto, não família) com cadência EVENT: nunca
+"na vez" pelo relógio, só pelo `urgent` (blob novo no repositório do site, ou arquivo na fila). Grupo
+`sectors` com teto de 4 envios por execução (T10); vêm DEPOIS de tudo (se o orçamento de 90 s acabar,
+quem espera são eles) e, em cada setor, o índice por último. Lidos dos bancos SQLite do site pela
+API do GitHub (zero Supabase).
 """
 from __future__ import annotations
 
@@ -40,21 +48,28 @@ from typing import Callable
 
 from . import history as H
 from . import mw as MW
+from . import sectors as SE
 from . import weeks as W
 from .exporters import (calendar, commodities_daily, config, history_file, history_index, intraday,
-                        live, mw_buybacks, mw_companies, mw_filings, mw_insiders, mw_short_file,
-                        mw_short_interest, news_digest, news_index, news_latest, news_week,
-                        quotes_daily, quotes_monthly, ratings, reports)
-from .schedule import COLD, HOT, PULSE_LIVE, WARM
+                        live, mm_countries, mm_domestic, mm_prediction, mm_trade, mw_buybacks,
+                        mw_companies, mw_filings, mw_insiders, mw_short_file, mw_short_interest,
+                        news_digest, news_index, news_latest, news_week, pp_corrugated, pp_paper,
+                        pp_pulp_exports, pp_woodchips, quotes_daily, quotes_monthly, ratings,
+                        raw_table, reports, sector_index)
+from .schedule import COLD, EVENT, HOT, PULSE_LIVE, WARM
 
 KB = 1024
+MB = 1024 * KB
 WEEK_FAMILY = W.PREFIX          # "news-week"
 HISTORY_FAMILY = H.PREFIX       # "history"
 MW_FAMILY = MW.PREFIX           # "mw-short"
 MW_GROUP = "mw"
+SECTOR_GROUP = SE.GROUP         # "sectors"
 # envios por execução, por grupo (O28: a carga inicial do Market Watch são 16 arquivos — o Feeder pega
-# 10 revisões por ~60 s de TODOS os times; uma rajada nossa atrasaria as dos outros)
-GROUP_CAPS = {MW_GROUP: 4}
+# 10 revisões por ~60 s de TODOS os times; uma rajada nossa atrasaria as dos outros). Setores (T10):
+# o mês novo do SECEX (~15 envios com a base bruta) sai em 4 ciclos; a carga inicial (36), em 9.
+GROUP_CAPS = {MW_GROUP: 4, SECTOR_GROUP: 4}
+EVENT_ORDER = 10 ** 9           # a "cadência" de ordenação dos EVENT: depois de tudo
 
 
 @dataclass(frozen=True)
@@ -108,12 +123,58 @@ HISTORY_SPEC = dict(cadence=HOT, gzip=True, pulse=None, max_bytes=300 * KB)
 MW_SHORT_SPEC = dict(cadence=COLD, gzip=True, pulse=None, max_bytes=100 * KB,
                      forbidden=mw_short_interest.FORBIDDEN, group=MW_GROUP)
 
+# ── Onda 3: os setores (Apêndice G) ─────────────────────────────────────────────────────────────
+# chaves que nunca saem nos 17 arquivos da tela (G.0; a base bruta, G.11, é a exceção declarada)
+SECTOR_FORBIDDEN = frozenset({"updated_at", "value_usd", "valueUsd", "yoy_revenue", "yoyRevenue",
+                              "inv_yoy", "invYoy", "hist_avg", "histAvg", "pig_iron", "pigIron",
+                              "exprev_total", "exprevTotal"})
+
+
+def _sector(name: str, builder: Callable, gz: bool, max_bytes: int,
+            forbidden: frozenset = SECTOR_FORBIDDEN) -> Spec:
+    return Spec(builder, EVENT, gz, None, max_bytes, after=partial(SE.after, name),
+                urgent=partial(SE.urgent, name), forbidden=forbidden, group=SECTOR_GROUP)
+
+
+# meta = o medido com o banco de 06/11/2026 (f636222) com folga para o crescimento
+_COUNTRY_MAX = {"imp": {"total": 600, "flat": 800, "long": 800, "semi": 200},
+                "exp": {"total": 800, "flat": 1100, "long": 1100, "semi": 300}}
+_RAW_MAX = {"secex_country": 16 * MB, "secex_imports": 1 * MB, "secex_exports": 1 * MB,
+            "secex_pulp_country": 2 * MB, "secex_pulp_port": 512 * KB, "gacc_woodchips": 512 * KB}
+SECTOR_FILES: dict[str, Spec] = {
+    "mm-trade.json":      _sector("mm-trade.json", mm_trade.build, True, 150 * KB),
+    "mm-domestic.json":   _sector("mm-domestic.json", mm_domestic.build, True, 60 * KB),
+    "mm-prediction.json": _sector("mm-prediction.json", mm_prediction.build, False, 30 * KB,
+                                  SECTOR_FORBIDDEN | {"Wire Rod"}),
+    **{SE.country_file(d, t): _sector(SE.country_file(d, t), partial(mm_countries.build,
+                                                                      direction=d, tab=t),
+                                      True, _COUNTRY_MAX[d][t] * KB)
+       for d in SE.DIRECTIONS for t in SE.COUNTRY_TABS},
+    **{SE.raw_file(SE.MM, t): _sector(SE.raw_file(SE.MM, t),
+                                      partial(raw_table.build, sector=SE.MM, table=t),
+                                      True, _RAW_MAX.get(t, 256 * KB), frozenset())
+       for t in SE.RAW_TABLES[SE.MM]},
+    "mm-index.json":      _sector("mm-index.json", partial(sector_index.build, sector=SE.MM),
+                                  False, 4 * KB),
+    "pp-pulp-exports.json": _sector("pp-pulp-exports.json", pp_pulp_exports.build, True, 500 * KB),
+    "pp-woodchips.json":    _sector("pp-woodchips.json", pp_woodchips.build, True, 100 * KB),
+    "pp-paper.json":        _sector("pp-paper.json", pp_paper.build, True, 60 * KB),
+    "pp-corrugated.json":   _sector("pp-corrugated.json", pp_corrugated.build, False, 16 * KB),
+    **{SE.raw_file(SE.PP, t): _sector(SE.raw_file(SE.PP, t),
+                                      partial(raw_table.build, sector=SE.PP, table=t),
+                                      True, _RAW_MAX.get(t, 256 * KB), frozenset())
+       for t in SE.RAW_TABLES[SE.PP]},
+    "pp-index.json":        _sector("pp-index.json", partial(sector_index.build, sector=SE.PP),
+                                    False, 4 * KB),
+}
+FILES.update(SECTOR_FILES)
+
 # a ordem de processamento dentro de cada cadência (o run.py ordena por cadência, depois por esta)
 ORDER = ["live.json", "intraday.json", "news-latest.json", "news-digest.json", "config.json",
          "calendar.json", "quotes-daily.json", "reports.json", WEEK_FAMILY, "news-index.json",
          "quotes-monthly.json", "commodities-daily.json", "ratings.json", "mw-companies.json",
          "mw-short-interest.json", "mw-buybacks.json", "mw-insiders.json", "mw-filings.json",
-         MW_FAMILY, HISTORY_FAMILY, "history-index.json"]
+         MW_FAMILY, HISTORY_FAMILY, "history-index.json", *SE.ALL_FILES]
 FAMILIES = (WEEK_FAMILY, HISTORY_FAMILY, MW_FAMILY)
 
 
@@ -147,8 +208,11 @@ def spec_for(name: str) -> Spec:
 
 
 def cadence_of(name: str) -> int:
-    """A cadência para ORDENAR a execução (as famílias contam como COLD)."""
-    return COLD if name in FAMILIES else spec_for(name).cadence
+    """A cadência para ORDENAR a execução (as famílias contam como COLD; os EVENT, depois de tudo)."""
+    if name in FAMILIES:
+        return COLD
+    cadence = spec_for(name).cadence
+    return EVENT_ORDER if cadence == EVENT else cadence
 
 
 def position(name: str) -> int:
@@ -164,7 +228,7 @@ def position(name: str) -> int:
 
 
 def valid_names() -> list[str]:
-    return [n[:-5] if n.endswith(".json") else n for n in ORDER]
+    return [n[:-5] if n.endswith(".json") else n for n in ORDER if not SE.sector_of(n)]
 
 
 def resolve(only=None) -> list[str]:
@@ -172,7 +236,9 @@ def resolve(only=None) -> list[str]:
     os nomes na ordem pedida; "news-week"/"history"/"mw-short" = a família; "news-week-2026-w45" =
     aquela semana; "history-vale3.sa" = o histórico daquele papel (só os do universo da Market);
     "mw-short-klbn11" = o aluguel daquela empresa (a empresa é conferida na montagem: tem de estar
-    visível no Market Watch). Nome desconhecido → ValueError com a lista dos válidos."""
+    visível no Market Watch). Setores: os nomes fixos (`mm-trade`, `mm-countries-imp-flat`,
+    `pp-raw-empapel`…) e os atalhos `sectors`, `mm`, `pp`, `mm-countries`, `mm-raw` e `pp-raw` (os
+    arquivos de cada um, na ordem do registro). Nome desconhecido → ValueError com os válidos."""
     if only is None:
         return list(ORDER)
     parts = [p.strip() for p in (only.split(",") if isinstance(only, str) else only)]
@@ -181,6 +247,9 @@ def resolve(only=None) -> list[str]:
         return list(ORDER)
     out = []
     for p in parts:
+        if p in SE.ALIASES:
+            out.extend(n for n in SE.ALIASES[p] if n not in out)
+            continue
         if p in FAMILIES or (p.endswith(".json") and p[:-5] in FAMILIES):
             name = p[:-5] if p.endswith(".json") else p
         else:
@@ -189,7 +258,9 @@ def resolve(only=None) -> list[str]:
                     and H.ticker_from_file(name) is None and MW.company_from_file(name) is None):
                 raise ValueError(f"arquivo desconhecido: {p} (válidos: " + ", ".join(valid_names())
                                  + ", news-week-AAAA-wNN, history-<papel> como history-vale3.sa, "
-                                   "mw-short-<empresa> como mw-short-vale3)")
+                                   "mw-short-<empresa> como mw-short-vale3; setores: "
+                                 + ", ".join(SE.ALIASES) + " ou um arquivo deles, como mm-trade, "
+                                   "mm-countries-imp-flat, mm-raw-secex-country, pp-index)")
         if name not in out:
             out.append(name)
     return out

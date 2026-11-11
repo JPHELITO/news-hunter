@@ -26,6 +26,12 @@ Onda 2:
   ratings     a sonda do histórico de recomendações e a última leitura da RPC;
   history     o registro dos history-<id>.json publicados, a sonda da quote_history, os papéis
               que vão pela leitura inteira e o orçamento da carga (ver history.py).
+Onda 3:
+  sectors     por setor (`mm`, `pp`): a sonda do GitHub (SHA do blob e quando), o blob em
+              processamento (+ commit e quando), a FILA dos arquivos desse blob que ainda não foram
+              enviados nem achados iguais, o blob do último índice enviado e o dia da montagem com o
+              Mindassets parado (ver sectors.py). O banco baixado fica ao lado, em
+              `hub_export_<setor>_<blob>.sqlite`, enquanto houver fila.
 
 Arquivo ilegível/corrompido = começar do zero (nunca derruba o ciclo).
 
@@ -86,7 +92,8 @@ def empty_state() -> dict:
             "ratings": {"probe": None, "fullAt": None, "data": None},
             "history": {"seeded": False, "published": {}, "probe": None, "needLong": [],
                         "failedAt": {},
-                        "bucket": {"since": None, "spent": 0, "day": None, "daySpent": 0}}}
+                        "bucket": {"since": None, "spent": 0, "day": None, "daySpent": 0}},
+            "sectors": {}}
 
 
 def load(path: Path, empty=empty_state, version: int = STATE_VERSION) -> dict:

@@ -31,6 +31,13 @@ por sonda — é o que deixa a 2ª execução barata.
 Log: uma linha por arquivo (nome, bytes, enviado/igual/fora da vez/erro), uma das notícias (o
 que foi lido) e uma de tráfego do Supabase (chamadas, corpo pela rede, cabeçalhos, por fonte,
 uso da memória do ciclo, tempo).
+
+SETORES (Onda 3, sectors.py): os 36 arquivos `mm-*`/`pp-*` têm cadência EVENT — só vão "na vez" pelo
+`urgent` (blob novo do banco no GitHub, ou arquivo na fila), nunca pelo relógio; no dry-run, fora da
+vez nem são montados (montar baixaria o banco). Sem `GH_TOKEN` no envio, nem entram no ciclo (uma
+linha de log); passado o teto do grupo `sectors`, o que resta fica na fila SEM ser montado. O "fora
+da vez" deles não tem linha própria no log (seriam 36 linhas a cada 5 min): a linha "setores: …" do
+fim da execução resume sonda, download, fila e avisos.
 """
 from __future__ import annotations
 
@@ -46,14 +53,16 @@ from urllib.parse import urlsplit
 
 from . import history as H
 from . import mw as MW
+from . import sectors as SE
 from . import state as state_mod
 from . import weeks as W
 from .encode import content_hash, forbidden_keys, gzip_bytes, iso_utc, to_json_bytes
 from .feeder import FeederClient, missing_env
+from .github import token_from
 from .news import news_state_path
 from .registry import (GROUP_CAPS, HISTORY_FAMILY, MW_FAMILY, WEEK_FAMILY, cadence_of, position,
                        resolve, spec_for)
-from .schedule import is_due, pulse_due
+from .schedule import EVENT, is_due, pulse_due
 from .sources import Sources, cycle_memory
 from .supa import SupaReader
 
@@ -157,6 +166,8 @@ def _items(name: str, obj: dict) -> str:
         it = obj.get("items") or []
         return (f"{len(it)} comunicados ({sum(1 for i in it if not i.get('url'))} sem link, "
                 f"{sum(1 for i in it if i.get('docExcerpt'))} com trecho)")
+    if SE.sector_of(name):
+        return _sector_items(name, obj)
     if H.ticker_from_file(name):
         def day(ts):
             return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d") if ts else "?"
@@ -166,6 +177,40 @@ def _items(name: str, obj: dict) -> str:
     series = obj.get("series") or {}
     pts = sum(len(s.get("pts") or []) for s in series.values() if isinstance(s, dict))
     return f"{len(series)} séries, {pts} pontos"
+
+
+def _sector_items(name: str, obj: dict) -> str:
+    """O resumo de um arquivo dos setores para o CLI (sem seta: o console cp1252 do Windows)."""
+    span = f"{obj.get('from')} a {obj.get('through')}"
+    if name in SE.INDEX.values():
+        src = obj.get("source") or {}
+        dt = ", ".join(f"{k} {v}" for k, v in (obj.get("dataThrough") or {}).items())
+        return (f"blob {(src.get('blob') or '?')[:7]} (commit {(src.get('commit') or '-')[:7]}); "
+                f"dados até: {dt}; {len(obj.get('raw') or [])} tabelas brutas")
+    if name in SE.RAW_TABLE_OF:
+        data = obj.get("data") or []
+        rows = len(data[0]) if data else 0
+        return (f"{obj.get('table')}: {rows} linhas x {len(obj.get('columns') or [])} colunas "
+                f"({len(obj.get('dict') or {})} em dicionário)")
+    if name.startswith("mm-countries-"):
+        cats = obj.get("categories") or {}
+        return (f"{len(obj.get('countries') or [])} países, {len(cats)} categorias, "
+                f"{sum(len(v) for v in cats.values())} séries ({span})")
+    if name == "mm-domestic.json":
+        i, n = obj.get("iabr") or {}, obj.get("inda") or {}
+        return f"IABr {i.get('from')} a {i.get('through')}, INDA {n.get('from')} a {n.get('through')}"
+    if name == "mm-prediction.json":
+        im, ex = obj.get("imports") or {}, obj.get("exports") or {}
+        return (f"{len(im.get('series') or {})} produtos; SECEX até {im.get('through')}, "
+                f"aduana até {ex.get('through')}")
+    if name == "pp-pulp-exports.json":
+        ports, dest = obj.get("ports") or {}, obj.get("destinations") or {}
+        return (f"{len(ports.get('names') or [])} portos, {len(dest.get('countries') or [])} destinos, "
+                f"{len(dest.get('products') or {})} produtos ({span})")
+    if name == "pp-woodchips.json":
+        return (f"{len(obj.get('suppliers') or [])} fornecedores, "
+                f"{len(obj.get('fibres') or {})} fibras ({span})")
+    return span
 
 
 def _decide(name, spec, fs, h, published, now, force):
@@ -218,8 +263,12 @@ def _one(name, spec, *, st, src, mode, force, now, deadline, clock, feeder, publ
             due = bool(spec.urgent(src))
         except Exception:
             due = False
-    if mode == "send" and not due:
-        return Result(name, "fora da vez", due=False)
+    if not due and (mode == "send" or spec.cadence == EVENT):
+        return Result(name, "fora da vez", due=False)     # EVENT: nem no dry-run (baixaria o banco)
+    if spec.cadence == EVENT and mode in ("send", "dry"):
+        queued = _capped(spec, group_sent)                # passado o teto, nem monta: fica na fila
+        if queued:
+            return Result(name, "na fila", due=True, reason=queued)
     generated = src.generated_at
     try:
         obj = spec.builder(src)
@@ -227,9 +276,12 @@ def _one(name, spec, *, st, src, mode, force, now, deadline, clock, feeder, publ
         if proibidas:           # rede embaixo da lista branca: arquivo público não sai assim
             raise ValueError("chave proibida no arquivo: " + ", ".join(proibidas[:5]))
         raw = to_json_bytes(obj)
-        payload = gzip_bytes(raw) if spec.gzip else raw
-        res = Result(name, "", bytes=len(payload), raw_bytes=len(raw),
-                     gz_bytes=len(payload) if spec.gzip else len(gzip_bytes(raw)),
+        # setores no envio: o gzip só de quem vai (num blob novo sem dado novo, os 22 do aço — 8 MB
+        # só a base bruta dos países — saem "igual" e não precisam ser comprimidos)
+        lazy = spec.cadence == EVENT and mode == "send"
+        payload = None if lazy else (gzip_bytes(raw) if spec.gzip else raw)
+        res = Result(name, "", bytes=None if lazy else len(payload), raw_bytes=len(raw),
+                     gz_bytes=None if lazy else (len(payload) if spec.gzip else len(gzip_bytes(raw))),
                      hash=content_hash(obj), due=due, items=_items(name, obj))
         if len(raw) > spec.max_bytes:
             log.warning("%s: %s acima da meta de %s — vai assim mesmo", name, _kb(len(raw)),
@@ -262,6 +314,10 @@ def _one(name, spec, *, st, src, mode, force, now, deadline, clock, feeder, publ
                 files[name] = fs
                 res.action, res.reason = "adiado", "orçamento de tempo"
                 return res
+            if payload is None:
+                payload = gzip_bytes(raw) if spec.gzip else raw
+                res.bytes = len(payload)
+                res.gz_bytes = len(payload) if spec.gzip else None
             res.revision = feeder.upload(name, payload, spec.content_type, modified_at=generated,
                                          deadline=deadline)
             fs.update(hash=res.hash, sentAt=generated, revision=res.revision)
@@ -286,6 +342,8 @@ def _log_result(res: Result) -> None:
     parts = [res.name]
     if res.bytes is not None:
         parts.append(_kb(res.bytes))
+    elif res.raw_bytes is not None:
+        parts.append(_kb(res.raw_bytes) + " cru")     # setor "igual" no envio: nem comprimido
     parts.append(res.action)
     extra = []
     if res.revision is not None:
@@ -330,6 +388,10 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
     deadline = t0 + budget_s
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     names = resolve(only)
+    if mode == "send" and token_from(env) is None and any(SE.sector_of(n) for n in names):
+        # sem token, a API do GitHub dá 60 chamadas/h por IP, divididas com o runner inteiro
+        names = [n for n in names if not SE.sector_of(n)]
+        log.info("setores (mm-*, pp-*): sem GH_TOKEN — fora deste ciclo (o resto segue)")
 
     if mode == "send" and feeder is None:
         falta = missing_env(env)
@@ -351,10 +413,11 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
     src = Sources(supa, st, now=now, memory=cycle_memory() if memory is None else memory,
                   published=published, mode=mode, rebuild=rebuild, out_dir=out_dir,
                   weeks_arg=weeks if mode != "send" else None, news_path=news_state_path(path),
-                  first_week=first_week, history_arg=history, mw_path=MW.mw_state_path(path))
+                  first_week=first_week, history_arg=history, mw_path=MW.mw_state_path(path),
+                  env=env, http=http, cache_dir=path.parent)
     supa_url = env.get("SUPABASE_URL") or ""
     secrets = [env.get("DASHBOARD_FEEDER_API_KEY"), env.get("SUPABASE_SERVICE_KEY"), supa_url,
-               urlsplit(supa_url).hostname if supa_url else None]
+               urlsplit(supa_url).hostname if supa_url else None, token_from(env)]
     kw = dict(st=st, src=src, mode=mode, force=force, now=now, deadline=deadline, clock=clock,
               feeder=feeder, published=published, out_dir=out_dir, secrets=secrets,
               group_sent=Counter())
@@ -397,12 +460,15 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
         for name in todo:
             res = _one(name, spec_for(name), **kw)
             results.append(res)
-            _log_result(res)
+            if not (res.action == "fora da vez" and SE.sector_of(name)):
+                _log_result(res)                       # os setores ociosos: só a linha "setores:"
 
+    src.finish_sectors()
     state_mod.save(path, st)
     src.save_news()
     src.save_mw()
-    for store in (src.news_if_loaded(), src.history_if_loaded(), src.mw_if_loaded()):
+    for store in (src.news_if_loaded(), src.history_if_loaded(), src.mw_if_loaded(),
+                  src.sectors_if_loaded()):
         note = store.end_note() if store is not None else None
         if note:
             log.info("%s", note)

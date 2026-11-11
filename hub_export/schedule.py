@@ -22,6 +22,9 @@ HOT = 0           # todo ciclo (~5 min)
 WARM = 900        # 15 min
 COLD = 3600       # 60 min
 DAILY = 86400     # 1×/dia
+EVENT = -1        # quando a origem muda (Onda 3, setores): NUNCA "na vez" pelo relógio — só pelo
+                  # `urgent` do registro (sectors.py: blob novo ou arquivo na fila). Sem esta marca,
+                  # o runner novo (sem `builtAt`) daria "na vez" e baixaria os bancos a cada partida.
 PULSE_LIVE = 600  # o live.json vai ao menos a cada 10 min
 SLACK_S = 60      # tolerância do relógio do loop (ver docstring)
 
@@ -35,7 +38,9 @@ def _age_s(stamp, now: datetime) -> float | None:
 
 
 def is_due(cadence: int, built_at, now: datetime) -> bool:
-    """Na vez? Sem build anterior (ou carimbo ilegível) = sim."""
+    """Na vez? Sem build anterior (ou carimbo ilegível) = sim. EVENT: nunca pelo relógio."""
+    if cadence == EVENT:
+        return False
     if cadence <= 0:
         return True
     age = _age_s(built_at, now)

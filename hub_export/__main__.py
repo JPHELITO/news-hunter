@@ -9,7 +9,14 @@
                       aquela semana, relida do banco; "history" = a fila de históricos do loop;
                       "history-vale3.sa" = o histórico daquele papel; "mw-short" = o aluguel de
                       cada empresa do Market Watch (no --out, todas); "mw-short-klbn11" = o daquela
-                      empresa; "all" = todos)
+                      empresa; "all" = todos). Setores (Onda 3): os arquivos fixos (mm-trade,
+                      mm-domestic, mm-prediction, mm-countries-imp-total…, mm-raw-secex-country…,
+                      mm-index, pp-pulp-exports, pp-woodchips, pp-paper, pp-corrugated, pp-raw-…,
+                      pp-index) e os atalhos "sectors" (os 36), "mm", "pp", "mm-countries", "mm-raw"
+                      e "pp-raw". No ENVIO eles exigem GH_TOKEN (sem ele, ficam fora); no --out e no
+                      --dry-run vão pela API do GitHub mesmo sem token (60 chamadas/h), ou sem rede
+                      com HUB_EXPORT_SECTORS_DB_DIR = pasta com steel_sm_web.db.gz e pulp_paper.db
+                      (os do repositório do site; o índice sai sem commit/committedAt)
     --all             todos (o padrão)
     --out DIR         grava os arquivos em DIR exatamente como seriam enviados (gzip inclusive)
                       e imprime a tabela nome/bytes/hash; não envia nem mexe no registro de envio
@@ -79,7 +86,8 @@ def _parser() -> argparse.ArgumentParser:
                           "reports,news-week,news-index,quotes-monthly,commodities-daily,ratings,"
                           "mw-companies,mw-short-interest,mw-buybacks,mw-insiders,mw-filings,"
                           "mw-short,history,history-index (ou news-week-AAAA-wNN, history-<papel>, "
-                          "mw-short-<empresa>)")
+                          "mw-short-<empresa>); setores: sectors, mm, pp, mm-countries, mm-raw, "
+                          "pp-raw ou um arquivo deles (mm-trade, pp-index…)")
     sel.add_argument("--all", action="store_true", help="todos os arquivos (padrão)")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--out", metavar="DIR", help="grava os arquivos em DIR, sem enviar")
