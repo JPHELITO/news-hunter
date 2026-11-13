@@ -525,16 +525,20 @@ def test_glossario_forma_rotas_e_sem_nota_nem_caminho(caplog):
 
 def test_tabela_where_rota_cobre_os_15_enderecos_e_as_excecoes():
     assert len(GL.WHERE_ROUTE) == 15
-    assert set(GL.WHERE_ROUTE.values()) | set(GL.TERM_ROUTE.values()) == set(GL.ROUTES)   # toda rota alcançável
-    assert set(GL.TERM_ROUTE.values()) == {"steel-prediction", "woodchips", "corrugated"}
-    # os 5 termos de exceção do site (origin/main cffdadc), com o endereço da página-mãe
+    rotas = set(GL.WHERE_ROUTE.values()) | {r for r in GL.TERM_ROUTE.values() if r is not None}
+    assert rotas == set(GL.ROUTES)                                           # toda rota alcançável
+    assert set(GL.TERM_ROUTE.values()) == {"steel-prediction", "woodchips", "corrugated", None}
+    # os 6 termos de exceção do site (origin/main cffdadc), com o endereço da página-mãe; o "Iron ore
+    # exports" aponta `#exports`, que não tem esse gráfico (C19): sem link (H.5 corrigido em 13/11)
     sm, pp = "/Steel and Mining/steel_sm_dashboard.html", "/Pulp and Paper/pp_dashboard.html"
     casos = {("Import model — orange line", sm + "#imports"): "steel-prediction",
              ("Customs-of-origin exports — black line (Korea, China)", sm + "#imports"): "steel-prediction",
              ("China woodchip imports (GACC)", pp + "#pulp"): "woodchips",
              ("Corrugated shipments (Empapel / IBPO)", pp + "#paper"): "corrugated",
              ("  ltm   SHIPMENTS ", pp + "#paper"): "corrugated",
-             ("Iron ore exports", sm + "#exports"): "steel-exports",
+             ("Iron ore exports", sm + "#exports"): None,
+             (" IRON ORE   exports ", sm + "#exports"): None,
+             ("Export volume / domestic reference price", sm + "#exports"): "steel-exports",
              ("Import model — orange line", None): None,                     # sem endereço, sem link
              ("Import model — orange line", "/outra.html"): None}
     for (term, where), rota in casos.items():
@@ -703,3 +707,19 @@ def test_a_sonda_das_empresas_serve_ao_ratings_e_ao_stock_guide_no_mesmo_ciclo(t
     assert {r.action for r in res.values()} == {"enviado"}
     assert len(http.supa_calls("stock_guide_companies")) == 1               # uma chamada, dois arquivos
     assert len(http.supa_calls("stock_guide_global_peers")) == 1
+
+
+def test_glossario_iron_ore_exports_sai_sem_link_e_os_outros_de_exports_nao(caplog):
+    """O site leva "Iron ore exports" a `#exports`, que não tem esse gráfico (C19): no hub, sem link
+    (H.5 corrigido em 13/11) — sem aviso no log (o endereço é conhecido); os outros termos de `#exports`
+    continuam em `steel-exports`."""
+    caplog.set_level(logging.WARNING)
+    doc_ = json.loads(json.dumps(F.GLOSSARY_DOC))
+    exp = "/Steel and Mining/steel_sm_dashboard.html#exports"
+    doc_["sections"][1]["items"] = [F._gi("Iron ore exports", exp), F._gi("Export volume (fictício)", exp)]
+    http = F.FakeHTTP()
+    http.github.files[F.GLOSSARY_PATH] = F.glossary_bytes(doc_)
+    g, _ = build("glossary.json", http=http)
+    assert [(i["term"], i["route"]) for i in g["sections"][1]["items"]] == \
+        [("Iron ore exports", None), ("Export volume (fictício)", "steel-exports")]
+    assert not [r for r in caplog.records if "sem seção no hub" in r.getMessage()]

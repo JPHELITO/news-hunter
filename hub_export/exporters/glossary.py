@@ -15,9 +15,10 @@ CAMPO A CAMPO: seção `id`, `title`, `intro`; termo `term` (sem termo, o item s
 mascarados e URL pelo filtro (freetext.clean_text; nada disso existe hoje) — e `route`.
 `route` = a SEÇÃO DO HUB para o "Open →" do site, pela tabela FECHADA abaixo (T24): os 15 endereços do site
 (`where`) e as exceções POR TERMO onde o site aponta a página-mãe (as linhas laranja e preta → o Modelo
-preditivo; GACC → Woodchips; Empapel e LTM → Corrugated). Endereço desconhecido → `null` (sem link) e UMA
-linha de aviso no log; sem endereço → `null`. O caminho do site (`where`) e a nota do editor (`note`) NUNCA
-saem (o registro proíbe as chaves neste arquivo).
+preditivo; GACC → Woodchips; Empapel e LTM → Corrugated) ou um gráfico que não existe ("Iron ore exports"
+→ `null`, sem link: o site leva a `#exports`, que não tem esse gráfico — C19 de `3-steel.md`; H.5 corrigido
+em 13/11). Endereço desconhecido → `null` (sem link) e UMA linha de aviso no log; sem endereço → `null`. O
+caminho do site (`where`) e a nota do editor (`note`) NUNCA saem (o registro proíbe as chaves neste arquivo).
 """
 from __future__ import annotations
 
@@ -54,14 +55,16 @@ WHERE_ROUTE = {
     "/market-watch.html?tab=insiders": "insiders",
     "/market-watch.html?tab=filings": "filings",
 }
-# onde o site aponta a página-mãe e o hub tem a seção do próprio termo (o termo como está no arquivo,
-# comparado sem diferença de caixa e de espaços); só vale para termo que o site já leva a algum lugar
+# onde o site aponta a página-mãe e o hub tem a seção do próprio termo, ou aponta um gráfico que não existe
+# (`None` = sem link); o termo como está no arquivo, comparado sem diferença de caixa e de espaços; só vale
+# para termo que o site já leva a algum lugar (endereço conhecido)
 TERM_ROUTE = {
     "Import model — orange line": "steel-prediction",
     "Customs-of-origin exports — black line (Korea, China)": "steel-prediction",
     "China woodchip imports (GACC)": "woodchips",
     "Corrugated shipments (Empapel / IBPO)": "corrugated",
     "LTM shipments": "corrugated",
+    "Iron ore exports": None,            # `#exports` não tem esse gráfico (C19): sem link (H.5, 13/11)
 }
 SECTION_KEYS = ("id", "title", "intro", "items")
 ITEM_KEYS = ("term", "unit", "freq", "source", "desc", "route")
@@ -82,7 +85,8 @@ def _text(v) -> str | None:
 
 
 def route(term, where, unknown: list | None = None) -> str | None:
-    """A seção do hub do termo: pelo endereço do site e, onde o site aponta a página-mãe, pelo termo."""
+    """A seção do hub do termo: pelo endereço do site e, nas exceções, pelo termo (que pode ser `None`:
+    sem link, sem aviso — o endereço é conhecido)."""
     w = _text(where)
     if w is None:
         return None
