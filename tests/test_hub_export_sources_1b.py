@@ -11,7 +11,8 @@ O que estes testes TRAVAM, e por quê:
   3) calendário: a sonda "contagem + max(updated_at)" (UMA chamada) a cada 15 min; leitura
      completa quando ela muda — o DELETE do admin aparece na contagem — e uma vez por dia depois
      das 23:45 UTC, que pega o robô da B3 (upsert/ocultação SEM mexer em `updated_at`);
-     categorias e janelas a cada 60 min;
+     categorias e janelas a cada 60 min; desde a Onda 4 (H.3) com local, descrição e links pelo filtro
+     e pela máscara, e sem limite inferior de datas;
   4) relatórios só pela RPC, com `p_limit` 20 — a tabela de origem tem dados pessoais e NUNCA é
      lida; o filtro de URL vale para o link digitado no Clipping.
 """
@@ -155,33 +156,38 @@ def test_calendario_forma_e_regras():
     c = cal_exp.build(src)
     assert list(c) == ["schemaVersion", "generatedAt", "updatedAt", "timezone", "from", "to",
                        "categories", "dataWindows", "events"]
-    assert (c["timezone"], c["from"], c["to"]) == ("America/Sao_Paulo", "2025-01-01", "2028-05-31")
+    # Onda 4 (O54): `from` = o 1º dia do evento ÚNICO mais antigo (o de 2023 volta; a recorrente é de 2025)
+    assert (c["timezone"], c["from"], c["to"]) == ("America/Sao_Paulo", "2023-05-01", "2028-05-31")
     assert c["updatedAt"] == "2026-11-02T13:00:00Z"                    # max(updated_at) dos visíveis
     assert [x["id"] for x in c["categories"]] == ["c-old", "c-earn", "c-data"]   # inclusive inativa
     assert c["categories"][0]["active"] is False
     assert [x["sourceKey"] for x in c["dataWindows"]] == ["secex_steel"]           # só as ativas
-    assert [e["id"] for e in c["events"]] == ["e-2", "e-1", "e-5"]     # sem oculto e sem o antigo
-    e1 = c["events"][1]
+    assert [e["id"] for e in c["events"]] == ["e-4", "e-2", "e-1", "e-5"]     # sem oculto
+    e1 = c["events"][2]
     assert list(e1) == ["id", "title", "categoryId", "startDate", "endDate", "allDay", "startTime",
-                        "endTime", "company", "recurrence", "origin"]
+                        "endTime", "company", "location", "description", "links", "recurrence", "origin"]
     assert (e1["startTime"], e1["origin"], e1["allDay"]) == ("08:00", "b3", False)
-    assert c["events"][0]["recurrence"] == {"freq": "monthly", "interval": 1, "bymonthday": [5],
+    # a URL do Storage do Supabase no texto e no link sai; a da B3 e a do RI ficam
+    assert e1["description"] == "Detalhes em https://ri.vale.com/3q26 e o anexo [link]"
+    assert e1["links"] == [{"label": "Cronograma B3", "url": "https://www.b3.com.br/cronograma"}]
+    assert c["events"][1]["recurrence"] == {"freq": "monthly", "interval": 1, "bymonthday": [5],
                                             "until": None}               # sem a chave de depuração
     sel = {c.table: c.params["select"] for c in http.supa_calls()}
     for t, s in sel.items():
         assert "updated_by" not in s and "external_id" not in s and "ics_seq" not in s, t
-        for livre in ("location", "description", "links"):          # nem lidos do banco
-            assert livre not in s.split(","), (t, livre)
+        assert "locked" not in s.split(","), t
     ev = next(c for c in http.supa_calls() if c.table == "rpc/get_exec_calendar_events")
-    assert ev.data and b'"p_from": "2025-01-01"' in ev.data and b'"p_to": "2028-05-31"' in ev.data
+    assert {"location", "description", "links"} <= set(ev.params["select"].split(","))   # Onda 4
+    assert ev.data and b'"p_from": "1900-01-01"' in ev.data and b'"p_to": "2028-05-31"' in ev.data
 
 
 TEXTO_LIVRE = ("location", "description", "links")
 
 
-def test_eventos_nunca_levam_local_descricao_nem_links():
-    """Texto livre do time, com links copiados de e-mails recebidos (rastreio de clique que
-    identifica quem recebeu, confirmação de inscrição): fora até a Onda 4, que decide a regra."""
+def test_eventos_levam_local_descricao_e_links_pelo_filtro_e_pela_mascara():
+    """Onda 4 (H.3, decisão U12): o texto livre do time sai — mas os links copiados de e-mails
+    recebidos (rastreio de clique que identifica quem recebeu, confirmação de inscrição do Itaú) SAEM
+    pelo filtro, no texto e na lista (endereços FICTÍCIOS nas 3 formas reais)."""
     http = F.FakeHTTP()
     for e in http.database["exec_calendar_events"]:
         e.update(location="Sala 3", description="Inscrição: https://mailerurl.mziq.com/ls/click?upn=x",
@@ -190,20 +196,28 @@ def test_eventos_nunca_levam_local_descricao_nem_links():
                         {"label": "webinar", "url": "https://mail.closir.com/c/eJxck"}])
     src, _ = F.make_sources(http=http)
     c = cal_exp.build(src)
-    assert c["events"] and all(k not in e for e in c["events"] for k in TEXTO_LIVRE)
+    assert c["events"] and all((e["location"], e["description"], e["links"])
+                               == ("Sala 3", "Inscrição: [link]", []) for e in c["events"])
     texto = str(c)
-    for pedaco in ("mziq", "sfmc", "closir", "Sala 3", "Inscrição"):
+    for pedaco in ("mziq", "sfmc", "closir", "upn="):
         assert pedaco not in texto
-    # um cache de estado de antes desta regra (com as 3 chaves) também não chega ao arquivo
+    # o cache de estado da 1b (sem os 3 campos, intervalo com limite inferior) força a leitura completa:
+    # o arquivo nunca sai com eles faltando
     st = S.empty_state()
     src, _ = F.make_sources(state=st)
     cal_exp.build(src)
+    st["calendar"]["range"] = ["2025-01-01", "2028-05-31"]
     for e in st["calendar"]["events"]:
-        e.update(location="Sala 3", description="velha", links=[{"label": "x", "url": "https://x.com"}])
+        for k in TEXTO_LIVRE:
+            e.pop(k)
     src, http = F.make_sources(state=st, now=F.NOW + timedelta(minutes=15))
     c = cal_exp.build(src)
-    assert "rpc/get_exec_calendar_events" not in cal_calls(http)      # veio do cache…
-    assert all(k not in e for e in c["events"] for k in TEXTO_LIVRE)  # …e saiu sem as 3 chaves
+    assert "rpc/get_exec_calendar_events" in cal_calls(http)
+    e5 = next(e for e in c["events"] if e["id"] == "e-5")
+    assert e5["location"] == "São Paulo" and e5["description"] == "Dúvidas: [e-mail] ou [telefone]."
+    assert e5["links"] == [{"label": "Inscrição", "url": "https://events.itaubba.com/mining"},
+                           {"label": None, "url": "https://www.example.org/agenda-ficticia"}]
+    assert all(set(TEXTO_LIVRE) <= set(e) for e in c["events"])
 
 
 def test_calendario_sonda_e_leitura_completa(tmp_path):
@@ -226,7 +240,7 @@ def test_calendario_sonda_e_leitura_completa(tmp_path):
     src, http = F.make_sources(http=http, state=st, now=F.NOW + timedelta(minutes=30))
     c = cal_exp.build(src)
     assert "rpc/get_exec_calendar_events" in cal_calls(http)
-    assert c["events"][1]["title"] == "VALE3 | 3Q26 (data nova)"
+    assert [e["title"] for e in c["events"] if e["id"] == "e-1"] == ["VALE3 | 3Q26 (data nova)"]
     # admin apagou um evento (some da contagem, o max não muda): leitura completa
     http = F.FakeHTTP()
     http.database["exec_calendar_events"][0].update(title="VALE3 | 3Q26 (data nova)",
@@ -236,7 +250,7 @@ def test_calendario_sonda_e_leitura_completa(tmp_path):
     src, http = F.make_sources(http=http, state=st, now=F.NOW + timedelta(minutes=45))
     c = cal_exp.build(src)
     assert "rpc/get_exec_calendar_events" in cal_calls(http)
-    assert [e["id"] for e in c["events"]] == ["e-2", "e-1"]
+    assert [e["id"] for e in c["events"]] == ["e-4", "e-2", "e-1"]
 
 
 def test_robo_da_b3_sem_updated_at_e_pego_pela_leitura_diaria():
@@ -252,7 +266,7 @@ def test_robo_da_b3_sem_updated_at_e_pego_pela_leitura_diaria():
     src, http = F.make_sources(http=mudou_sem_carimbo(), state=st, now=utc("2026-11-03T23:40:00Z"))
     c = cal_exp.build(src)
     assert "rpc/get_exec_calendar_events" not in cal_calls(http)   # a sonda não vê
-    assert c["events"][1]["startDate"] == "2026-10-23"
+    assert [e["startDate"] for e in c["events"] if e["id"] == "e-1"] == ["2026-10-23"]
     src, http = F.make_sources(http=mudou_sem_carimbo(), state=st, now=utc("2026-11-03T23:50:00Z"))
     c = cal_exp.build(src)                                    # depois das 23:45 UTC: relê tudo
     assert "rpc/get_exec_calendar_events" in cal_calls(http)

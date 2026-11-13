@@ -38,6 +38,9 @@ vez nem são montados (montar baixaria o banco). Sem `GH_TOKEN` no envio, nem en
 linha de log); passado o teto do grupo `sectors`, o que resta fica na fila SEM ser montado. O "fora
 da vez" deles não tem linha própria no log (seriam 36 linhas a cada 5 min): a linha "setores: …" do
 fim da execução resume sonda, download, fila e avisos.
+GLOSSÁRIO (Onda 4, sitefiles.py): o mesmo para o `glossary.json` (EVENT pelo GitHub; sem `GH_TOKEN` no
+envio, fora; ocioso, calado; a linha "glossário: …" resume). As páginas da Onda 4 (pages.py) escrevem
+uma linha "Onda 4: …" quando leram algo além da sonda.
 """
 from __future__ import annotations
 
@@ -60,8 +63,8 @@ from .encode import content_hash, forbidden_keys, gzip_bytes, iso_utc, to_json_b
 from .feeder import FeederClient, missing_env
 from .github import token_from
 from .news import news_state_path
-from .registry import (GROUP_CAPS, HISTORY_FAMILY, MW_FAMILY, WEEK_FAMILY, cadence_of, position,
-                       resolve, spec_for)
+from .registry import (GLOSSARY, GROUP_CAPS, HISTORY_FAMILY, MW_FAMILY, WEEK_FAMILY, cadence_of,
+                       from_github, position, resolve, spec_for)
 from .schedule import EVENT, is_due, pulse_due
 from .sources import Sources, cycle_memory
 from .supa import SupaReader
@@ -138,7 +141,9 @@ def _items(name: str, obj: dict) -> str:
         return f"{len(it)} relatórios ({sum(1 for i in it if i.get('link'))} com link)"
     if name == "calendar.json":
         ev = obj.get("events") or []
-        return (f"{len(ev)} eventos ({sum(1 for e in ev if e.get('recurrence'))} recorrentes), "
+        return (f"{len(ev)} eventos ({sum(1 for e in ev if e.get('recurrence'))} recorrentes, "
+                f"{sum(1 for e in ev if e.get('links'))} com link, "
+                f"{sum(1 for e in ev if e.get('description'))} com descrição) desde {obj.get('from')}, "
                 f"{len(obj.get('categories') or [])} categorias, "
                 f"{len(obj.get('dataWindows') or [])} janelas de dado")
     if name == "ratings.json":
@@ -166,6 +171,8 @@ def _items(name: str, obj: dict) -> str:
         it = obj.get("items") or []
         return (f"{len(it)} comunicados ({sum(1 for i in it if not i.get('url'))} sem link, "
                 f"{sum(1 for i in it if i.get('docExcerpt'))} com trecho)")
+    if name in ("stock-guide.json", "sg-sensitivity.json", "data-sources.json", GLOSSARY):
+        return _wave4_items(name, obj)
     if SE.sector_of(name):
         return _sector_items(name, obj)
     if H.ticker_from_file(name):
@@ -177,6 +184,29 @@ def _items(name: str, obj: dict) -> str:
     series = obj.get("series") or {}
     pts = sum(len(s.get("pts") or []) for s in series.values() if isinstance(s, dict))
     return f"{len(series)} séries, {pts} pontos"
+
+
+def _wave4_items(name: str, obj: dict) -> str:
+    """O resumo dos arquivos da Onda 4 para o CLI (sem seta: o console cp1252 do Windows)."""
+    if name == "stock-guide.json":
+        cos = obj.get("companies") or []
+        yrs = obj.get("years") or {}
+        return (f"{len(cos)} empresas ({sum(1 for c in cos if c.get('restricted'))} restritas), "
+                f"{len(obj.get('peers') or [])} pares, anos {yrs.get('y1')}/{yrs.get('y2')}")
+    if name == "sg-sensitivity.json":
+        cos = obj.get("companies") or []
+        sheets = [sh for c in cos for sh in c.get("sheets") or []]
+        return (f"{len(cos)} empresas, {len(sheets)} abas, "
+                f"{sum(len(sh.get('tables') or []) for sh in sheets)} grades")
+    if name == "data-sources.json":
+        src = obj.get("sources") or []
+        mensais = sum(1 for s in src if s.get("kind") == "monthly")
+        return f"{len(src)} fontes ({mensais} mensais), checadas em {obj.get('checkedAt')}"
+    secs = obj.get("sections") or []
+    items = [i for s in secs for i in s.get("items") or []]
+    blob = (obj.get("source") or {}).get("blob") or "?"
+    return (f"{len(secs)} seções, {len(items)} termos ({sum(1 for i in items if i.get('route') is None)} "
+            f"sem rota), blob {blob[:7]}")
 
 
 def _sector_items(name: str, obj: dict) -> str:
@@ -388,10 +418,10 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
     deadline = t0 + budget_s
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     names = resolve(only)
-    if mode == "send" and token_from(env) is None and any(SE.sector_of(n) for n in names):
+    if mode == "send" and token_from(env) is None and any(from_github(n) for n in names):
         # sem token, a API do GitHub dá 60 chamadas/h por IP, divididas com o runner inteiro
-        names = [n for n in names if not SE.sector_of(n)]
-        log.info("setores (mm-*, pp-*): sem GH_TOKEN — fora deste ciclo (o resto segue)")
+        names = [n for n in names if not from_github(n)]
+        log.info("setores (mm-*, pp-*) e glossário: sem GH_TOKEN — fora deste ciclo (o resto segue)")
 
     if mode == "send" and feeder is None:
         falta = missing_env(env)
@@ -460,17 +490,19 @@ def run_cycle(*, only=None, force: bool = False, mode: str = "send", out_dir=Non
         for name in todo:
             res = _one(name, spec_for(name), **kw)
             results.append(res)
-            if not (res.action == "fora da vez" and SE.sector_of(name)):
-                _log_result(res)                       # os setores ociosos: só a linha "setores:"
+            if not (res.action == "fora da vez" and from_github(name)):
+                _log_result(res)          # setores e glossário ociosos: só as linhas "setores:"/"glossário:"
 
     src.finish_sectors()
     state_mod.save(path, st)
     src.save_news()
     src.save_mw()
     for store in (src.news_if_loaded(), src.history_if_loaded(), src.mw_if_loaded(),
-                  src.sectors_if_loaded()):
+                  src.sectors_if_loaded(), src.sitefiles_if_loaded()):
         note = store.end_note() if store is not None else None
         if note:
             log.info("%s", note)
+    if src.pages_note():
+        log.info("%s", src.pages_note())
     log.info("%s", traffic_line(supa, src, clock() - t0))
     return results

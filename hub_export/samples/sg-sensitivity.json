@@ -1,0 +1,320 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-11-12T09:00:00Z",
+  "source": {
+    "stamp": "2026-11-12T09:00:00Z",
+    "rows": 4
+  },
+  "companies": [
+    {
+      "code": "VALE",
+      "order": 1,
+      "currency": "USD",
+      "modelDate": "2026-11-09",
+      "sourceFile": "Modelo Ficticio_Sensitivity_FX.xlsx",
+      "modelPrice": 11.97,
+      "mktcapModel": 50000.5,
+      "assumptions": [
+        {
+          "label": "Avg. Iron Ore Price 2027",
+          "value": 97.5
+        }
+      ],
+      "sheets": [
+        {
+          "name": "Iron ore × FX",
+          "analysis": {
+            "id": "fx",
+            "label": "Iron ore × FX",
+            "currency": "USD",
+            "modelDate": "2026-11-09",
+            "sourceFile": "Modelo Ficticio_Sensitivity_FX.xlsx",
+            "modelPrice": 11.97,
+            "mktcapModel": 50000.5,
+            "assumptions": [
+              {
+                "label": "Avg. Iron Ore Price 2027",
+                "value": 97.5
+              },
+              {
+                "label": "Avg. FX 2027",
+                "value": 5.5
+              }
+            ]
+          },
+          "tables": [
+            {
+              "id": "fx-t1",
+              "metric": "ebitda",
+              "year": 2027,
+              "title": "Proforma EBITDA 2027 (USD million)",
+              "pairId": null,
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            },
+            {
+              "id": "fx-t2",
+              "metric": "ev_ebitda",
+              "year": 2027,
+              "title": "EV/EBITDA 2027 (x)",
+              "pairId": "fx-t1",
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Iron ore × Freight",
+          "analysis": {
+            "id": "freight",
+            "label": "Iron ore × Freight",
+            "currency": "USD",
+            "modelDate": "2026-11-09",
+            "sourceFile": "Modelo Ficticio_Sensitivity_FREIGHT.xlsx",
+            "modelPrice": 11.9,
+            "mktcapModel": 50000.5,
+            "assumptions": [
+              {
+                "label": "Avg. Iron Ore Price 2027",
+                "value": 97.5
+              },
+              {
+                "label": "Avg. FX 2027",
+                "value": 5.5
+              }
+            ]
+          },
+          "tables": [
+            {
+              "id": "freight-t1",
+              "metric": "ebitda",
+              "year": 2027,
+              "title": "Proforma EBITDA 2027 (USD million)",
+              "pairId": null,
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            },
+            {
+              "id": "freight-t2",
+              "metric": "ev_ebitda",
+              "year": 2027,
+              "title": "EV/EBITDA 2027 (x)",
+              "pairId": "freight-t1",
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Iron ore × Copper",
+          "analysis": {
+            "id": "copper",
+            "label": "Iron ore × Copper",
+            "currency": "USD",
+            "modelDate": "2026-11-09",
+            "sourceFile": "Modelo Ficticio_Sensitivity_COPPER.xlsx",
+            "modelPrice": 11.97,
+            "mktcapModel": 50000.5,
+            "assumptions": [
+              {
+                "label": "Avg. Iron Ore Price 2027",
+                "value": 97.5
+              },
+              {
+                "label": "Avg. FX 2027",
+                "value": 5.5
+              }
+            ]
+          },
+          "tables": [
+            {
+              "id": "copper-t1",
+              "metric": "ebitda",
+              "year": 2027,
+              "title": "Proforma EBITDA 2027 (USD million)",
+              "pairId": null,
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            },
+            {
+              "id": "copper-t2",
+              "metric": "ev_ebitda",
+              "year": 2027,
+              "title": "EV/EBITDA 2027 (x)",
+              "pairId": "copper-t1",
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "GGBR4",
+      "order": 7,
+      "currency": "BRL",
+      "modelDate": "2026-10-28",
+      "sourceFile": "Modelo Ficticio Gerdau_Sensitivity.xlsx",
+      "modelPrice": 24.0,
+      "mktcapModel": 47083.25,
+      "assumptions": [
+        {
+          "label": "Avg. FX 2027",
+          "value": 5.4
+        }
+      ],
+      "sheets": [
+        {
+          "name": "Sensitivity ",
+          "analysis": null,
+          "tables": [
+            {
+              "id": "t1",
+              "metric": "ebitda",
+              "year": 2027,
+              "title": "EBITDA 2027 (BRL million)",
+              "pairId": null,
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            },
+            {
+              "id": "t2",
+              "metric": "fcf",
+              "year": 2027,
+              "title": "FCF 2027 (BRL million)",
+              "pairId": null,
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            },
+            {
+              "id": "t3",
+              "metric": "fcf_yield",
+              "year": 2027,
+              "title": "FCF Yield 2027 (%)",
+              "pairId": "t2",
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [0.051, null, 0.07],
+                [0.06, 0.065, 0.071]
+              ]
+            },
+            {
+              "id": "t4",
+              "metric": "fcf",
+              "year": null,
+              "title": "FCF Ex-Prepayments (BRL million)",
+              "pairId": null,
+              "colLabel": "Avg. Iron Ore Price 2027 (USD/t)",
+              "rowLabel": "Avg. FX 2027 (USD/BRL)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "ARA",
+      "order": 15,
+      "currency": "USD",
+      "modelDate": "2026-10-16",
+      "sourceFile": "Modelo Ficticio Aclara_Sensitivity.xlsx",
+      "modelPrice": 3.0,
+      "mktcapModel": null,
+      "assumptions": [],
+      "sheets": [
+        {
+          "name": "Sensitivity",
+          "analysis": null,
+          "tables": [
+            {
+              "id": "u1",
+              "metric": "upside",
+              "year": 2027,
+              "title": "DCF Upside (%)",
+              "pairId": null,
+              "colLabel": "Dy price (US$/kg)",
+              "rowLabel": "Y price (US$/kg)",
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": [1.0, 2.0],
+              "values": [
+                [10.0, 20.0, 30.0],
+                [20.0, 40.0, 60.0]
+              ]
+            },
+            {
+              "id": "p1",
+              "metric": "p_nav",
+              "year": null,
+              "title": "P/NAV (x)",
+              "pairId": null,
+              "colLabel": "Dy price (US$/kg)",
+              "rowLabel": null,
+              "colLevels": [10.0, 20.0, 30.0],
+              "rowLevels": null,
+              "values": [
+                [10.0, 20.0, 30.0]
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

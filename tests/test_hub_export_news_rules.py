@@ -310,8 +310,10 @@ def test_campos_que_mudam_recalculam_o_setor_exibido():
 
 # ── calendário e relatórios (normalização) ──────────────────────────────────────────────────────
 def test_calendario_intervalo_horas_e_regra():
-    assert cal.date_range(utc("2026-11-05T12:00:00Z")) == ("2025-01-01", "2028-05-31")
-    assert cal.date_range(utc("2026-01-01T02:00:00Z")) == ("2024-01-01", "2027-06-30")  # 31/12 em SP
+    # Onda 4 (O54): sem limite inferior — a RPC é pedida desde 1900 e o `from` sai dos eventos
+    assert cal.date_range(utc("2026-11-05T12:00:00Z")) == ("1900-01-01", "2028-05-31")
+    assert cal.date_range(utc("2026-01-01T02:00:00Z")) == ("1900-01-01", "2027-06-30")  # 31/12 em SP
+    assert cal.date_to(utc("2026-11-05T12:00:00Z")) == "2028-05-31"
     assert cal.hhmm("08:00:00") == "08:00" and cal.hhmm("8:05") == "08:05"
     assert cal.hhmm("25:00") is None and cal.hhmm(None) is None
     regra = {"freq": "weekly", "interval": 2, "byweekday": [1, 3], "until": "2027-01-01",

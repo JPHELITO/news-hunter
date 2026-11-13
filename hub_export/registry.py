@@ -39,6 +39,12 @@ ENTRADAS FIXAS (nomes fechados: os 8 de país são um conjunto, não família) c
 `sectors` com teto de 4 envios por execução (T10); vêm DEPOIS de tudo (se o orçamento de 90 s acabar,
 quem espera são eles) e, em cada setor, o índice por último. Lidos dos bancos SQLite do site pela
 API do GitHub (zero Supabase).
+
+Onda 4 (Apêndice H, WP4.1B; pages.py, sitefiles.py): `stock-guide`, `sg-sensitivity` (gzip) e
+`data-sources` (texto), COLD com sonda, depois dos da Onda 2 e antes da família `history` (que continua
+sendo a que espera quando o orçamento de 90 s acaba); e o `glossary.json` (gzip), EVENT pelo GitHub como
+os setores — logo antes deles (é 1 arquivo pequeno: sem grupo nem teto). O `calendar.json` ganha
+`location`, `description` e `links` (H.3, aditivo). O Quarterly não sai (U11: Onda 4b).
 """
 from __future__ import annotations
 
@@ -49,13 +55,15 @@ from typing import Callable
 from . import history as H
 from . import mw as MW
 from . import sectors as SE
+from . import sitefiles as SF
 from . import weeks as W
-from .exporters import (calendar, commodities_daily, config, history_file, history_index, intraday,
-                        live, mm_countries, mm_domestic, mm_prediction, mm_trade, mw_buybacks,
-                        mw_companies, mw_filings, mw_insiders, mw_short_file, mw_short_interest,
-                        news_digest, news_index, news_latest, news_week, pp_corrugated, pp_paper,
-                        pp_pulp_exports, pp_woodchips, quotes_daily, quotes_monthly, ratings,
-                        raw_table, reports, sector_index)
+from .exporters import (calendar, commodities_daily, config, data_sources, glossary, history_file,
+                        history_index, intraday, live, mm_countries, mm_domestic, mm_prediction,
+                        mm_trade, mw_buybacks, mw_companies, mw_filings, mw_insiders, mw_short_file,
+                        mw_short_interest, news_digest, news_index, news_latest, news_week,
+                        pp_corrugated, pp_paper, pp_pulp_exports, pp_woodchips, quotes_daily,
+                        quotes_monthly, ratings, raw_table, reports, sector_index, sg_sensitivity,
+                        stock_guide)
 from .schedule import COLD, EVENT, HOT, PULSE_LIVE, WARM
 
 KB = 1024
@@ -96,7 +104,8 @@ FILES: dict[str, Spec] = {
     "quotes-daily.json": Spec(quotes_daily.build, COLD, True,  None,       350 * KB),
     "news-latest.json":  Spec(news_latest.build,  HOT,  True,  None,       300 * KB),
     "news-digest.json":  Spec(news_digest.build,  HOT,  True,  None,       80 * KB),
-    "calendar.json":     Spec(calendar.build,     WARM, True,  None,       300 * KB),
+    "calendar.json":     Spec(calendar.build,     WARM, True,  None,       300 * KB,
+                              forbidden=calendar.FORBIDDEN),
     "reports.json":      Spec(reports.build,      COLD, False, None,       20 * KB),
     "news-index.json":   Spec(news_index.build,   COLD, False, None,       20 * KB,
                               urgent=news_index.urgent),
@@ -117,7 +126,18 @@ FILES: dict[str, Spec] = {
     # comunicados: ~1 KB cru por item com o trecho (medido em 10/11: 188 KB para 181) → ~620 KB nos 600
     "mw-filings.json":        Spec(mw_filings.build,        COLD, True,  None, 700 * KB,
                                    forbidden=mw_filings.FORBIDDEN, group=MW_GROUP),
+    # Onda 4 (Apêndice H): medidos em 12/11/2026 com o dado real — 17,2 / 112,1 / 7,4 / 16,0 KB crus
+    "stock-guide.json":       Spec(stock_guide.build,       COLD, True,  None, 64 * KB,
+                                   forbidden=stock_guide.FORBIDDEN),
+    # 1 arquivo só; a família por empresa fica de reserva se passar de ~150 KB gz (≈ 400 KB cru, H.2)
+    "sg-sensitivity.json":    Spec(sg_sensitivity.build,    COLD, True,  None, 400 * KB,
+                                   forbidden=sg_sensitivity.FORBIDDEN),
+    "data-sources.json":      Spec(data_sources.build,      COLD, False, None, 20 * KB,
+                                   forbidden=data_sources.FORBIDDEN),
+    "glossary.json":          Spec(glossary.build,          EVENT, True, None, 64 * KB,
+                                   after=SF.after, urgent=SF.urgent, forbidden=glossary.FORBIDDEN),
 }
+GLOSSARY = SF.GLOSSARY          # "glossary.json"
 WEEK_SPEC = dict(cadence=COLD, gzip=True, pulse=None, max_bytes=1024 * KB)
 HISTORY_SPEC = dict(cadence=HOT, gzip=True, pulse=None, max_bytes=300 * KB)
 MW_SHORT_SPEC = dict(cadence=COLD, gzip=True, pulse=None, max_bytes=100 * KB,
@@ -174,8 +194,15 @@ ORDER = ["live.json", "intraday.json", "news-latest.json", "news-digest.json", "
          "calendar.json", "quotes-daily.json", "reports.json", WEEK_FAMILY, "news-index.json",
          "quotes-monthly.json", "commodities-daily.json", "ratings.json", "mw-companies.json",
          "mw-short-interest.json", "mw-buybacks.json", "mw-insiders.json", "mw-filings.json",
-         MW_FAMILY, HISTORY_FAMILY, "history-index.json", *SE.ALL_FILES]
+         MW_FAMILY, "stock-guide.json", "sg-sensitivity.json", "data-sources.json", HISTORY_FAMILY,
+         "history-index.json", GLOSSARY, *SE.ALL_FILES]
 FAMILIES = (WEEK_FAMILY, HISTORY_FAMILY, MW_FAMILY)
+# os que vêm do repositório do site pela API do GitHub: sem GH_TOKEN, ficam fora do ENVIO (run.py)
+GITHUB_FILES = frozenset({GLOSSARY, *SE.ALL_FILES})
+
+
+def from_github(name: str) -> bool:
+    return name in GITHUB_FILES
 
 
 def _after_week(label: str) -> Callable:

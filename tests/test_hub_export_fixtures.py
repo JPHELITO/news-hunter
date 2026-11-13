@@ -84,6 +84,7 @@ GitHub (os bancos dos setores).
 from __future__ import annotations
 
 import atexit
+import base64
 import copy
 import gzip
 import hashlib
@@ -265,6 +266,10 @@ FLAGS = [
     {"key": "hub_quarterly", "enabled": True},   # o hub manda: quarterly → true
     {"key": "home_digest", "enabled": True},     # o resumo da hora é fail-closed: só com true
     {"key": "market_ratings", "enabled": True},  # Onda 2: o ratings.json é fail-closed também
+    # Onda 4: fail-closed no dado; `stock_guide_peers` AUSENTE = ligada (fail-open, como no site)
+    {"key": "stock_guide", "enabled": True},
+    {"key": "stock_guide_sensitivity", "enabled": True},
+    {"key": "data_page", "enabled": True},
     # internas do site: fora da lista branca, nunca saem (nem com hub_)
     {"key": "clipinator", "enabled": True},
     {"key": "research_team", "enabled": True},
@@ -465,8 +470,13 @@ CAL_EVENTS = [
                     "_debug": {"token": "x"}}, updated_at="2026-09-10T12:00:00+00:00"),
     _ev("e-3", "Hidden draft", "2026-11-10", visible=False),
     _ev("e-4", "Too old", "2023-05-01"),
+    # Onda 4 (H.3): texto livre com contato (mascarado) e links — o de rastreio de e-mail (FICTÍCIO) sai,
+    # o sem rótulo fica com `label: null`
     _ev("e-5", "IBBA Mining Day", "2027-03-10", cat="c-data", end="2027-03-11",
-        location="São Paulo", links=[{"label": "Inscrição", "url": "https://events.itaubba.com/mining"}],
+        location="São Paulo", description="Dúvidas: eventos.ficticio@example.com ou (11) 3000-0000.",
+        links=[{"label": "Inscrição", "url": "https://events.itaubba.com/mining"},
+               {"label": "confirmar", "url": "https://mailerurl.mziq.com/ls/click?upn=FICTICIO"},
+               {"label": "  ", "url": "https://www.example.org/agenda-ficticia"}],
         updated_at="2026-11-02T13:00:00.5+00:00"),
 ]
 
@@ -520,17 +530,165 @@ def quote_history() -> list[dict]:
 
 
 # ── Onda 2: histórico de recomendações (Stock Guide) ──────────────────────────────────────────
+def _sgc(ticker, name, symbol, *, hidden=False, model_url=None, updated_by=None, upd, order, sector,
+         rec="OP", tp=10.0, shares=100.0, trade="USD", base="USD", fx_base=1.0, fx_usd=1.0, y1=None,
+         y2=None):
+    """Uma linha de `stock_guide_companies` (o mundo falso usa `is_hidden`; a coluna de verdade é
+    `is_visible` — as duas vão na linha) com as colunas que a tela não usa e que nunca saem."""
+    row = {"ticker": ticker, "company_name": name, "yahoo_symbol": symbol, "is_hidden": hidden,
+           "is_visible": not hidden, "model_url": model_url, "updated_by": updated_by, "updated_at": upd,
+           "display_order": order, "sector": sector, "recommendation": rec, "target_price": tp,
+           "shares_outstanding": shares, "trade_ccy": trade, "base_ccy": base, "fx_to_base": fx_base,
+           "fx_to_usd": fx_usd, "last_update": "2026-11-05", "volume_unit": "Mt", "capex_y1": 999.0,
+           "capex_y2": 998.0, "net_revenues_y1": 5000.0, "net_revenues_y2": 5100.0, "fcfe_y1": None,
+           "fcfe_y2": None, "volumes_y1": 300.0, "volumes_y2": 310.0}
+    for y, vals in (("y1", y1), ("y2", y2)):
+        for col, v in zip(("ebitda", "net_debt", "ev_adjustment", "net_income", "cash_earnings",
+                           "dividends", "ocf"), vals or (None,) * 7):
+            row[f"{col}_{y}"] = v
+    return row
+
+
 SG_COMPANIES = [
-    {"ticker": "VALE", "company_name": "Vale", "yahoo_symbol": "VALE", "is_hidden": False,
-     "model_url": "https://tenant.sharepoint.com/modelo-vale.xlsm", "updated_by": "uuid-admin",
-     "updated_at": "2026-11-06T15:39:00.5+00:00"},
-    {"ticker": "AUGO", "company_name": "Aura", "yahoo_symbol": "AUGO", "is_hidden": False,
-     "model_url": None, "updated_by": "uuid-admin", "updated_at": "2026-11-06T15:30:00+00:00"},
-    {"ticker": "ARA", "company_name": "Aclara Resources", "yahoo_symbol": "ARA.TO", "is_hidden": False,
-     "model_url": None, "updated_by": None, "updated_at": "2026-11-06T15:20:00+00:00"},
-    # oculta no Stock Guide: a RPC não devolve
-    {"ticker": "CSNA3", "company_name": "CSN", "yahoo_symbol": "CSNA3.SA", "is_hidden": True,
-     "model_url": None, "updated_by": None, "updated_at": "2026-11-01T10:00:00+00:00"},
+    # números FICTÍCIOS (pequenos, determinísticos); o ruído binário de propósito (o arquivo leva como está)
+    _sgc("VALE", "Vale", "VALE", model_url="https://tenant.sharepoint.com/modelo-vale.xlsm",
+         updated_by="uuid-admin", upd="2026-11-06T15:39:00.5+00:00", order=1, sector="iron_ore",
+         rec="MP", tp=14, shares=4255.762795000001, y1=(14826.1, 16341.6, 974.0, 5407.1, 6123.7, 4794, 8437.8),
+         y2=(14112.2, 15100.0, 974.0, 5100.0, 5900.0, 4500.0, 8000.0)),
+    _sgc("AUGO", "Aura", "AUGO", updated_by="uuid-admin", upd="2026-11-06T15:30:00+00:00", order=5,
+         sector="gold", rec="Buy", tp=98.0, shares=74.0, y1=(700.0, -100.0, 0.0, 400.0, 450.0, 250.0, 500.0),
+         y2=(750.0, -150.0, None, 420.0, 470.0, 260.0, 520.0)),
+    # negocia em CAD com o modelo em US$ (o fator do modelo ≠ 1); EBITDA negativo (desenvolvedora)
+    _sgc("ARA", "Aclara Resources", "ARA.TO", upd="2026-11-06T15:20:00+00:00", order=15,
+         sector="rare_earths", tp=4.37, shares=230.5, trade="CAD", fx_base=0.708, fx_usd=0.708,
+         y1=(-12.0, -40.0, None, -15.0, -14.0, None, -10.0), y2=(-8.0, -30.0, None, -9.0, -8.5, None, -6.0)),
+    # oculta no Stock Guide: a RPC de cliente devolve só nome, visibilidade e ordem
+    _sgc("CSNA3", "CSN", "CSNA3.SA", hidden=True, upd="2026-11-01T10:00:00+00:00", order=6,
+         sector="steel", rec="UP", tp=8.0, shares=1326.0, trade="BRL", base="BRL",
+         y1=(9000.0, 30000.0, 0.0, -500.0, 1500.0, 0.0, 6000.0)),
+]
+SG_CONFIG = [{"id": 1, "y1_label": "2026E", "y2_label": "2027E", "assumptions_note": "nota interna do editor",
+              "comps_footnote": "", "updated_at": "2026-06-23T12:00:00+00:00", "updated_by": "uuid-admin"}]
+
+
+def _sgp(company, order, country, sector, symbol, ev, nd, pe, pce, dy):
+    """Um par de `stock_guide_global_peers` (div. yield em FRAÇÃO, como o banco guarda)."""
+    row = {"company": company, "display_order": order, "country": country, "sector": sector,
+           "yahoo_symbol": symbol, "is_aggregate": False, "is_live": True, "mkt_cap_usd": 12345.6,
+           "updated_at": "2026-11-06T15:39:10+00:00"}
+    for i, y in enumerate(("y1", "y2")):
+        row.update({f"ev_ebitda_{y}": ev[i], f"net_debt_ebitda_{y}": nd[i], f"pe_{y}": pe[i],
+                    f"pce_{y}": pce[i], f"div_yield_{y}": dy[i]})
+    return row
+
+
+SG_PEERS = [                                       # fora de ordem: a RPC ordena por display_order
+    _sgp("RIO", 3, "UK", "iron_ore", "RIO", (5.9, 5.6), (0.4, 0.3), (10.2, 9.8), (None, None),
+         (0.0612, 0.0598)),
+    _sgp("CAP", 1, "CL", "steel", "CAP.SN", (6.216729651245153, 5.1), (2.4868222891566263, 2.0), (None, None),
+         (27.951849852000375, 20.0), (0.018177375411990001, None)),
+    _sgp("BHP", 2, "AU", "iron_ore", "BHP", (6.1, 5.8), (0.5, 0.4), (12.0, 11.5), (None, None),
+         (0.049, 0.051)),
+]
+
+
+def _sens_table(tid, metric, year, title, *, pair=None, rows=(1.0, 2.0), cols=(10.0, 20.0, 30.0),
+                values=None, col_label="Avg. Iron Ore Price 2027 (USD/t)", row_label="Avg. FX 2027 (USD/BRL)"):
+    vals = values or [[round(r * c, 4) for c in cols] for r in (rows or (1.0,))]
+    return {"id": tid, "metric": metric, "year": year, "title": title, "pairId": pair, "colLabel": col_label,
+            "rowLabel": row_label if rows else None, "colLevels": list(cols),
+            "rowLevels": list(rows) if rows else None, "values": vals, "title_note": "corrigido à mão",
+            "title_original": "título original do Excel", "corner": "x"}
+
+
+def _analysis(key, label, price):
+    return {"key": key, "label": label, "source_file": f"Modelo Ficticio_Sensitivity_{key.upper()}.xlsx",
+            "model_date": "2026-11-09", "currency": "USD", "model_price": price, "mktcap_model": 50000.5,
+            "shares_mn": 4255.76, "assumptions": [{"label": "Avg. Iron Ore Price 2027", "value": 97.5},
+                                                  {"label": "Avg. FX 2027", "value": 5.5}],
+            "assumptions_note": "premissa conferida", "import_ticker": "VALE3"}
+
+
+def _vale_sheet(key, label, price):
+    """Uma aba de análise da Vale: EBITDA + EV/EBITDA (o par) desenhados; dividend yield guardado e
+    ESCONDIDO pela tela."""
+    return {"name": label, "analysis": _analysis(key, label, price),
+            "tables": [_sens_table(f"{key}-t1", "ebitda", 2027, "Proforma EBITDA 2027 (USD million)"),
+                       _sens_table(f"{key}-t2", "ev_ebitda", 2027, "EV/EBITDA 2027 (x)", pair=f"{key}-t1"),
+                       _sens_table(f"{key}-t3", "div_yield", 2027, "Dividend Yield 2027 (%)")]}
+
+
+def _sens(sid, ticker, order, definition, upd):
+    return {"id": sid, "title": f"Sensibilidade {ticker}", "value_mode": "absolute", "metric_label": "",
+            "unit": "", "companies": [ticker], "definition": definition, "display_order": order,
+            "updated_at": upd, "updated_by": "uuid-admin"}
+
+
+SG_SENS = [
+    # o exemplo fictício antigo (formato de antes: sem `kind`) — a RPC devolve, o arquivo nunca
+    _sens(1, "VALE", 0, {"panel": "Exemplo", "ticker": "VALE", "tables": [{"title": "Exemplo"}]},
+          "2026-10-21T10:00:00+00:00"),
+    # Vale: 3 análises (uma por arquivo), cada uma com 2 grades desenhadas e 1 escondida
+    _sens(7, "VALE", 1, {"kind": "sens2d", "ticker": "VALE", "currency": "USD", "model_date": "2026-11-09",
+                         "source_file": "Modelo Ficticio_Sensitivity_FX.xlsx", "model_price": 11.97,
+                         "mktcap_model": 50000.5, "shares_mn": 4255.76, "panel": "Vale", "corner": "x",
+                         "import_ticker": "VALE3", "mktcap_note": "FCF ÷ yield",
+                         "assumptions": [{"label": "Avg. Iron Ore Price 2027", "value": 97.5}],
+                         "sheets": [_vale_sheet("fx", "Iron ore × FX", 11.97),
+                                    _vale_sheet("freight", "Iron ore × Freight", 11.90),
+                                    _vale_sheet("copper", "Iron ore × Copper", 11.97)]},
+          "2026-11-11T18:41:30.25+00:00"),
+    # Gerdau: 2027 de preferência (a de 2026 sai), margem nunca; a grade SEM ano fica
+    _sens(4, "GGBR4", 7, {"kind": "sens2d", "ticker": "GGBR4", "currency": "BRL", "model_date": "2026-10-28",
+                          "source_file": "Modelo Ficticio Gerdau_Sensitivity.xlsx", "model_price": "24.0",
+                          "mktcap_model": 47083.25, "assumptions": [{"label": "Avg. FX 2027", "value": 5.4},
+                                                                    {"value": 1.0}],
+                          "sheets": [{"name": "Sensitivity ", "tables": [
+                              _sens_table("t0", "ebitda", 2026, "EBITDA 2026 (BRL million)"),
+                              _sens_table("t1", "ebitda", "2027", "EBITDA 2027 (BRL million)"),
+                              _sens_table("t2", "fcf", 2027, "FCF 2027 (BRL million)"),
+                              _sens_table("t3", "fcf_yield", 2027, "FCF Yield 2027 (%)", pair="t2",
+                                          values=[[0.051, None, 0.07], [0.06, 0.065, 0.071]]),
+                              _sens_table("t4", "fcf", None, "FCF Ex-Prepayments (BRL million)"),
+                              _sens_table("t5", "ebitda_margin", 2027, "EBITDA Margin 2027 (%)")]}]},
+          "2026-11-03T10:00:00+00:00"),
+    # desenvolvedora (Aclara): sem as 4 de sempre → DCF upside e P/NAV; o P/NAV em grade 1-D
+    _sens(16, "ARA", 15, {"kind": "sens2d", "ticker": "ARA", "currency": "USD", "model_date": "2026-10-16",
+                          "source_file": "Modelo Ficticio Aclara_Sensitivity.xlsx", "model_price": 3.0,
+                          "mktcap_model": None, "assumptions": [],
+                          "sheets": [{"name": "Sensitivity", "tables": [
+                              _sens_table("u1", "upside", 2027, "DCF Upside (%)", col_label="Dy price (US$/kg)",
+                                          row_label="Y price (US$/kg)"),
+                              _sens_table("p1", "p_nav", None, "P/NAV (x)", rows=None,
+                                          col_label="Dy price (US$/kg)")]}]},
+          "2026-11-11T15:40:00+00:00"),
+    # empresa OCULTA: a RPC de cliente não devolve a linha
+    _sens(20, "CSNA3", 6, {"kind": "sens2d", "ticker": "CSNA3", "currency": "BRL",
+                           "sheets": [{"name": "Sensitivity", "tables": [
+                               _sens_table("c1", "ebitda", 2027, "EBITDA 2027 (BRL million)")]}]},
+          "2026-11-12T09:00:00+00:00"),
+]
+SENS_DRAWN = {"VALE": 6, "GGBR4": 4, "ARA": 2}     # as grades que a tela desenha (as do arquivo)
+
+
+def _dss(key, label, sector, cadence, state, last, nxt, *, auto=True, text="on schedule (10d)",
+         checked="2026-11-11T19:46:12.123456+00:00"):
+    return {"key": key, "label": label, "client_desc": f"{label}: monthly data from the source.",
+            "client_cadence": "Monthly · first ~10 days" if cadence == "monthly" else "Continuous",
+            "sector": sector, "cadence": cadence, "how_pulled": "humano baixa o arquivo e arrasta no _inbox",
+            "auto": auto, "state": state, "status_text": text, "last_period": last, "next_expected": nxt,
+            "checked_at": checked, "updated_at": "2026-09-02T12:00:00+00:00"}
+
+
+DATA_STATUS = [
+    _dss("secex_steel", "Brazil steel foreign trade (SECEX)", "steel", "monthly", "green", "2026-10",
+         "2026-11"),
+    _dss("gacc", "China woodchip imports (GACC)", "pulp", "monthly", "amber", "2026-09", "2026-10",
+         auto=False, text="waiting for release (41d)"),
+    _dss("quotes", "Share prices", "live", "live", "green", "11/11 19:42 UTC", "contínuo",
+         text="live ( 4 min ago)"),
+    _dss("korea", "Korea customs (black line)", "steel", "monthly", "grey", None, None, text=None,
+         checked="2026-11-11T19:40:00+00:00"),
 ]
 
 
@@ -570,6 +728,51 @@ def _rpc_rating_history(database, args):
                     "rating": r["rating"], "target_price": r["target_price"],
                     "currency": r["currency"], "listing": r["listing"], "note": r["note"]})
     return sorted(out, key=lambda r: (r["ticker"], r["effective_date"]))
+
+
+_SG_MASKED = ("sector", "volume_unit", "yahoo_symbol", "shares_outstanding", "net_debt_y1", "net_debt_y2",
+              "last_update", "target_price", "recommendation", "ebitda_y1", "ebitda_y2", "net_income_y1",
+              "net_income_y2", "dividends_y1", "dividends_y2", "model_url", "cash_earnings_y1",
+              "cash_earnings_y2", "ocf_y1", "ocf_y2", "capex_y1", "capex_y2", "net_revenues_y1",
+              "net_revenues_y2", "ev_adjustment_y1", "ev_adjustment_y2", "fx_to_base", "fx_to_usd",
+              "base_ccy", "trade_ccy", "volumes_y1", "volumes_y2", "fcfe_y1", "fcfe_y2")
+
+
+def _rpc_sg_comps(database, args):
+    """O corpo de `get_stock_guide_comps()` para quem NÃO é admin (a chave de serviço): a oculta vem só
+    com nome, visibilidade e ordem; por (display_order, ticker)."""
+    out = []
+    for c in database["stock_guide_companies"]:
+        row = {k: v for k, v in c.items() if k not in ("is_hidden", "updated_by", "updated_at")}
+        if not c.get("is_visible"):
+            row.update({k: None for k in _SG_MASKED})
+        out.append(row)
+    return sorted(out, key=lambda r: (r.get("display_order") or 0, r["ticker"]))
+
+
+def _rpc_sg_config(database, args):
+    return [{k: c[k] for k in ("y1_label", "y2_label", "assumptions_note", "comps_footnote")}
+            for c in database["stock_guide_config"] if c.get("id") == 1]
+
+
+def _rpc_sg_peers(database, args):
+    return sorted(({k: v for k, v in p.items() if k != "updated_at"} for p in database["stock_guide_global_peers"]),
+                  key=lambda p: (p["display_order"], p["company"]))
+
+
+def _rpc_sg_sens(database, args):
+    """`get_stock_guide_sensitivity_tables()` de cliente: tira a linha de empresa oculta; por
+    (display_order, id). Devolve o exemplo antigo também (o filtro `kind` é de quem pede)."""
+    hidden = {c["ticker"] for c in database["stock_guide_companies"] if not c.get("is_visible")}
+    rows = [{k: s[k] for k in ("id", "title", "value_mode", "metric_label", "unit", "companies",
+                               "definition", "display_order")}
+            for s in database["stock_guide_sensitivities"] if not set(s["companies"]) <= hidden]
+    return sorted(rows, key=lambda s: (s["display_order"], s["id"]))
+
+
+def _rpc_data_status(database, args):
+    rank = {"steel": 1, "pulp": 2}
+    return sorted(database["data_source_status"], key=lambda r: (rank.get(r["sector"], 3), r["label"]))
 
 
 def _rpc_reports(database, args):
@@ -917,6 +1120,10 @@ def _db_small() -> dict:
                           "quote_history": [],          # vazia: quem testa a família põe quote_history()
                           "stock_guide_rating_history": RATING_HISTORY,
                           "stock_guide_companies": SG_COMPANIES,
+                          "stock_guide_config": SG_CONFIG,
+                          "stock_guide_global_peers": SG_PEERS,
+                          "stock_guide_sensitivities": SG_SENS,
+                          "data_source_status": DATA_STATUS,
                           "mw_companies": MW_COMPANIES, "mw_share_capital": MW_CAPITAL,
                           "mw_buyback_programs": MW_BUYBACKS, "mw_filings": MW_FILINGS,
                           "rpc_rows": {"reports": REPORTS},
@@ -928,6 +1135,11 @@ def _db_small() -> dict:
                                   "get_exec_calendar_data_windows": _rpc_windows,
                                   "get_exec_calendar_events": _rpc_events,
                                   "get_rating_history": _rpc_rating_history,
+                                  "get_stock_guide_comps": _rpc_sg_comps,
+                                  "get_stock_guide_config": _rpc_sg_config,
+                                  "get_stock_guide_global_peers": _rpc_sg_peers,
+                                  "get_stock_guide_sensitivity_tables": _rpc_sg_sens,
+                                  "get_data_source_status": _rpc_data_status,
                                   "get_mw_companies": _rpc_mw_companies,
                                   "get_mw_short_interest": _rpc_mw_short_interest,
                                   "get_mw_short_latest": _rpc_mw_short_latest,
@@ -1302,6 +1514,55 @@ def sector_files() -> dict[str, bytes]:
     return dict(_SECTOR_BYTES)
 
 
+def site_files() -> dict[str, bytes]:
+    """O repositório do site no GitHub falso: os dois bancos dos setores e o glossário (Onda 4)."""
+    return {**sector_files(), GLOSSARY_PATH: glossary_bytes()}
+
+
+# ── Onda 4: o glossário do site (`admin/glossary.json`), FICTÍCIO, no repositório do GitHub falso ─────
+GLOSSARY_PATH = "admin/glossary.json"
+GLOSSARY_COMMIT = (("feed01" * 7)[:40], "2026-09-11T17:30:36Z")
+_SM_PAGE, _PP_PAGE = "/Steel and Mining/steel_sm_dashboard.html", "/Pulp and Paper/pp_dashboard.html"
+
+
+def _gi(term, where, *, unit="kt", freq="Monthly", source="Fonte fictícia", desc="Descrição fictícia."):
+    return {"term": term, "unit": unit, "freq": freq, "source": source, "desc": desc, "where": where}
+
+
+GLOSSARY_DOC = {
+    "generated": "2026-09-02",
+    "note": "Nota interna do editor: não publicar.",
+    "sections": [
+        {"id": "commodities", "title": "Commodity prices", "intro": "Preços de referência (fictício).",
+         "items": [_gi("Minério fictício 61%", "/index.html", unit="USD/t", freq="Daily"),
+                   _gi("Minério fictício 62%", "/market.html", unit="", freq=None)]},
+        {"id": "steel", "title": "Steel & Mining data", "intro": None,
+         "items": [_gi("Import volume (fictício)", _SM_PAGE + "#imports"),
+                   # exceção por termo: o site aponta a página-mãe (Imports); o hub, o Modelo preditivo
+                   _gi("Import model — orange line", _SM_PAGE + "#imports"),
+                   _gi("Termo sem endereço", None),
+                   _gi("Termo de página que sumiu", "/pagina-antiga.html"),
+                   _gi("   ", "/index.html")]},
+        {"id": "pulp", "title": "Pulp & Paper data", "intro": "Contato: analista.ficticio@example.com",
+         "items": [_gi("China woodchip imports (GACC)", _PP_PAGE + "#pulp", unit="M BDMT"),
+                   _gi("LTM shipments", _PP_PAGE + "#paper"),
+                   _gi("Paper production (fictício)", _PP_PAGE + "#paper")]},
+        {"id": "market_watch", "title": "Market Watch", "intro": "",
+         "items": [_gi("Buyback programs", "/market-watch.html?tab=buybacks", unit=None),
+                   _gi("Sensitivity tables", "/stock-guide.html#sens", unit=None)]},
+    ],
+}
+
+
+def glossary_bytes(doc=None) -> bytes:
+    """O arquivo como o site o guarda (JSON indentado, UTF-8): bytes fixos → SHA do blob fixo."""
+    return (json.dumps(GLOSSARY_DOC if doc is None else doc, ensure_ascii=False, indent=2) + "\n").encode()
+
+
+def glossary_blob(doc=None) -> str:
+    return git_blob_sha(glossary_bytes(doc))
+
+
 def sector_blob(sector: str) -> str:
     return git_blob_sha(sector_files()[SE.DBS[sector].path])
 
@@ -1396,7 +1657,7 @@ def _project(row: dict, select: str) -> dict:
 # ── o mini-PostgREST ──────────────────────────────────────────────────────────────────────────
 # colunas timestamptz (o banco real recusa um literal que não é data: HTTP 400, código 22007)
 TIMESTAMP_COLS = frozenset({"published_at", "found_at", "take_llm_at", "slot_start", "slot_end",
-                            "created_at", "updated_at", "daily_updated_at"})
+                            "created_at", "updated_at", "daily_updated_at", "checked_at"})
 _DT = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 _PARAMS = ("select", "order", "limit", "offset")
 
@@ -1459,7 +1720,7 @@ def _cmp(row: dict, col: str, spec: str) -> bool:
     if neg:
         spec = spec[4:]
     op, _, raw = spec.partition(".")
-    val = row.get(col)
+    val = _arrow(row, col) if "->" in col else row.get(col)     # `definition->>kind=eq.sens2d`
     if op == "is":
         res = {"null": val is None, "true": val is True, "false": val is False}[raw]
     elif op == "in":
@@ -1561,12 +1822,16 @@ class FakeGitHub:
     """A API do GitHub para os bancos dos setores. `files` = caminho → bytes do arquivo na `main`
     (trocar = um commit novo; os blobs antigos continuam baixáveis); `commits` = setor → (sha, data);
     `fail[etapa]` (sonda, download, commit) = status HTTP, exceção ou FakeResp pronto, a cada chamada;
-    `corrupt` = o download devolve um byte trocado (o SHA não confere)."""
-    files: dict = field(default_factory=sector_files)
-    commits: dict = field(default_factory=lambda: dict(SECTOR_COMMITS))
+    `corrupt` = o download devolve um byte trocado (o SHA não confere). Onda 4: o glossário do site
+    (`admin/glossary.json`, commit em `commits[GLOSSARY_PATH]`); a sonda manda o arquivo inteiro em
+    base64 (arquivo < 1 MB, como a API de verdade) e um `ETag`, e com `If-None-Match` igual responde 304
+    sem corpo (`not_modified` conta quantas)."""
+    files: dict = field(default_factory=site_files)
+    commits: dict = field(default_factory=lambda: {**SECTOR_COMMITS, GLOSSARY_PATH: GLOSSARY_COMMIT})
     fail: dict = field(default_factory=dict)
     corrupt: bool = False
     blobs: dict = field(default_factory=dict)
+    not_modified: int = 0
 
     def handle(self, call):
         rest = call.url[len(GITHUB_REPO_URL):]
@@ -1593,9 +1858,16 @@ class FakeGitHub:
             data = self.files.get(path)
             if data is None:
                 return FakeResp(404, {"message": "Not Found"})
+            sha = git_blob_sha(data)
+            etag = f'"etag-{sha}"'
+            if call.headers.get("If-None-Match") == etag:
+                self.not_modified += 1
+                return FakeResp(304, b"", headers={"ETag": etag})
+            small = len(data) < 1024 * 1024                  # acima de 1 MB a API não manda o conteúdo
             return FakeResp(200, {"type": "file", "name": path.rsplit("/", 1)[-1], "path": path,
-                                  "sha": git_blob_sha(data), "size": len(data), "content": "",
-                                  "encoding": "none"})
+                                  "sha": sha, "size": len(data),
+                                  "content": base64.b64encode(data).decode() if small else "",
+                                  "encoding": "base64" if small else "none"}, headers={"ETag": etag})
         if step == "download":
             assert call.headers.get("Accept") == "application/vnd.github.raw+json", call.headers
             data = self.blobs.get(rest[len("git/blobs/"):])
@@ -1606,8 +1878,9 @@ class FakeGitHub:
             return FakeResp(200, data)
         path = call.params.get("path")
         sector = next((s for s in SE.SECTORS if SE.DBS[s].path == path), None)
-        assert sector and call.params.get("sha") == "main" and call.params.get("per_page") == "1"
-        sha, when = self.commits[sector]
+        assert (sector or path in self.commits) and call.params.get("sha") == "main" \
+            and call.params.get("per_page") == "1"
+        sha, when = self.commits[sector or path]
         return FakeResp(200, [{"sha": sha, "commit": {"committer": {"date": when},
                                                       "message": "data: robô do site"}}])
 

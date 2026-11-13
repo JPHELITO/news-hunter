@@ -1,4 +1,4 @@
-"""calendar.json (WARM com sonda, conteúdo gzip com nome .json, ≤ 300 KB bruto) — PLANO, Apêndice E.7.
+"""calendar.json (WARM com sonda, conteúdo gzip com nome .json, ≤ 300 KB bruto) — PLANO, Apêndices E.7 e H.3.
 
     { updatedAt, timezone: "America/Sao_Paulo", from, to, categories, dataWindows, events }
 
@@ -7,21 +7,23 @@
   dataWindows só as ativas: {id, sourceKey, label, fromDay, toDay, lagMonths, note}, por
               (fromDay, label, id);
   events      só os visíveis: {id, title, categoryId, startDate, endDate, allDay, startTime,
-              endTime, company, recurrence, origin}; os NÃO recorrentes de 1º/jan do ano anterior
-              até o fim do mês de hoje + 18 meses (fim arredondado ao mês: o hash não muda todo
-              dia); os recorrentes SEMPRE, com a REGRA (`recurrence` com as chaves do banco —
-              exceção ao camelCase para o porte do calendar-lib.js ser 1:1; o exportador não
-              expande ocorrências). Horas em "HH:MM" de Brasília (`time` sem fuso no banco).
-              `origin` = `source` do banco ("b3" ou null = cadastrado à mão). Por (startDate,
+              endTime, company, location, description, links, recurrence, origin}; os NÃO
+              recorrentes TODOS até o fim do mês de hoje + 18 meses (fim arredondado ao mês: o hash
+              não muda todo dia; SEM limite inferior desde a Onda 4, O54 — `from` = o 1º dia do
+              evento único mais antigo); os recorrentes SEMPRE, com a REGRA (`recurrence` com as
+              chaves do banco — exceção ao camelCase para o porte do calendar-lib.js ser 1:1; o
+              exportador não expande ocorrências). Horas em "HH:MM" de Brasília (`time` sem fuso no
+              banco). `origin` = `source` do banco ("b3" ou null = cadastrado à mão). Por (startDate,
               startTime, id).
 
-SEM TEXTO LIVRE (revisão do orquestrador, 05/11/2026): `location`, `description` e `links` dos
-eventos NÃO saem — nem são lidos do banco. São texto digitado pelo time, com links copiados de
-e-mails recebidos (rastreio de clique que identifica quem recebeu, confirmação de inscrição do
-Itaú). A Home não usa nenhum dos três; eles voltam na Onda 4 (página Calendar), com regra própria
-decidida com o usuário. O leitor do hub trata a ausência (`null` / `[]`).
-Fora do arquivo também: `updated_by` (uuid de auth.users), `updated_at` de linha, `external_id`,
-`ics_seq`, `locked`, eventos ocultos.
+TEXTO LIVRE (Onda 4, H.3; decisão U12 do usuário, 12/11/2026 — na 1b eles nem eram lidos): `location` e
+`description` saem como digitados, com e-mail e telefone mascarados e cada URL dentro do texto pelo
+filtro (recusada → `[link]`); `links` = `[{label, url}]` só com os que passam no filtro de URL (o
+rastreio de clique de e-mail — SFMC do Itaú, `/ls/click?upn=`, Closir `/c/…` — identifica quem recebeu
+e SAI; o evento fica), rótulo pela mesma limpeza do texto (`null` = o hub mostra a URL). Ver
+freetext.py. Mudança ADITIVA: `schemaVersion` continua 1 (o leitor do hub já lia os três campos).
+Fora do arquivo: `updated_by` (uuid de auth.users), `updated_at` de linha, `external_id`, `ics_seq`,
+`locked`, eventos ocultos (o registro proíbe as chaves neste arquivo).
 
 Leitura (sources.py): sonda "contagem + max(updated_at)" dos visíveis a cada 15 min numa chamada
 só; leitura completa quando ela muda, na partida a frio, quando o intervalo vira o mês e uma vez
@@ -35,20 +37,26 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 from ..encode import iso_date, num
+from ..freetext import clean_text, public_url
 
 TIMEZONE = "America/Sao_Paulo"
 BRT = timezone(timedelta(hours=-3))          # o Brasil não tem horário de verão desde 2019
 CATEGORY_COLS = "id,name,color,kind,sort_order,is_active"
 WINDOW_COLS = "id,source_key,label,from_day,to_day,lag_months,note,is_active"
 EVENT_COLS = ("id,title,category_id,start_date,end_date,all_day,start_time,end_time,company,"
-              "recurrence,source,is_visible")
+              "location,description,links,recurrence,source,is_visible")
 EVENT_KEYS = ("id", "title", "categoryId", "startDate", "endDate", "allDay", "startTime", "endTime",
-              "company", "recurrence", "origin")
+              "company", "location", "description", "links", "recurrence", "origin")
+LINK_KEYS = ("label", "url")
 CATEGORY_KEYS = ("id", "name", "color", "kind", "sortOrder", "active")
 WINDOW_KEYS = ("id", "sourceKey", "label", "fromDay", "toDay", "lagMonths", "note")
 RECURRENCE_KEYS = ("freq", "interval", "byweekday", "bymonthday", "bysetpos", "until", "count",
                    "whole_week")
+# nunca saem (H.0): o registro as proíbe NESTE arquivo (o `note` não entra: é campo das janelas de dado)
+FORBIDDEN = frozenset({"external_id", "externalId", "ics_seq", "icsSeq", "locked", "updated_by",
+                       "updatedBy", "is_visible", "isVisible"})
 MONTHS_AHEAD = 18
+QUERY_FROM = "1900-01-01"    # o 1º dia pedido à RPC: os eventos únicos TODOS (O54, sem limite inferior)
 _HHMM = re.compile(r"^(\d{1,2}):(\d{2})")
 
 
@@ -61,12 +69,26 @@ def _int(value):
     return int(v) if v is not None and float(v).is_integer() else None
 
 
-def date_range(now: datetime) -> tuple[str, str]:
-    """(1º/jan do ano anterior, último dia do mês de hoje + 18 meses), com "hoje" em Brasília."""
+def date_to(now: datetime) -> str:
+    """O último dia do mês de hoje + 18 meses, com "hoje" em Brasília (o `to` do arquivo)."""
     today = now.astimezone(BRT).date()
     m = today.month + MONTHS_AHEAD
     y, m = today.year + (m - 1) // 12, (m - 1) % 12 + 1
-    return date(today.year - 1, 1, 1).isoformat(), date(y, m, _cal.monthrange(y, m)[1]).isoformat()
+    return date(y, m, _cal.monthrange(y, m)[1]).isoformat()
+
+
+def date_range(now: datetime) -> tuple[str, str]:
+    """O intervalo pedido à RPC: (sem limite inferior, `date_to`). O `from` do ARQUIVO vem dos eventos
+    (`first_day`)."""
+    return QUERY_FROM, date_to(now)
+
+
+def first_day(events: list[dict]) -> str | None:
+    """O `from` do arquivo (H.3): o 1º dia do evento ÚNICO mais antigo; sem nenhum, o do mais antigo de
+    todos (só recorrentes); sem evento, None."""
+    once = [e["startDate"] for e in events if e.get("recurrence") is None and e.get("startDate")]
+    every = [e["startDate"] for e in events if e.get("startDate")]
+    return min(once) if once else (min(every) if every else None)
 
 
 def hhmm(value):
@@ -111,6 +133,19 @@ def recurrence(value) -> dict | None:
     return out or None
 
 
+def links(value) -> list[dict]:
+    """`[{label, url}]` só com os links que passam no filtro (freetext.public_url); o resto sai, calado
+    (a contagem é do log do --out, nunca a URL)."""
+    out = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        url = public_url(item.get("url"))
+        if url:
+            out.append({"label": clean_text(item.get("label")), "url": url})
+    return out
+
+
 def event(r: dict) -> dict | None:
     if r.get("is_visible") is not True or r.get("id") in (None, ""):
         return None
@@ -122,8 +157,9 @@ def event(r: dict) -> dict | None:
             "startDate": start, "endDate": iso_date(r.get("end_date")),
             "allDay": r["all_day"] if isinstance(r.get("all_day"), bool) else None,
             "startTime": hhmm(r.get("start_time")), "endTime": hhmm(r.get("end_time")),
-            "company": _text(r.get("company")), "recurrence": recurrence(r.get("recurrence")),
-            "origin": _text(r.get("source"))}
+            "company": _text(r.get("company")), "location": clean_text(r.get("location")),
+            "description": clean_text(r.get("description")), "links": links(r.get("links")),
+            "recurrence": recurrence(r.get("recurrence")), "origin": _text(r.get("source"))}
 
 
 def in_range(ev: dict, first: str, last: str) -> bool:
@@ -152,6 +188,13 @@ def _only(items, keys) -> list[dict]:
     return [{k: i.get(k) for k in keys} for i in items or [] if isinstance(i, dict)]
 
 
+def _events(items) -> list[dict]:
+    out = _only(items, EVENT_KEYS)
+    for e in out:
+        e["links"] = _only(e["links"] if isinstance(e["links"], list) else [], LINK_KEYS)
+    return out
+
+
 def build(src) -> dict:
     cal = src.calendar()
     return {
@@ -163,5 +206,5 @@ def build(src) -> dict:
         "to": cal["to"],
         "categories": _only(cal["categories"], CATEGORY_KEYS),
         "dataWindows": _only(cal["windows"], WINDOW_KEYS),
-        "events": _only(cal["events"], EVENT_KEYS),
+        "events": _events(cal["events"]),
     }

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-11-11T19:46:12Z",
+  "checkedAt": "2026-11-11T19:46:12Z",
+  "sources": [
+    {
+      "id": "secex_steel",
+      "label": "Brazil steel foreign trade (SECEX)",
+      "description": "Brazil steel foreign trade (SECEX): monthly data from the source.",
+      "expectedCadence": "Monthly · first ~10 days",
+      "sector": "steel",
+      "kind": "monthly",
+      "manual": false,
+      "state": "green",
+      "statusText": "on schedule (10d)",
+      "lastPeriod": "2026-10",
+      "nextExpected": "2026-11",
+      "checkedAt": "2026-11-11T19:46:12Z"
+    },
+    {
+      "id": "korea",
+      "label": "Korea customs (black line)",
+      "description": "Korea customs (black line): monthly data from the source.",
+      "expectedCadence": "Monthly · first ~10 days",
+      "sector": "steel",
+      "kind": "monthly",
+      "manual": false,
+      "state": "grey",
+      "statusText": null,
+      "lastPeriod": null,
+      "nextExpected": null,
+      "checkedAt": "2026-11-11T19:40:00Z"
+    },
+    {
+      "id": "gacc",
+      "label": "China woodchip imports (GACC)",
+      "description": "China woodchip imports (GACC): monthly data from the source.",
+      "expectedCadence": "Monthly · first ~10 days",
+      "sector": "pulp",
+      "kind": "monthly",
+      "manual": true,
+      "state": "amber",
+      "statusText": "waiting for release (41d)",
+      "lastPeriod": "2026-09",
+      "nextExpected": "2026-10",
+      "checkedAt": "2026-11-11T19:46:12Z"
+    },
+    {
+      "id": "quotes",
+      "label": "Share prices",
+      "description": "Share prices: monthly data from the source.",
+      "expectedCadence": "Continuous",
+      "sector": "live",
+      "kind": "live",
+      "manual": false,
+      "state": "green",
+      "statusText": "live ( 4 min ago)",
+      "lastPeriod": "11/11 19:42 UTC",
+      "nextExpected": "contínuo",
+      "checkedAt": "2026-11-11T19:46:12Z"
+    }
+  ]
+}

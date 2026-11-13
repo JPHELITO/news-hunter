@@ -14,6 +14,12 @@ TRÊS chamadas, todas GET e só leitura:
   commit      `commits?path=<caminho>&sha=main&per_page=1` → o último commit que tocou o arquivo e
               quando (`commit`/`committedAt` do índice do setor). Só quando o blob muda.
 
+SONDA CONDICIONAL (Onda 4, o glossário — sitefiles.py): para arquivo PEQUENO (< 1 MB) a API de conteúdo
+manda o arquivo inteiro junto (em base64: 26,8 KB pelo `admin/glossary.json` de 18,7 KB, medido em
+13/11/2026). `probe_cached` manda o `ETag` da sonda anterior (`If-None-Match`): sem mudança, a API responde
+304 sem corpo (medido) — e, com token, o 304 nem conta no limite de taxa. Só a 1ª sonda de cada runner
+paga o corpo.
+
 TOKEN: `GH_TOKEN` (no Actions = o `GITHUB_TOKEN` do próprio job: 1.000 chamadas/h por repositório).
 Sem token, a API aceita 60/h por IP — basta para o --out/--dry-run no PC, não para o loop (o
 run.py nem chama os setores no envio sem token). O token só vai no cabeçalho `Authorization`; as
@@ -112,6 +118,32 @@ class GitHubClient:
         """(SHA do blob, tamanho em bytes) do arquivo no `ref` — a sonda barata."""
         r = self._get("sonda", f"{self.base}/contents/{quote(path, safe='/')}", {"ref": self.ref},
                       ACCEPT_JSON, API_TIMEOUT_S)
+        return self._file_info(r)
+
+    def probe_cached(self, path: str, etag: str | None = None) -> tuple[str, int, str | None] | None:
+        """A sonda CONDICIONAL: `None` = nada mudou desde a sonda do `etag` (HTTP 304, sem corpo);
+        senão (SHA do blob, tamanho, ETag novo). Sem `etag`, é a sonda comum (com o ETag de volta)."""
+        url = f"{self.base}/contents/{quote(path, safe='/')}"
+        headers = self._headers(ACCEPT_JSON)
+        if etag:
+            headers["If-None-Match"] = etag
+        try:
+            r = self.http.request("GET", url, headers=headers, params={"ref": self.ref},
+                                  timeout=API_TIMEOUT_S)
+        except requests.RequestException as e:
+            self.calls += 1
+            raise GitHubError(f"GitHub (sonda): sem resposta ({type(e).__name__})") from None
+        self.calls += 1
+        self.bytes += len(r.content or b"")
+        if r.status_code == 304 and etag:
+            return None
+        if r.status_code != 200:
+            raise GitHubError(f"GitHub (sonda): {self._why(r)}", status=r.status_code)
+        sha, size = self._file_info(r)
+        tag = (r.headers or {}).get("ETag")
+        return sha, size, tag if isinstance(tag, str) and tag.strip() else None
+
+    def _file_info(self, r) -> tuple[str, int]:
         d = self._json(r, "sonda")
         sha = d.get("sha") if isinstance(d, dict) else None
         size = d.get("size") if isinstance(d, dict) else None

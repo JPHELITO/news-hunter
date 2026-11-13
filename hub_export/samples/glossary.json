@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-09-11T17:30:36Z",
+  "source": {
+    "blob": "f004ef161b54fdade25bbb4e48075fed88a80020",
+    "commit": "feed01feed01feed01feed01feed01feed01feed",
+    "committedAt": "2026-09-11T17:30:36Z"
+  },
+  "sections": [
+    {
+      "id": "commodities",
+      "title": "Commodity prices",
+      "intro": "Preços de referência (fictício).",
+      "items": [
+        {
+          "term": "Minério fictício 61%",
+          "unit": "USD/t",
+          "freq": "Daily",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": ""
+        },
+        {
+          "term": "Minério fictício 62%",
+          "unit": null,
+          "freq": null,
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": "market"
+        }
+      ]
+    },
+    {
+      "id": "steel",
+      "title": "Steel & Mining data",
+      "intro": null,
+      "items": [
+        {
+          "term": "Import volume (fictício)",
+          "unit": "kt",
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": "steel-imports"
+        },
+        {
+          "term": "Import model — orange line",
+          "unit": "kt",
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": "steel-prediction"
+        },
+        {
+          "term": "Termo sem endereço",
+          "unit": "kt",
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": null
+        },
+        {
+          "term": "Termo de página que sumiu",
+          "unit": "kt",
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": null
+        }
+      ]
+    },
+    {
+      "id": "pulp",
+      "title": "Pulp & Paper data",
+      "intro": "Contato: [e-mail]",
+      "items": [
+        {
+          "term": "China woodchip imports (GACC)",
+          "unit": "M BDMT",
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": "woodchips"
+        },
+        {
+          "term": "LTM shipments",
+          "unit": "kt",
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": "corrugated"
+        },
+        {
+          "term": "Paper production (fictício)",
+          "unit": "kt",
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": "paper-fundamentals"
+        }
+      ]
+    },
+    {
+      "id": "market_watch",
+      "title": "Market Watch",
+      "intro": null,
+      "items": [
+        {
+          "term": "Buyback programs",
+          "unit": null,
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": "buybacks"
+        },
+        {
+          "term": "Sensitivity tables",
+          "unit": null,
+          "freq": "Monthly",
+          "source": "Fonte fictícia",
+          "desc": "Descrição fictícia.",
+          "route": "stock-guide-sensitivity"
+        }
+      ]
+    }
+  ]
+}

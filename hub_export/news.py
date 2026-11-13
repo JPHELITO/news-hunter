@@ -5,8 +5,8 @@ POR QUE TÃO ELABORADO: `news_articles` não tem `updated_at` nem `created_at` (
 com `--check`: `published_at`, `found_at` e `take_llm_at` são timestamptz; não há `id`). O único
 carimbo de mudança é `take_llm_at` (a IA classificou); a reclassificação do robô e a retirada do
 relatório são PATCH sem carimbo; `found_at` é o relógio do RASPADOR (o hunt-playwright insere
-minutos depois; lote manual grava `found_at` retroativo). E o orçamento é ≤ 5 MB/dia para o
-exportador inteiro, com ~0,75 KB de cabeçalho por chamada.
+minutos depois; lote manual grava `found_at` retroativo). E o orçamento é ≤ 5,5 MB/dia para o
+exportador inteiro (5 até a Onda 3; O58), com ~0,75 KB de cabeçalho por chamada.
 
 O CACHE (arquivo próprio `<estado>_news.json`, ao lado do estado principal):
   rows         url → item do contrato (com `reason`), para as semanas COMPLETAS (de `completeFrom`,

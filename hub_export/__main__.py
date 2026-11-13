@@ -16,7 +16,10 @@
                       e "pp-raw". No ENVIO eles exigem GH_TOKEN (sem ele, ficam fora); no --out e no
                       --dry-run vão pela API do GitHub mesmo sem token (60 chamadas/h), ou sem rede
                       com HUB_EXPORT_SECTORS_DB_DIR = pasta com steel_sm_web.db.gz e pulp_paper.db
-                      (os do repositório do site; o índice sai sem commit/committedAt)
+                      (os do repositório do site; o índice sai sem commit/committedAt).
+                      Onda 4: stock-guide, sg-sensitivity, data-sources (Supabase, COLD com sonda) e
+                      glossary (o admin/glossary.json do site pela API do GitHub: como os setores, no
+                      ENVIO exige GH_TOKEN); o calendar leva local, descrição e links
     --all             todos (o padrão)
     --out DIR         grava os arquivos em DIR exatamente como seriam enviados (gzip inclusive)
                       e imprime a tabela nome/bytes/hash; não envia nem mexe no registro de envio
@@ -85,7 +88,8 @@ def _parser() -> argparse.ArgumentParser:
                      help="config,live,intraday,quotes-daily,news-latest,news-digest,calendar,"
                           "reports,news-week,news-index,quotes-monthly,commodities-daily,ratings,"
                           "mw-companies,mw-short-interest,mw-buybacks,mw-insiders,mw-filings,"
-                          "mw-short,history,history-index (ou news-week-AAAA-wNN, history-<papel>, "
+                          "mw-short,history,history-index,stock-guide,sg-sensitivity,data-sources,"
+                          "glossary (ou news-week-AAAA-wNN, history-<papel>, "
                           "mw-short-<empresa>); setores: sectors, mm, pp, mm-countries, mm-raw, "
                           "pp-raw ou um arquivo deles (mm-trade, pp-index…)")
     sel.add_argument("--all", action="store_true", help="todos os arquivos (padrão)")

@@ -9,7 +9,9 @@ cabeçalho), o que o exportador da Onda 1b precisa saber e que nenhum repositór
   • se existem `id` e `created_at` (marca d'água do banco, se houver);
   • volumes (incluídas, sem `published_at`, primeiras datas), o resumo da hora, o calendário;
   • a permissão da service key na RPC `get_recent_reports_v3` (revoga `anon`, concede
-    `authenticated`: a `service_role` deve manter EXECUTE pelo padrão do Supabase).
+    `authenticated`: a `service_role` deve manter EXECUTE pelo padrão do Supabase);
+  • Onda 4: as 4 sondas do Stock Guide e da página Data, como o exportador as faz (a da sensibilidade
+    filtrada por `definition->>kind`), e a permissão da service key nas 5 RPCs que ele lê.
 Não monta arquivo, não envia nada, não grava estado. Imprime só nomes de tipo, contagens, datas
 e status HTTP — nunca URL, chave ou conteúdo de linha.
 """
@@ -111,6 +113,34 @@ def _mw_checks(supa, now=None) -> list[str]:
     return out
 
 
+def _wave4_checks(supa) -> list[str]:
+    """Onda 4 (pages.py): as 4 sondas do jeito que o exportador as faz (contagem + máximo, `limit=1`) e a
+    permissão da chave de serviço em cada RPC (contagem do resultado, uma coluna leve, ~1 KB cada)."""
+    out = []
+    for label, table, col, flt in (("stock_guide_companies", "stock_guide_companies", "updated_at", {}),
+                                   ("stock_guide_global_peers", "stock_guide_global_peers", "updated_at", {}),
+                                   ("stock_guide_sensitivities (sens2d)", "stock_guide_sensitivities",
+                                    "updated_at", {"definition->>kind": "eq.sens2d"}),
+                                   ("data_source_status", "data_source_status", "checked_at", {})):
+        try:
+            rows, n = supa.select_count(table, col, tag="check", order=f"{col}.desc.nullslast", limit=1,
+                                        **flt)
+            out.append(f"sonda {label}: {n} linha(s), max({col}) "
+                       f"{(iso_utc(rows[0].get(col)) if rows else None) or '—'}")
+        except SupaError as e:
+            out.append(f"sonda {label}: {e}")
+    for fn, col, flt in (("get_stock_guide_comps", "ticker", {}), ("get_stock_guide_config", "y1_label", {}),
+                         ("get_stock_guide_global_peers", "company", {}),
+                         ("get_stock_guide_sensitivity_tables", "id", {"definition->>kind": "eq.sens2d"}),
+                         ("get_data_source_status", "key", {})):
+        try:
+            _, n = supa.rpc_count(fn, col, tag="check", limit=1, **flt)
+            out.append(f"rpc {fn} (service key): {n} linha(s)")
+        except SupaError as e:
+            out.append(f"rpc {fn} (service key): {e}")
+    return out
+
+
 def run_checks(supa, now=None) -> list[str]:
     """As linhas do relatório, na ordem. Cada conferência isola o próprio erro."""
     out = []
@@ -168,10 +198,13 @@ def run_checks(supa, now=None) -> list[str]:
         out.append("flags: " + ", ".join(f"{k}={flags.get(k)}" for k in
                                          ("home_digest", "hub_home_digest", "exec_calendar",
                                           "hub_exec_calendar", "news_feed", "market_pulse",
-                                          "market", "market_watch", "market_ratings")))
+                                          "market", "market_watch", "market_ratings", "stock_guide",
+                                          "stock_guide_sensitivity", "stock_guide_peers", "data_page",
+                                          "quarterly")))
     except SupaError as e:
         out.append(f"flags: erro ({e})")
     out += _mw_checks(supa, now)
+    out += _wave4_checks(supa)
     out.append(f"Supabase: {supa.calls} chamada(s), {supa.wire_bytes:,} B de corpo pela rede + "
                f"{supa.header_bytes:,} B de cabeçalhos".replace(",", "."))
     return out

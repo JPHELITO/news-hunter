@@ -1,8 +1,8 @@
 """De onde vem cada dado: memória do ciclo → último estado conhecido → Supabase.
 
-Orçamento: ≤ 5 MB/dia de tráfego do Supabase com o loop rodando 24/7 (o sistema inteiro já anda
-a ~90 MB/dia num teto de 5 GB/mês, e o Supabase conta ~0,75 KB de cabeçalho por resposta, medido
-em 05/11). Cada fonte paga o mínimo:
+Orçamento: ≤ 5,5 MB/dia de tráfego do Supabase com o loop rodando 24/7 (5 MB até a Onda 3; +0,5 com a
+Onda 4, decisão O58 de 12/11 — o sistema inteiro já anda a ~90 MB/dia num teto de 5 GB/mês, e o Supabase
+conta ~0,75 KB de cabeçalho por resposta, medido em 05/11). Cada fonte paga o mínimo:
 
   cotações + curva do dia   memória do ciclo (`hunter.prices.LAST_QUOTE_ROWS`, gravada pelo
                             `update_quotes` deste MESMO processo) por cima do estado. Lê do banco
@@ -30,7 +30,9 @@ Onda 1b:
   relatórios                RPC `get_recent_reports_v3` (nunca a tabela de origem), no COLD.
   calendário                sonda "contagem + max(updated_at)" dos visíveis (1 chamada) a cada
                             WARM; leitura completa quando muda, na partida a frio e 1×/dia depois
-                            das 23:45 UTC; categorias e janelas de dado a cada 60 min.
+                            das 23:45 UTC; categorias e janelas de dado a cada 60 min. Desde a Onda 4
+                            (H.3, O54) a RPC é pedida SEM limite inferior (`from` = o 1º dia do evento
+                            único mais antigo) e com `location`, `description` e `links`.
 Onda 2 (PLANO, Apêndice F; pesquisa 2-dados §4):
   cauda mensal              o MESMO cache do diário (zero leitura nova): entrada lida do banco tem a
                             série leve inteira; a semeada da cópia publicada do quotes-daily.json
@@ -51,6 +53,13 @@ Onda 3 (PLANO, Apêndice G):
   setores (mm-*, pp-*)      sectors.py: os dois bancos SQLite do repositório PÚBLICO do site, pela
                             API do GitHub (github.py) — sonda do SHA do blob a cada 15 min, download só
                             quando muda, conferido. ZERO Supabase.
+Onda 4 (PLANO, Apêndice H):
+  Stock Guide, Data         pages.py: as RPCs do site (visão de cliente), cada uma atrás de uma sonda
+                            "contagem + máximo" a cada 60 min; semente da cópia publicada na partida a
+                            frio (marcador `source` dentro do hash); leitura de segurança (Comp Table
+                            1×/dia, sensibilidade 1×/semana); fail-closed no dado pelas flags.
+  glossário                 sitefiles.py: `admin/glossary.json` do repositório do site pela API do
+                            GitHub (sonda condicional do SHA do blob a cada 15 min). ZERO Supabase.
 
 Tudo é normalizado aqui (datas `…Z`, números finitos ou None, `session` válida ou None) e
 guardado assim no estado — os construtores só renomeiam campo a campo.
@@ -240,6 +249,8 @@ class Sources:
         self.http = http                            # o GitHub usa o mesmo cliente HTTP (testes)
         self.cache_dir = cache_dir                  # o banco baixado (ao lado do estado)
         self._sectors = None
+        self._sitefiles = None                      # Onda 4: o glossário do repositório do site
+        self.page_notes: list[str] = []             # Onda 4: o que as páginas leram (uma linha no log)
         self.quote_universe = quote_universe()
         self.macro_universe = macro_universe()
         self.used_memory = {"quotes": None, "macro": None}
@@ -539,9 +550,7 @@ class Sources:
             hist, n_hist = self.supa.select_count("stock_guide_rating_history", "updated_at",
                                                   tag="ratings:sonda",
                                                   order="updated_at.desc.nullslast", limit=1)
-            cos, n_cos = self.supa.select_count("stock_guide_companies", "updated_at",
-                                                tag="ratings:sonda",
-                                                order="updated_at.desc.nullslast", limit=1)
+            cos, n_cos = self.probe_max("stock_guide_companies", "updated_at", tag="ratings:sonda")
             top = iso_utc(hist[0].get("updated_at")) if hist else None
             probe = [n_hist, top, n_cos, iso_utc(cos[0].get("updated_at")) if cos else None]
             data = None if self.rebuild else st.get("data")
@@ -580,6 +589,57 @@ class Sources:
     def finish_sectors(self) -> None:
         if self._sectors is not None:
             self._sectors.finish()
+
+    # ── Onda 4: Stock Guide e Data (pages.py), glossário (sitefiles.py) ─────────────────────────────
+    def client_flags(self) -> dict[str, bool]:
+        """As flags da lista branca com a regra `hub_` (config._flags), com no máximo 15 min."""
+        from .exporters.config import _flags
+        return _flags(self._flag_rows())
+
+    def probe_max(self, table: str, col: str, *, tag: str, **flt) -> tuple[list[dict], int | None]:
+        """A sonda "contagem + máximo" (`limit=1`, `Prefer: count=exact`), memorizada na execução: a de
+        `stock_guide_companies` serve ao ratings.json e ao stock-guide.json no mesmo ciclo COLD (uma
+        chamada só, ~0,75 KB a menos por hora)."""
+        key = ("probe", table, col, tuple(sorted(flt.items())))
+        if key not in self._memo:
+            self._memo[key] = self.supa.select_count(table, col, tag=tag, order=f"{col}.desc.nullslast",
+                                                     limit=1, **flt)
+        return self._memo[key]
+
+    def stock_guide(self) -> dict:
+        if "stockGuide" not in self._memo:
+            from . import pages
+            self._memo["stockGuide"] = pages.stock_guide(self)
+        return self._memo["stockGuide"]
+
+    def sensitivity(self) -> dict:
+        if "sgSensitivity" not in self._memo:
+            from . import pages
+            self._memo["sgSensitivity"] = pages.sensitivity(self)
+        return self._memo["sgSensitivity"]
+
+    def data_sources(self) -> dict:
+        if "dataSources" not in self._memo:
+            from . import pages
+            self._memo["dataSources"] = pages.data_sources(self)
+        return self._memo["dataSources"]
+
+    def page_note(self, msg: str) -> None:
+        if msg not in self.page_notes:
+            self.page_notes.append(msg)
+
+    def pages_note(self) -> str | None:
+        return ("Onda 4: " + " · ".join(self.page_notes)) if self.page_notes else None
+
+    def sitefiles(self):
+        """O SiteFiles desta execução (a sonda condicional do glossário no GitHub)."""
+        if self._sitefiles is None:
+            from .sitefiles import SiteFiles
+            self._sitefiles = SiteFiles(self, env=self.env, http=self.http)
+        return self._sitefiles
+
+    def sitefiles_if_loaded(self):
+        return self._sitefiles
 
     # ── Market Watch (mw.py) ────────────────────────────────────────────────────────────────────
     def mw(self):
@@ -747,7 +807,8 @@ class Sources:
         if full:
             st.update(events=events, fullAt=self.generated_at, range=[first, last])
         st["probe"] = probe
-        out = {"from": first, "to": last, "updatedAt": probe["max"], "categories": categories,
-               "windows": windows, "events": events}
+        # `from` = o 1º dia do evento único mais antigo (Onda 4, O54: a RPC é pedida sem limite inferior)
+        out = {"from": cal.first_day(events), "to": last, "updatedAt": probe["max"],
+               "categories": categories, "windows": windows, "events": events}
         self._memo["calendar"] = out
         return out

@@ -50,13 +50,17 @@ def mundo_sujo():
     # Onda 1b também: as linhas de notícia, o resumo (inclusive os itens jsonb), os relatórios e
     # o calendário (inclusive a regra de recorrência e os links) vêm com as chaves proibidas;
     # Onda 2: a série longa, o histórico de recomendações e as empresas do Stock Guide também; e
-    # as tabelas do Market Watch (as RPCs get_mw_* devolvem a linha da tabela inteira)
+    # as tabelas do Market Watch (as RPCs get_mw_* devolvem a linha da tabela inteira); Onda 4: as do
+    # Stock Guide (inclusive dentro do `definition` jsonb da sensibilidade), a do frescor das fontes e o
+    # glossário do repositório do site (no GitHub falso)
     for nome in ("quotes", "commodities", "macro_indicators", "news_articles", "news_digest",
                  "exec_calendar_events", "exec_calendar_categories", "exec_calendar_data_windows",
                  "quote_history", "stock_guide_rating_history", "stock_guide_companies",
                  "mw_companies", "mw_share_capital", "mw_short_interest", "mw_buyback_programs",
-                 "mw_insider_moves", "mw_filings"):
+                 "mw_insider_moves", "mw_filings", "stock_guide_config", "stock_guide_global_peers",
+                 "stock_guide_sensitivities", "data_source_status"):
         http.database[nome] = _sujo(http.database[nome])
+    http.github.files[F.GLOSSARY_PATH] = F.glossary_bytes(_sujo(F.GLOSSARY_DOC))
     http.database["rpc_rows"]["reports"] = _sujo(http.database["rpc_rows"]["reports"])
     for fn in ("get_heatmap_tickers", "get_commodity_groups"):   # nas flags, "key" é a coluna
         http.database["rpc"][fn] = _sujo(http.database["rpc"][fn])

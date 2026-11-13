@@ -8,7 +8,10 @@
     "news_feed": false,
     "quarterly": true,
     "home_digest": true,
-    "market_ratings": true
+    "market_ratings": true,
+    "stock_guide": true,
+    "stock_guide_sensitivity": true,
+    "data_page": true
   },
   "exchanges": {
     "B3": {

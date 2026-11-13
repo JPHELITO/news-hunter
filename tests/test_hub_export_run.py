@@ -37,15 +37,16 @@ import hub_export.__main__ as cli  # noqa: E402
 from hub_export import sectors as SE  # noqa: E402
 from hub_export import state as S  # noqa: E402
 from hub_export.feeder import FeederClient  # noqa: E402
-from hub_export.registry import FILES, resolve  # noqa: E402
+from hub_export.registry import FILES, from_github, resolve  # noqa: E402
 from hub_export.run import Result, run_cycle  # noqa: E402
 from hub_export.supa import SupaError, SupaReader  # noqa: E402
 
 
 FIRST_WEEKS = [f"news-week-{w}.json" for w in (F.WEEK_OLD, F.WEEK_PREV, F.WEEK_CUR)]
 # o 1º ciclo: os fixos + carga da 43 + 44 e 45 + o aluguel de cada empresa do Market Watch. Os 36 dos
-# setores (Onda 3) não entram: sem GH_TOKEN no envio, eles ficam fora do ciclo (test_hub_export_sectors)
-NOT_SECTORS = [n for n in FILES if not SE.sector_of(n)]
+# setores (Onda 3) e o glossário (Onda 4) não entram: vêm do GitHub e, sem GH_TOKEN no envio, ficam fora
+# do ciclo (test_hub_export_sectors, test_hub_export_wave4)
+NOT_SECTORS = [n for n in FILES if not from_github(n)]
 ALL_FIRST = NOT_SECTORS + FIRST_WEEKS + F.MW_FAMILY_FILES
 
 
@@ -117,6 +118,11 @@ def test_registro_bate_com_o_contrato():
         "mw-buybacks.json":       (3600, True, None, 100 * 1024, "application/gzip"),
         "mw-insiders.json":       (3600, True, None, 500 * 1024, "application/gzip"),
         "mw-filings.json":        (3600, True, None, 700 * 1024, "application/gzip"),
+        # Onda 4 (Apêndice H): COLD com sonda; o glossário é EVENT pelo GitHub (-1)
+        "stock-guide.json":       (3600, True, None, 64 * 1024, "application/gzip"),
+        "sg-sensitivity.json":    (3600, True, None, 400 * 1024, "application/gzip"),
+        "data-sources.json":      (3600, False, None, 20 * 1024, "application/json"),
+        "glossary.json":          (-1, True, None, 64 * 1024, "application/gzip"),
     }
     # o Market Watch: o grupo com teto de envios por execução (O28) e as chaves proibidas de cada um
     from hub_export.registry import GROUP_CAPS
@@ -149,7 +155,8 @@ def test_registro_bate_com_o_contrato():
     # por último no COLD, o índice depois da família (e só os EVENT dos setores depois dele); o
     # ratings proíbe as colunas internas
     i = ORDER.index("history-index.json")
-    assert ORDER[i - 1:i + 1] == ["history", "history-index.json"] and ORDER[i + 1:] == SE.ALL_FILES
+    assert ORDER[i - 1:i + 1] == ["history", "history-index.json"]
+    assert ORDER[i + 1:] == ["glossary.json", *SE.ALL_FILES]
     assert {"note", "source", "id", "updated_by"} <= FILES["ratings.json"].forbidden
 
 
@@ -167,7 +174,7 @@ def test_live_intraday_e_quotes_daily_em_gzip_config_em_texto(tmp_path):
     tipos = {json.loads(c.data)["name"]: json.loads(c.data)["contentType"]
              for c in http.feeder_calls() if c.method == "POST" and c.url.endswith("/uploads")}
     texto = {"config.json", "reports.json", "news-index.json", "history-index.json",
-             "mw-companies.json"}
+             "mw-companies.json", "data-sources.json"}
     assert tipos == {n: "application/json" if n in texto else "application/gzip" for n in ALL_FIRST}
     for n in ALL_FIRST:                                       # os novos também, determinísticos
         corpo = up[n] if n in texto else gzip.decompress(up[n])

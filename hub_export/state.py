@@ -32,6 +32,12 @@ Onda 3:
               enviados nem achados iguais, o blob do último índice enviado e o dia da montagem com o
               Mindassets parado (ver sectors.py). O banco baixado fica ao lado, em
               `hub_export_<setor>_<blob>.sqlite`, enquanto houver fila.
+Onda 4:
+  stockGuide, sgSensitivity, dataSources   a sonda (e quando), o marcador do dado guardado, o dado
+              (o miolo do arquivo), a última leitura cheia e se a cópia publicada já foi conferida
+              (ver pages.py);
+  glossary    a sonda condicional do GitHub (blob, tamanho, ETag, quando), o blob do último envio e o
+              glossário montado do blob de agora (ver sitefiles.py).
 
 Arquivo ilegível/corrompido = começar do zero (nunca derruba o ciclo).
 
@@ -93,7 +99,14 @@ def empty_state() -> dict:
             "history": {"seeded": False, "published": {}, "probe": None, "needLong": [],
                         "failedAt": {},
                         "bucket": {"since": None, "spent": 0, "day": None, "daySpent": 0}},
-            "sectors": {}}
+            "sectors": {},
+            "stockGuide": _page(), "sgSensitivity": _page(), "dataSources": _page(),
+            "glossary": {}}
+
+
+def _page() -> dict:
+    from .pages import empty_page_state
+    return empty_page_state()
 
 
 def load(path: Path, empty=empty_state, version: int = STATE_VERSION) -> dict:

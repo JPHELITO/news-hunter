@@ -740,7 +740,8 @@ def test_registro_dos_36(tmp_path):
         assert s.gzip is (n not in texto), n
         assert s.urgent is not None and s.after is not None, n
     assert GROUP_CAPS["sectors"] == 4
-    assert ORDER[-36:] == SE.ALL_FILES and ORDER.index("history-index.json") == len(ORDER) - 37
+    assert ORDER[-36:] == SE.ALL_FILES and ORDER.index("glossary.json") == len(ORDER) - 37
+    assert ORDER.index("history-index.json") == len(ORDER) - 38
     for s in SE.SECTORS:
         assert SE.FILES_OF[s][-1] == SE.INDEX[s]                              # o índice por último
     assert len(SE.ALL_FILES) == len(set(SE.ALL_FILES)) == 36

@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-03T18:05:12Z",
+  "updatedAt": "2026-11-06T15:39:10Z",
+  "source": {
+    "stamp": "2026-11-06T15:39:10Z",
+    "companies": 4,
+    "peers": 3
+  },
+  "years": {
+    "y1": "2026E",
+    "y2": "2027E"
+  },
+  "footnote": null,
+  "companies": [
+    {
+      "code": "VALE",
+      "name": "Vale",
+      "order": 1,
+      "restricted": false,
+      "sector": "iron_ore",
+      "quote": "VALE",
+      "rating": "MP",
+      "targetPrice": 14,
+      "shares": 4255.762795000001,
+      "tradeCcy": "USD",
+      "baseCcy": "USD",
+      "fxToBase": 1.0,
+      "fxToUsd": 1.0,
+      "modelUrl": "https://www.itau.com.br/itaubba-pt/portal/equity/company/VALE",
+      "y1": {
+        "ebitda": 14826.1,
+        "netDebt": 16341.6,
+        "evAdjustment": 974.0,
+        "netIncome": 5407.1,
+        "cashEarnings": 6123.7,
+        "dividends": 4794,
+        "ocf": 8437.8
+      },
+      "y2": {
+        "ebitda": 14112.2,
+        "netDebt": 15100.0,
+        "evAdjustment": 974.0,
+        "netIncome": 5100.0,
+        "cashEarnings": 5900.0,
+        "dividends": 4500.0,
+        "ocf": 8000.0
+      }
+    },
+    {
+      "code": "AUGO",
+      "name": "Aura",
+      "order": 5,
+      "restricted": false,
+      "sector": "gold",
+      "quote": "AUGO",
+      "rating": null,
+      "targetPrice": 98.0,
+      "shares": 74.0,
+      "tradeCcy": "USD",
+      "baseCcy": "USD",
+      "fxToBase": 1.0,
+      "fxToUsd": 1.0,
+      "modelUrl": "https://www.itau.com.br/itaubba-pt/portal/equity/company/AURA33",
+      "y1": {
+        "ebitda": 700.0,
+        "netDebt": -100.0,
+        "evAdjustment": 0.0,
+        "netIncome": 400.0,
+        "cashEarnings": 450.0,
+        "dividends": 250.0,
+        "ocf": 500.0
+      },
+      "y2": {
+        "ebitda": 750.0,
+        "netDebt": -150.0,
+        "evAdjustment": null,
+        "netIncome": 420.0,
+        "cashEarnings": 470.0,
+        "dividends": 260.0,
+        "ocf": 520.0
+      }
+    },
+    {
+      "code": "CSNA3",
+      "name": "CSN",
+      "order": 6,
+      "restricted": true
+    },
+    {
+      "code": "ARA",
+      "name": "Aclara Resources",
+      "order": 15,
+      "restricted": false,
+      "sector": "rare_earths",
+      "quote": "ARA.TO",
+      "rating": "OP",
+      "targetPrice": 4.37,
+      "shares": 230.5,
+      "tradeCcy": "CAD",
+      "baseCcy": "USD",
+      "fxToBase": 0.708,
+      "fxToUsd": 0.708,
+      "modelUrl": "https://www.itau.com.br/itaubba-pt/portal/equity/company/ARA",
+      "y1": {
+        "ebitda": -12.0,
+        "netDebt": -40.0,
+        "evAdjustment": null,
+        "netIncome": -15.0,
+        "cashEarnings": -14.0,
+        "dividends": null,
+        "ocf": -10.0
+      },
+      "y2": {
+        "ebitda": -8.0,
+        "netDebt": -30.0,
+        "evAdjustment": null,
+        "netIncome": -9.0,
+        "cashEarnings": -8.5,
+        "dividends": null,
+        "ocf": -6.0
+      }
+    }
+  ],
+  "peers": [
+    {
+      "name": "CAP",
+      "order": 1,
+      "country": "CL",
+      "sector": "steel",
+      "quote": "CAP.SN",
+      "y1": {
+        "evEbitda": 6.216729651245153,
+        "netDebtEbitda": 2.4868222891566263,
+        "pe": null,
+        "pce": 27.951849852000375,
+        "divYieldPct": 1.817737541199
+      },
+      "y2": {
+        "evEbitda": 5.1,
+        "netDebtEbitda": 2.0,
+        "pe": null,
+        "pce": 20.0,
+        "divYieldPct": null
+      }
+    },
+    {
+      "name": "BHP",
+      "order": 2,
+      "country": "AU",
+      "sector": "iron_ore",
+      "quote": "BHP",
+      "y1": {
+        "evEbitda": 6.1,
+        "netDebtEbitda": 0.5,
+        "pe": 12.0,
+        "pce": null,
+        "divYieldPct": 4.9
+      },
+      "y2": {
+        "evEbitda": 5.8,
+        "netDebtEbitda": 0.4,
+        "pe": 11.5,
+        "pce": null,
+        "divYieldPct": 5.1
+      }
+    },
+    {
+      "name": "RIO",
+      "order": 3,
+      "country": "UK",
+      "sector": "iron_ore",
+      "quote": "RIO",
+      "y1": {
+        "evEbitda": 5.9,
+        "netDebtEbitda": 0.4,
+        "pe": 10.2,
+        "pce": null,
+        "divYieldPct": 6.12
+      },
+      "y2": {
+        "evEbitda": 5.6,
+        "netDebtEbitda": 0.3,
+        "pe": 9.8,
+        "pce": null,
+        "divYieldPct": 5.98
+      }
+    }
+  ]
+}

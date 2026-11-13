@@ -85,6 +85,8 @@ def test_cadencia_no_ciclo(tmp_path):
                      "news-week-2026-w45.json": "fora da vez", "news-index.json": "fora da vez",
                      "quotes-monthly.json": "fora da vez", "commodities-daily.json": "fora da vez",
                      "ratings.json": "fora da vez", "history-index.json": "fora da vez",
+                     "stock-guide.json": "fora da vez", "sg-sensitivity.json": "fora da vez",
+                     "data-sources.json": "fora da vez",
                      **{n: "fora da vez" for n in F.MW_FIXED}}  # a família mw-short nem entra
     assert not http.supa_calls("rpc/get_dashboard_flags")      # fora da vez nem lê
     assert not [c for c in http.supa_calls() if c.table.startswith("rpc/get_mw_")]
@@ -120,8 +122,7 @@ def test_force_ignora_cadencia_e_hash(tmp_path):
     ciclo(F.FakeHTTP(), p, 0)
     http = F.FakeHTTP()
     acoes = ciclo(http, p, 1, force=True)
-    from hub_export import sectors as SE
-    from hub_export.registry import FILES
+    from hub_export.registry import FILES, GITHUB_FILES
     assert set(acoes.values()) == {"enviado"}
-    # + 44 e 45 + o aluguel; os 36 dos setores ficam fora sem GH_TOKEN (test_hub_export_sectors)
-    assert len(http.uploads) == len(FILES) - len(SE.ALL_FILES) + 2 + len(F.MW_FAMILY_FILES)
+    # + 44 e 45 + o aluguel; os 36 dos setores e o glossário ficam fora sem GH_TOKEN
+    assert len(http.uploads) == len(FILES) - len(GITHUB_FILES) + 2 + len(F.MW_FAMILY_FILES)

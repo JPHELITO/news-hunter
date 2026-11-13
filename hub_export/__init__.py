@@ -49,11 +49,19 @@ por execução, o índice de cada setor por último:
     pp-pulp-exports.json               celulose por porto e por destino × produto + dias úteis
     pp-woodchips.json, pp-paper.json, pp-corrugated.json   GACC; IBÁ papel; Empapel
     mm-raw-<tabela>.json (11), pp-raw-<tabela>.json (8)   a base bruta "⤓ Data": cada tabela inteira
+Onda 4 (contrato: PLANO.md, Apêndice H) — Stock Guide, Calendar e Data (o Quarterly fica para a 4b, U11):
+    stock-guide.json        COLD       Comp Table (16) + Global Peers (18) + rótulos dos anos; RPCs do site,
+                                       sonda de 60 min, marcador `source` no hash, fail-closed nas flags
+    sg-sensitivity.json     COLD       as 56 grades `sens2d` que a aba desenha (porte de `_s2Sheets`)
+    data-sources.json       COLD       o frescor das 17 fontes da página Data (sonda em `checked_at`)
+    glossary.json           EVENT      o `admin/glossary.json` do site pela API do GitHub, "where" → rota
+    calendar.json (aditivo)            + local, descrição e links, pelo filtro de URL e pela máscara (U12),
+                                       e os eventos únicos sem limite inferior
   live, intraday, quotes-daily, news-latest, news-week-*, news-digest, calendar, quotes-monthly,
-  commodities-daily, ratings, history-*, mw-* (salvo o mw-companies) e os dos setores (salvo os
-  índices, o mm-prediction e o pp-corrugated) vão com conteúdo GZIP e nome .json (o hub reconhece
-  pelos bytes); config, reports, news-index, history-index, mw-companies, mm-index, pp-index,
-  mm-prediction e pp-corrugated vão em texto.
+  commodities-daily, ratings, history-*, mw-* (salvo o mw-companies), os dos setores (salvo os
+  índices, o mm-prediction e o pp-corrugated), stock-guide, sg-sensitivity e glossary vão com conteúdo
+  GZIP e nome .json (o hub reconhece pelos bytes); config, reports, news-index, history-index,
+  mw-companies, mm-index, pp-index, mm-prediction, pp-corrugated e data-sources vão em texto.
 
 USO
   No loop: o fim de cada ciclo do hunt.py chama `run_cycle()` quando HUB_EXPORT_ENABLED=1 (variável
@@ -88,7 +96,7 @@ ESTADO
   semeia das cópias publicadas e compara com elas antes de reenviar. Ver state.py. O Market Watch
   também tem o arquivo próprio `hub_export_state_mw.json` (mw.py).
 
-TRÁFEGO DO SUPABASE: orçamento ≤ 5 MB/dia em regime para o exportador inteiro — ver sources.py e
-news.py (memória do ciclo, sondas, caches, incremental com margem, varreduras) e a linha
-"Supabase: …" que cada execução escreve no log (corpo + cabeçalhos, por fonte).
+TRÁFEGO DO SUPABASE: orçamento ≤ 5,5 MB/dia em regime para o exportador inteiro (5 até a Onda 3; O58)
+— ver sources.py, pages.py e news.py (memória do ciclo, sondas, caches, incremental com margem,
+varreduras) e a linha "Supabase: …" que cada execução escreve no log (corpo + cabeçalhos, por fonte).
 """

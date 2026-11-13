@@ -47,7 +47,8 @@ def test_config_forma_exata():
                        "commodityGroups", "coveredCompanies"]
     assert c["schemaVersion"] == 1 and c["generatedAt"] == F.GENERATED
     assert c["flags"] == {"heatmap": True, "commodities": True, "market": False, "news_feed": False,
-                          "quarterly": True, "home_digest": True, "market_ratings": True}
+                          "quarterly": True, "home_digest": True, "market_ratings": True,
+                          "stock_guide": True, "stock_guide_sensitivity": True, "data_page": True}
     hm = c["heatmap"]
     assert list(hm) == ["max", "groups", "coverage", "hidden", "benchmarkByExchange",
                         "benchmarkLabels"]
