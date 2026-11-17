@@ -183,6 +183,30 @@ def process_blast(job: dict) -> None:
                     "finished_at": _now(), "updated_at": _now()})
 
 
+def _with_whatsapp(job: dict, base: str, res: dict) -> dict:
+    """Sobe o HTML do WhatsApp e devolve o `config` do job com `config.whatsapp`.
+
+    ⚠️ Mesmo caminho do blast: o link volta DENTRO do `config` (jsonb), não numa coluna nova —
+    `admin_get_clipping_job(s)` já devolve o `config` (select *), e assim não há SQL para o
+    usuário rodar. Nunca levanta exceção: sem HTML, `config.whatsapp.error` diz por quê, e o
+    job segue 'done' com o Word e o e-mail.
+    """
+    cfg = dict(job.get("config") or {})
+    html, name = res.get("whatsapp"), res.get("whatsapp_name") or "clipping.html"
+    try:
+        if html:
+            path = f"{base}/whatsapp.html"          # no Storage; o nome do download vem no link
+            _upload(path, html, "text/html; charset=utf-8")
+            cfg["whatsapp"] = {"url": _sign(path, download=name), "name": name,
+                               "kb": round(len(html) / 1024), "at": _now()}
+        else:
+            cfg["whatsapp"] = {"error": res.get("whatsapp_error") or "não gerado", "at": _now()}
+    except Exception as e:
+        log.warning("job: HTML do WhatsApp não subiu (%s) — Word e e-mail seguem", e)
+        cfg["whatsapp"] = {"error": f"upload: {e}"[:300], "at": _now()}
+    return cfg
+
+
 def process(job: dict) -> None:
     jid = job["id"]
     payload = job.get("payload") or []
@@ -200,11 +224,12 @@ def process(job: dict) -> None:
         return
     d = date.fromisoformat(job["ref_date"]) if job.get("ref_date") else date.today()
     try:
-        res = build_from_payload(payload, d, fetch=True, config=job.get("config"))
+        res = build_from_payload(payload, d, fetch=True, config=job.get("config"), whatsapp=True)
         base = f"clippings/{jid}"
         _upload(f"{base}/{res['docx_name']}", res["docx"], DOCX_CT)
         _upload(f"{base}/{res['eml_name']}", res["eml"], "message/rfc822")
         _upload(f"{base}/{res['html_name']}", res["html"].encode("utf-8"), "text/html; charset=utf-8")
+        cfg = _with_whatsapp(job, base, res)
         # corpos que falharam (url, motivo) → gravados no job p/ o front oferecer "colar e regerar"
         errs = [{"url": u, "reason": r} for (u, r) in (res.get("errors") or [])]
         patch_job(jid, {
@@ -212,6 +237,7 @@ def process(job: dict) -> None:
             "docx_path": _sign(f"{base}/{res['docx_name']}", download=res["docx_name"]),
             "eml_path": _sign(f"{base}/{res['eml_name']}", download=res["eml_name"]),
             "preview_path": _sign(f"{base}/{res['html_name']}"),   # prévia inline (HTML)
+            "config": cfg,                                           # + config.whatsapp (link do HTML)
             "error": None, "errors": errs, "finished_at": _now(), "updated_at": _now(),
         })
         log.info("job %s DONE (%d itens, %d avisos)", jid, len(res["items"]), len(res["errors"]))

@@ -7,6 +7,8 @@ Rode de news-hunter/:
 
 build_from_payload(payload, d, fetch) devolve {docx, eml, docx_name, eml_name, items, errors}.
 É a função que a Fase 3 (workflow do Actions) vai chamar por job.
+Com whatsapp=True devolve também {whatsapp, whatsapp_name, whatsapp_error}: o HTML do blast de
+WhatsApp (clipping/whatsapp.py), feito dos MESMOS itens. Falha nele nunca derruba o Word.
 """
 from __future__ import annotations
 
@@ -88,7 +90,7 @@ def _to_item(row: dict, fetch: bool, errors: list) -> ClippingItem:
 
 
 def build_from_payload(payload: list[dict], d: date | None = None, fetch: bool = True,
-                       config: dict | None = None) -> dict:
+                       config: dict | None = None, whatsapp: bool = False) -> dict:
     d = d or date.today()
     rows = sorted(payload, key=lambda r: r.get("pos", 0))
     errors: list = []
@@ -98,10 +100,18 @@ def build_from_payload(payload: list[dict], d: date | None = None, fetch: bool =
     docx_name = f"{base}.docx"
     eml = build_eml_bytes(items, d, docx_bytes=docx, docx_name=docx_name, config=config)
     html = build_html(items, d, config, docx_bytes=docx)      # prévia inline (mesmo HTML do e-mail)
-    return {"docx": docx, "eml": eml, "docx_name": docx_name,
-            "eml_name": f"{base}.eml",
-            "html": html, "html_name": f"{base}.html",
-            "items": items, "errors": errors}
+    res = {"docx": docx, "eml": eml, "docx_name": docx_name,
+           "eml_name": f"{base}.eml",
+           "html": html, "html_name": f"{base}.html",
+           "items": items, "errors": errors}
+    if whatsapp:
+        # Depois do Word e do e-mail, de propósito: o que já está pronto não espera por isto,
+        # e qualquer falha aqui só tira o HTML (build_whatsapp nunca levanta exceção).
+        from .whatsapp import build_whatsapp
+        wa = build_whatsapp(items, d, config)
+        res.update({"whatsapp": wa["html"], "whatsapp_error": wa["error"],
+                    "whatsapp_name": f"{base}.html"})     # o cliente recebe "NEWS - MMDDYYYY.html"
+    return res
 
 
 def main():
@@ -115,6 +125,7 @@ def main():
     ap.add_argument("--no-fetch", action="store_true")
     ap.add_argument("--config", help="JSON com intro/recent_publications/earnings_review/analysts")
     ap.add_argument("--date")
+    ap.add_argument("--whatsapp", action="store_true", help="gera também o HTML do WhatsApp")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent / "out"))
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -129,12 +140,18 @@ def main():
 
     d = date.fromisoformat(a.date) if a.date else date.today()
     _cfg = json.loads(Path(a.config).read_text(encoding="utf-8")) if a.config else None
-    res = build_from_payload(payload, d, fetch=not a.no_fetch, config=_cfg)
+    res = build_from_payload(payload, d, fetch=not a.no_fetch, config=_cfg, whatsapp=a.whatsapp)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     (out / res["docx_name"]).write_bytes(res["docx"])
     (out / res["eml_name"]).write_bytes(res["eml"])
     print(f"OK -> {out / res['docx_name']}  ({len(res['docx'])} bytes)")
     print(f"OK -> {out / res['eml_name']}  ({len(res['eml'])} bytes)")
+    if a.whatsapp:
+        if res.get("whatsapp"):
+            (out / f"WhatsApp - {res['whatsapp_name']}").write_bytes(res["whatsapp"])
+            print(f"OK -> {out / ('WhatsApp - ' + res['whatsapp_name'])}  ({len(res['whatsapp'])} bytes)")
+        else:
+            print("HTML do WhatsApp NÃO gerado:", res.get("whatsapp_error"))
     if res["errors"]:
         print("avisos:", res["errors"])
 
