@@ -1723,9 +1723,12 @@
     // ── publicações do time (as mesmas do Word: Recent Publications + Earnings Review)
     function pubList(list) {
       return '<div class="pubs">' + (list || []).filter(function (p) { return p && (p.name || '').trim(); }).map(function (p) {
-        var meta = [shortDate(p.date)].concat(p.companies || []).filter(Boolean).join(' · ');
-        var inner = '<span class="pub-s">' + esc(NEWS_SHORT[p.sector] || 'S&M') + '</span><span class="pub-n">' + esc(p.name) + '</span>' +
-          '<span class="pub-m">' + esc(meta) + '</span>';
+        // tickers EMBAIXO do título (quebram linha à vontade); à direita só a data — antes data+tickers
+        // iam juntos numa coluna sem quebra e um relatório com 17 papéis espremia o título
+        var tick = (p.companies || []).filter(Boolean).join(' · ');
+        var inner = '<span class="pub-s">' + esc(NEWS_SHORT[p.sector] || 'S&M') + '</span><span class="pub-b"><span class="pub-n">' + esc(p.name) + '</span>' +
+          (tick ? '<span class="pub-c">' + esc(tick) + '</span>' : '') + '</span>' +
+          '<span class="pub-m">' + esc(shortDate(p.date) || '') + '</span>';
         return /^https?:\/\//i.test(p.link || '') ? '<a class="pub" href="' + esc(p.link) + '" target="_blank" rel="noopener">' + inner + '</a>'
           : '<div class="pub">' + inner + '</div>';
       }).join('') + '</div>';
@@ -1895,7 +1898,7 @@
     '.hl-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:14px;align-items:start;padding:14px 6px;border-bottom:1px solid var(--grid);border-radius:8px;text-decoration:none;color:var(--ink)}.hl-row:hover,.hl-row:focus-visible{background:var(--hover);outline:0}',
     '.hl-t{font-size:15.5px;line-height:1.4;font-weight:650;color:var(--fg)}.hl-t small{display:block;margin-top:3px;font-size:12.5px;font-weight:450;color:var(--mute)}.hl-s{padding-top:2px;font-size:12px;color:var(--mute);white-space:nowrap}',
     '.pubs{padding-top:8px}.pub{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:baseline;padding:14px 6px;border-bottom:1px solid var(--grid);border-radius:8px;text-decoration:none;color:var(--ink)}a.pub:hover,a.pub:focus-visible{background:var(--hover);outline:0}a.pub:hover .pub-n{color:var(--otext)}',
-    '.pub-s{font:650 11px/1 var(--body);letter-spacing:.05em;color:var(--otext);border:1px solid var(--hair);border-radius:999px;padding:4px 8px;white-space:nowrap}.pub-n{font-size:15.5px;font-weight:650;line-height:1.4;color:var(--fg)}.pub-m{font-size:12px;color:var(--mute);white-space:nowrap}',
+    '.pub-s{font:650 11px/1 var(--body);letter-spacing:.05em;color:var(--otext);border:1px solid var(--hair);border-radius:999px;padding:4px 8px;white-space:nowrap}.pub-b{display:flex;flex-direction:column;gap:4px;min-width:0}.pub-n{font-size:15.5px;font-weight:650;line-height:1.4;color:var(--fg)}.pub-c{font-size:12px;line-height:1.5;letter-spacing:.02em;color:var(--mute);overflow-wrap:anywhere}.pub-m{font-size:12px;color:var(--mute);white-space:nowrap}',
     '.st-sec span{font:500 13px/1 var(--body);letter-spacing:0;color:var(--mute);margin-left:8px}',
     '.story{position:relative;padding:26px 0 28px;border-bottom:1px solid var(--hair);scroll-margin-top:12px}.story:last-child{border-bottom:0}',
     '.st-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;font-size:12.5px;color:var(--mute)}.st-meta .sec{font-weight:650;color:var(--otext);letter-spacing:.02em}',
