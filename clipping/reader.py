@@ -335,6 +335,12 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                     log.warning("playwright_reader: Valor sessão expirada (login page)")
                     return "", ""
 
+                # ⚠️ O Valor manda o texto INTEIRO e o script do paywall só o esconde depois (até 7 s,
+                # medido em 18/11/2026). Ler "na hora" pegava o corpo até com a sessão MORTA → espera o
+                # paywall decidir antes de ler o DOM (clipping/valor_paywall.py).
+                from .valor_paywall import use_body, wait_cropped
+                _vcut = wait_cropped(page)
+
                 # Extrai lide + corpo via DOM
                 try:
                     import json as _json
@@ -389,7 +395,9 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                         // falso-positivo, testado ao vivo). O que distingue é '.paywall.hide-all-content'
                         // (classe só presente quando o conteúdo está escondido) OU '.wall.protected-content'
                         // com altura > 0 (a barreira "Já é assinante? Faça o seu login" aparecendo).
-                        let cropped = false;
+                        // + '.paywall-hidden' = o corte do layout NOVO (18/11/2026; as duas de baixo
+                        // só aparecem em parte das matérias, no layout antigo).
+                        let cropped = !!document.querySelector('.paywall-hidden');
                         if (document.querySelector('.paywall.hide-all-content')) cropped = true;
                         const pw = document.querySelector('.wall.protected-content');
                         if (pw && pw.offsetHeight > 0 && getComputedStyle(pw).display !== 'none') cropped = true;
@@ -402,7 +410,7 @@ def _fetch_worker(url: str, domain: str) -> tuple[str, str]:
                         });
                     }""")
                     _dv = _json.loads(dom_json)
-                    _cropped = _dv.get("cropped", False)
+                    _cropped = not use_body(_dv.get("cropped", False), _vcut)
                     _parts: list[str] = []
                     # Sessão logada + artigo INTEIRO (não recortado) → monta o corpo. A estrutura NOVA
                     # do Valor (Falkor) põe o corpo em '.mc-article-body' (é lá que está o texto de

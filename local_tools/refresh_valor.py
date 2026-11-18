@@ -83,16 +83,20 @@ def _master_key() -> bytes:
 def _profile_with_globo() -> str:
     """Perfil com a sessao Globo mais FRESCA. Prioriza o GLBID com maior last_update_utc
     (o LOGIN mais recente) → pega o perfil que voce acabou de logar, nao um velho/expirado.
-    (Antes desempatava por QUANTIDADE de cookies e pegava o perfil errado quando ha varios.)"""
-    best, best_ts = "Default", -1
-    for prof in ["Default"] + [f"Profile {i}" for i in range(1, 12)]:
+    (Antes desempatava por QUANTIDADE de cookies e pegava o perfil errado quando ha varios.)
+    ⚠️ Com o Chrome ABERTO, o perfil em uso fica TRANCADO (nem leitura) — ele e' pulado e
+    pode sobrar um perfil velho. Agora isso e' avisado em vez de passar calado."""
+    best, best_ts, travados = "Default", -1, []
+    for prof in ["Default"] + [f"Profile {i}" for i in range(1, 13)]:
         ck = REAL_USERDATA / prof / "Network" / "Cookies"
         if not ck.exists():
             continue
         try:
-            con = sqlite3.connect(f"file:{ck}?mode=ro&immutable=1", uri=True)
+            con = sqlite3.connect(ck.as_uri() + "?mode=ro&immutable=1", uri=True)
+            cols = {r[1] for r in con.execute("pragma table_info(cookies)")}
+            lu = "last_update_utc" if "last_update_utc" in cols else "last_access_utc"
             row = con.execute(
-                "select max(coalesce(last_update_utc, creation_utc, 0)) from cookies "
+                f"select max(coalesce({lu}, creation_utc, 0)) from cookies "
                 "where name='GLBID' and host_key like '%globo.com%'"
             ).fetchone()
             con.close()
@@ -100,7 +104,9 @@ def _profile_with_globo() -> str:
             if ts > best_ts:
                 best, best_ts = prof, ts
         except Exception:
-            pass
+            travados.append(prof)
+    if travados:
+        print(f"   (aviso) perfil(is) do Chrome trancado(s) porque o Chrome esta aberto: {', '.join(travados)}")
     return best
 
 
@@ -118,9 +124,12 @@ def _read_globo_cookies(profile: str):
                     shutil.copy2(f, tmpdir / ("Cookies" + ext))
             con = sqlite3.connect(str(tmpdir / "Cookies"))
         except Exception:
-            con = sqlite3.connect(f"file:{ck}?mode=ro&immutable=1", uri=True)
+            con = sqlite3.connect(ck.as_uri() + "?mode=ro&immutable=1", uri=True)
+        # cast(... as blob): o Chrome as vezes grava o encrypted_value com tipo TEXTO; sem o cast o
+        # sqlite3 tenta ler como UTF-8 e o robo QUEBRAVA ("Could not decode to UTF-8 column
+        # 'encrypted_value'") — foi o erro das 08:12 de 18/11/2026.
         return con.execute(
-            "select host_key,name,encrypted_value,path,expires_utc,is_secure,is_httponly "
+            "select host_key,name,cast(encrypted_value as blob),path,expires_utc,is_secure,is_httponly "
             "from cookies where host_key like '%globo.com%'"
         ).fetchall()
     finally:
@@ -209,15 +218,150 @@ def _read_from_firefox():
         shutil.rmtree(tmp, ignore_errors=True)
     out = []
     for host, name, val, path, exp, sec, http in rows:
+        # Playwright so' aceita expires = -1 (sessao) OU timestamp unix POSITIVO em segundos, ate' ~ano 9999.
+        # O Firefox as vezes guarda datas absurdas (muito no futuro) -> tratar como cookie de sessao (-1),
+        # senao o storage_state fica invalido e nem a verificacao nem o clipping conseguem carrega-lo.
+        try:
+            e = int(exp)
+        except (TypeError, ValueError):
+            e = -1
+        if e <= 0 or e > 253402300799:   # <=0 (sessao) ou depois do ano 9999 -> sessao
+            e = -1
         out.append({
             "name": name, "value": val, "domain": host, "path": path or "/",
-            "expires": float(exp) if exp else -1,
+            "expires": e,
             "httpOnly": bool(http), "secure": bool(sec), "sameSite": "Lax",
         })
     return out or None
 
 
+# ── TESTAR ANTES DE GRAVAR (18/11/2026) ───────────────────────────────────────────────────────
+# Antes, o robo GRAVAVA na nuvem o que achasse no navegador e SO' DEPOIS testava. Achado em
+# 18/11/2026: o Firefox guarda um login de jul/2026 e o Chrome so' tem cookie v20 (ilegivel) ->
+# o robo pegaria o login velho do Firefox e TROCARIA a sessao viva da nuvem (renovada de 6 em 6h
+# pelo keepalive_sessions.yml) por uma possivelmente morta. Agora: (1) se a sessao da nuvem
+# destrava, nao mexe em nada; (2) login novo do navegador so' vai pra nuvem se destravar.
+
+def _sessao_da_nuvem():
+    """A sessao do Valor que a nuvem (clipping/keep-alive) usa hoje, como dict, ou None."""
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return None
+    import requests
+    r = requests.get(
+        f"{url}/rest/v1/{ps.SESSIONS_TABLE}?source=eq.valor&select=state",
+        headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=20,
+    )
+    if not (r.ok and r.json()):
+        return None
+    st = r.json()[0].get("state")
+    if not st:
+        return None
+    return st if isinstance(st, dict) else json.loads(st)
+
+
+_CORPO_JS = (
+    "() => { const b = document.querySelector('.mc-article-body, article');"
+    " if (!b) return [0, 0];"
+    " return [b.innerText.trim().length, b.querySelectorAll('p').length]; }"
+)
+
+
+def _ler_corpo(browser, state: dict, url: str):
+    """(caracteres, paragrafos) do corpo da materia aberta com esta sessao; (0, 0) se caiu em login."""
+    from clipping.keepalive import _LOGIN_HOSTS
+    ctx = browser.new_context(
+        user_agent=ps.DEFAULT_USER_AGENT, viewport=ps.DEFAULT_VIEWPORT,
+        locale=ps.DEFAULT_LOCALE, storage_state=state,
+    )
+    ctx.add_init_script(ps._WEBDRIVER_INIT)
+    try:
+        pg = ctx.new_page()
+        pg.goto(url, wait_until="domcontentloaded", timeout=40_000)
+        pg.wait_for_timeout(5_000)
+        if ps.is_login_page(pg, _LOGIN_HOSTS):
+            return (0, 0)
+        n, par = pg.evaluate(_CORPO_JS)
+        return (int(n), int(par))
+    finally:
+        ctx.close()
+
+
+def _testar_sessao(state: dict):
+    """Diz se esta sessao DESTRAVA materia paga do Valor. True = destrava · False = nao
+    destrava · None = nao deu para testar. NAO grava NADA (nem arquivo local, nem nuvem).
+
+    Como mede (18/11/2026): abre a MESMA materia sem login e com a sessao e compara o tamanho
+    do texto. Medido nesse dia: sem login = 2 paragrafos (~230 caracteres, o resto e' cortado);
+    logado = a materia inteira (11 paragrafos, ~2.100). ⚠️ NAO usar as classes de paywall
+    ('.paywall.hide-all-content' / '.wall.protected-content'): o Valor parou de usa-las e elas
+    davam "destrava" ate' SEM cookie nenhum. Materia que abre inteira sem login (gratis) nao
+    serve de prova e e' pulada."""
+    nomes = " ".join((c.get("name") or "") for c in (state.get("cookies") or [])).upper()
+    if "GLBID" not in nomes:
+        return False
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as e:
+        print("   (nao consegui carregar o navegador do teste:", e, ")")
+        return None
+    vazio = {"cookies": [], "origins": []}
+    try:
+        with sync_playwright() as p:
+            browser = ps.launch_browser(p)
+            try:
+                ctx = browser.new_context(user_agent=ps.DEFAULT_USER_AGENT, locale=ps.DEFAULT_LOCALE)
+                pg = ctx.new_page()
+                pg.goto("https://valor.globo.com/empresas/", wait_until="domcontentloaded", timeout=40_000)
+                pg.wait_for_timeout(3_000)
+                links = pg.evaluate(
+                    "() => [...new Set([...document.querySelectorAll('a[href*=\"/noticia/\"]')]"
+                    ".map(a => a.href.split('#')[0]))].slice(0, 4)"
+                )
+                ctx.close()
+                for href in links:
+                    anon = _ler_corpo(browser, vazio, href)
+                    if anon[0] >= 1200 and anon[1] >= 5:
+                        continue                      # abre inteira sem login: nao prova nada
+                    com = _ler_corpo(browser, state, href)
+                    if anon[0] == 0 and com[0] == 0:
+                        continue                      # a pagina nem carregou: tenta outra
+                    print(f"   teste: sem login {anon[1]} paragrafos ({anon[0]} car.) | "
+                          f"com a sessao {com[1]} paragrafos ({com[0]} car.)")
+                    return com[0] >= max(1.5 * anon[0], anon[0] + 500)
+                return None
+            finally:
+                browser.close()
+    except Exception as e:
+        print("   (erro ao testar a sessao:", e, ")")
+        return None
+
+
 print("\n=== Renovar a sessao do Valor (lendo sua sessao ja' logada no Chrome) ===\n")
+
+# 1o) A sessao que a NUVEM usa ainda destrava? Entao nao ha nada a fazer — e nao mexo nela.
+try:
+    _nuvem = _sessao_da_nuvem()
+except Exception as _e:
+    _nuvem = None
+    print("   (nao consegui ler a sessao da nuvem:", _e, ")")
+if _nuvem:
+    print("Testando a sessao que a nuvem (clipping / keep-alive) usa hoje...")
+    _viva = _testar_sessao(_nuvem)
+    if _viva:
+        print("\n" + "=" * 60)
+        print(">>> TUDO CERTO: a sessao da nuvem DESTRAVA o conteudo pago do Valor.")
+        print(">>> Nada a fazer — nao mexi em nada. (O keep-alive da nuvem a renova de 6 em 6h.)")
+        print("=" * 60)
+        sys.exit(0)
+    if _viva is None:
+        print("\n>>> Nao consegui TESTAR a sessao da nuvem (sem internet? navegador do Playwright?).")
+        print(">>> Por seguranca nao mexi em nada. Rode de novo mais tarde.")
+        sys.exit(1)
+    print(">>> A sessao da nuvem NAO destrava mais. Vou procurar um login novo no seu navegador.\n")
+else:
+    print("   (nao achei sessao do Valor na nuvem — vou procurar um login no seu navegador)\n")
 
 if not REAL_USERDATA.exists():
     print(f">>> Nao achei o Chrome em: {REAL_USERDATA}")
@@ -294,40 +438,33 @@ if "GLBID" not in names:
         print(">>>     3) Rode este 'Atualizar Valor' de novo.")
     sys.exit(1)
 
-state_json = json.dumps({"cookies": cookies, "origins": []})
-ps.state_path("valor").write_text(state_json, encoding="utf-8")   # copia local
-ps._push_session_to_store("valor", state_json)                    # store (Supabase)
+state = {"cookies": cookies, "origins": []}
 
-print("\n" + "=" * 60)
-print(">>> Sessao lida do navegador e salva no store. Verificando se ela DESTRAVA o conteudo pago...")
-print("=" * 60)
-# ⚠️ IMPORTANTE: o cookie GLBID pode estar PRESENTE mas ja invalidado no servidor (Chrome
-# tambem deslogado). Verifica de verdade abrindo uma materia e checando o paywall.
-_alive = None
-try:
-    from clipping.keepalive import _touch
-    _alive = _touch("valor", "https://valor.globo.com/", ("GLBID",))
-except Exception as _e:
-    print("   (nao consegui verificar automaticamente:", _e, ")")
+# ⚠️ IMPORTANTE: o cookie GLBID pode estar PRESENTE mas ja invalidado no servidor. Testa ANTES
+# de gravar: so' vai pra nuvem o login que de fato abre materia paga.
+print("\nTestando o login encontrado ANTES de gravar na nuvem...")
+_destrava = _testar_sessao(state)
 
-if _alive:
-    print("\n" + "=" * 60)
-    print(">>> SUCESSO CONFIRMADO: a sessao DESTRAVA o conteudo pago do Valor.")
-    print(">>> O keep-alive (6h em 6h) e cada clipping vao mante-la viva.")
-    print("=" * 60)
-elif _alive is False:
+if not _destrava:
     print("\n" + "!" * 60)
-    print(">>> ATENCAO: salvei o cookie, MAS a sessao NAO destrava o conteudo pago.")
-    print(">>> Quase sempre isso quer dizer que o seu CHROME TAMBEM esta deslogado do Valor.")
+    if _destrava is False:
+        print(">>> O login que achei no navegador NAO destrava o conteudo pago (esta vencido).")
+    else:
+        print(">>> Nao consegui testar o login que achei no navegador.")
+    print(">>> Por seguranca NAO gravei nada na nuvem.")
     print(">>>")
     print(">>> O QUE FAZER:")
-    print(">>>   1) Abra valor.globo.com no Chrome e faca LOGIN de novo (como assinante);")
+    print(">>>   1) Abra valor.globo.com no FIREFOX e faca LOGIN de novo (como assinante);")
     print(">>>   2) Confirme que consegue LER uma materia PAGA inteira;")
     print(">>>   3) Rode este 'Atualizar Valor' de novo.")
     print("!" * 60)
-else:
-    print("\n" + "=" * 60)
-    print(">>> Sessao salva no store. (Nao consegui verificar sozinho — confirme no Chrome")
-    print(">>> que voce consegue LER uma materia paga inteira. Se aparecer paywall, logue de novo.)")
-    print("=" * 60)
+    sys.exit(1)
+
+state_json = json.dumps(state)
+ps.state_path("valor").write_text(state_json, encoding="utf-8")   # copia local
+ps._push_session_to_store("valor", state_json)                    # store (Supabase)
+print("\n" + "=" * 60)
+print(">>> SUCESSO CONFIRMADO: o login DESTRAVA o conteudo pago e foi gravado na nuvem.")
+print(">>> O keep-alive (6h em 6h) e cada clipping vao mante-lo vivo.")
+print("=" * 60)
 print("\nPode fechar esta janela.")

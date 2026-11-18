@@ -35,35 +35,49 @@ def _session_alive(state: dict, names: tuple[str, ...]) -> bool:
     return any(n.upper() in allnames for n in names)
 
 
-def _valor_cropped(page) -> bool:
-    """Abre a 1ª matéria do Valor (a partir da home) e checa se está RECORTADA (paywall).
-    ⚠️ A presença do cookie GLBID NÃO garante sessão viva — o Globo pode ter invalidado no
-    servidor (o corpo vem 'cropped' + barreira 'Faça o seu login'). É por isso que o keep-alive
-    antigo ficava rolando pra frente uma sessão morta: só olhava o cookie, não o conteúdo."""
+_VALOR_LINKS_JS = (
+    "() => [...new Set([...document.querySelectorAll('a[href*=\"/noticia/\"]')]"
+    ".map(a => a.href.split('#')[0]))]"
+)
+
+
+def _valor_cropped(page, href: str):
+    """Abre a matéria e diz se o paywall escondeu o texto (True), se veio liberada (False) ou se
+    não deu para ler (None).
+    ⚠️ A presença do cookie GLBID NÃO garante sessão viva. ⚠️ E olhar a página "na hora" também
+    não: o Valor manda o texto inteiro e o script do paywall o esconde depois (até 7 s, medido em
+    18/11/2026 — antes disso esta checagem dizia "liberada" até SEM cookie). Ver `valor_paywall`."""
+    from .valor_paywall import wait_cropped
     try:
-        href = page.evaluate(
-            "() => { const a = document.querySelector('a[href*=\"/noticia/\"]'); return a ? a.href : ''; }"
-        )
-        if not href or "/noticia/" not in href:
-            return False   # não achou matéria p/ testar → não derruba a sessão à toa
         page.goto(href, wait_until="domcontentloaded", timeout=30_000)
-        try:
-            page.wait_for_timeout(2_500)
-        except Exception:
-            pass
-        # ⚠️ NÃO usar '.mc-article-body.cropped': essa classe fica em TODA matéria (logado ou não)
-        # — testado ao vivo, dava falso-positivo e matava a sessão boa. O sinal REAL de "não destrava"
-        # é a BARREIRA de assinatura VISÍVEL: '.paywall.hide-all-content' (a classe hide-all-content só
-        # aparece quando o conteúdo está escondido) ou '.wall.protected-content' com altura > 0.
-        return bool(page.evaluate(
-            "() => {"
-            "  if (document.querySelector('.paywall.hide-all-content')) return true;"
-            "  const w = document.querySelector('.wall.protected-content');"
-            "  return !!(w && w.offsetHeight > 0 && getComputedStyle(w).display !== 'none');"
-            "}"
-        ))
     except Exception:
-        return False
+        return None
+    return wait_cropped(page)
+
+
+def _valor_dead_reason(page) -> str | None:
+    """Motivo de a sessão do Valor estar MORTA, ou None. `page` está na home.
+
+    Testa as 2 primeiras matérias da home e só declara morta se AS DUAS vierem cortadas: uma só
+    cortada pode ser seção à parte; uma liberada pode ser matéria grátis. Na dúvida NÃO mata — o
+    keep-alive deixaria de rolar a sessão boa pra frente e mandaria alarme falso.
+    (O cabeçalho "não logado" NÃO entra: com a sessão boa ele aparece às vezes sem cortar nada.)"""
+    try:
+        links = [h for h in (page.evaluate(_VALOR_LINKS_JS) or []) if "/noticia/" in h][:2]
+    except Exception:
+        links = []
+    if not links:
+        log.warning("keepalive: valor — não achei matéria na home p/ testar; não julgo a sessão")
+        return None
+    res = [_valor_cropped(page, h) for h in links]
+    cortadas = sum(r is True for r in res)
+    if cortadas == len(res):
+        return (f"{cortadas} de {len(res)} matérias vieram CORTADAS (paywall) — "
+                "a sessão não destrava o conteúdo pago")
+    if cortadas:
+        log.warning("keepalive: valor — %d de %d matérias cortadas (inconclusivo; não mato a sessão)",
+                    cortadas, len(res))
+    return None
 
 
 def _report_health(provider: str, dead: bool) -> None:
@@ -105,9 +119,9 @@ def _touch(provider: str, url: str, auth_cookies: tuple[str, ...]) -> bool:
                 dead_reason = "caiu em login"
             elif not _session_alive(state, auth_cookies):
                 dead_reason = "perdeu o cookie de auth"
-            elif provider == "valor" and _valor_cropped(page):
-                # GLBID presente MAS o conteúdo vem recortado → sessão morta no servidor.
-                dead_reason = "artigo RECORTADO (paywall) — GLBID não destrava mais o conteúdo"
+            elif provider == "valor":
+                # GLBID presente MAS as matérias vêm cortadas pelo paywall → sessão morta.
+                dead_reason = _valor_dead_reason(page)
             if dead_reason:
                 log.warning("keepalive: %s SESSÃO MORTA — %s (não regravo)", provider, dead_reason)
                 _report_health(provider, dead=True)     # source_health → watchdog manda e-mail
@@ -141,9 +155,11 @@ def keepalive_all() -> int:
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()
-        t.join(timeout=90)
+        # 150 s: o Valor agora abre a home + 2 matérias e espera o paywall decidir em cada uma
+        # (até ~9 s por matéria). Workflow tem 10 min no total.
+        t.join(timeout=150)
         if t.is_alive():
-            log.warning("keepalive: %s timeout (90s)", prov)
+            log.warning("keepalive: %s timeout (150s)", prov)
         elif result[0]:
             n_ok += 1
     return n_ok
