@@ -207,9 +207,41 @@ def _with_whatsapp(job: dict, base: str, res: dict) -> dict:
     return cfg
 
 
+def process_whatsapp(job: dict) -> None:
+    """Job do HTML do WhatsApp (ETAPA 3): sem Word, sem e-mail, sem IA nova.
+
+    Ordem da aba Clipping: 1) Word (raspa/traduz e GUARDA os corpos) → 2) blast (lê esses
+    corpos e grava os 3 destaques do dia) → 3) este HTML (usa os dois). O link volta em
+    `config.whatsapp`, como antes. O job não tem `docx_path`, então a aba continua mostrando o
+    último Word em "Último clipping gerado".
+    """
+    from .generate import build_whatsapp_from_payload
+    jid = job["id"]
+    d = date.fromisoformat(job["ref_date"]) if job.get("ref_date") else date.today()
+    res = build_whatsapp_from_payload(job.get("payload") or [], d, job.get("config"))
+    cfg = _with_whatsapp(job, f"clippings/{jid}", res)
+    w = cfg.get("whatsapp") or {}
+    log.info("job %s WHATSAPP: %s", jid, f"{w.get('kb')} KB" if w.get("url") else f"sem HTML ({w.get('error')})")
+    patch_job(jid, {"status": "done" if w.get("url") else "error",
+                    "error": None if w.get("url") else f"HTML do WhatsApp: {w.get('error')}"[:500],
+                    "config": cfg, "finished_at": _now(), "updated_at": _now()})
+
+
 def process(job: dict) -> None:
     jid = job["id"]
     payload = job.get("payload") or []
+    # Job do HTML do WhatsApp (etapa 3) — só o HTML, com os corpos que o Word já guardou.
+    if ((job.get("config") or {}).get("whatsapp") or {}).get("only"):
+        try:
+            process_whatsapp(job)
+        except Exception as e:
+            log.exception("job %s ERRO no HTML do WhatsApp", jid)
+            try:
+                patch_job(jid, {"status": "error", "error": str(e)[:500],
+                                "finished_at": _now(), "updated_at": _now()})
+            except Exception:
+                log.exception("falha ao marcar erro no job %s", jid)
+        return
     # Job de blast não gera documento — desvia antes de qualquer raspagem ou tradução.
     if ((job.get("config") or {}).get("blast") or {}).get("only"):
         try:
@@ -224,12 +256,14 @@ def process(job: dict) -> None:
         return
     d = date.fromisoformat(job["ref_date"]) if job.get("ref_date") else date.today()
     try:
-        res = build_from_payload(payload, d, fetch=True, config=job.get("config"), whatsapp=True)
+        # o HTML do WhatsApp NÃO sai aqui: ele é a etapa 3 (depois do blast, que lê os corpos
+        # que este job guarda) — ver process_whatsapp
+        res = build_from_payload(payload, d, fetch=True, config=job.get("config"))
         base = f"clippings/{jid}"
         _upload(f"{base}/{res['docx_name']}", res["docx"], DOCX_CT)
         _upload(f"{base}/{res['eml_name']}", res["eml"], "message/rfc822")
         _upload(f"{base}/{res['html_name']}", res["html"].encode("utf-8"), "text/html; charset=utf-8")
-        cfg = _with_whatsapp(job, base, res)
+        cfg = dict(job.get("config") or {})
         # corpos que falharam (url, motivo) → gravados no job p/ o front oferecer "colar e regerar"
         errs = [{"url": u, "reason": r} for (u, r) in (res.get("errors") or [])]
         patch_job(jid, {
@@ -237,7 +271,7 @@ def process(job: dict) -> None:
             "docx_path": _sign(f"{base}/{res['docx_name']}", download=res["docx_name"]),
             "eml_path": _sign(f"{base}/{res['eml_name']}", download=res["eml_name"]),
             "preview_path": _sign(f"{base}/{res['html_name']}"),   # prévia inline (HTML)
-            "config": cfg,                                           # + config.whatsapp (link do HTML)
+            "config": cfg,
             "error": None, "errors": errs, "finished_at": _now(), "updated_at": _now(),
         })
         log.info("job %s DONE (%d itens, %d avisos)", jid, len(res["items"]), len(res["errors"]))

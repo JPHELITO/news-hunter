@@ -226,3 +226,51 @@ def test_job_upload_que_falha_nao_derruba(monkeypatch):
     monkeypatch.setattr(run_jobs, "_upload", boom)
     cfg = run_jobs._with_whatsapp({"config": {}}, "b", {"whatsapp": b"<html>", "whatsapp_name": "n.html"})
     assert cfg["whatsapp"]["error"].startswith("upload:")
+
+
+# ── ordem da aba Clipping: 1) Word → 2) blast → 3) HTML (job próprio) ─────────────────────
+def test_job_do_word_nao_monta_mais_o_html(monkeypatch):
+    """O blast lê os corpos que o Word guarda, e o HTML leva os destaques do blast: o HTML
+    não pode sair junto com o Word (sairia sem os destaques do dia)."""
+    from clipping import run_jobs
+    chamadas, patches = [], []
+    def fake_build(payload, d, fetch=True, config=None, whatsapp=False):
+        chamadas.append(whatsapp)
+        return {"docx": b"d", "eml": b"e", "html": "h", "docx_name": "N.docx", "eml_name": "N.eml",
+                "html_name": "N.html", "items": [], "errors": []}
+    monkeypatch.setattr(run_jobs, "build_from_payload", fake_build)
+    monkeypatch.setattr(run_jobs, "_upload", lambda *a: None)
+    monkeypatch.setattr(run_jobs, "_sign", lambda path, download=None: "u/" + path)
+    monkeypatch.setattr(run_jobs, "patch_job", lambda jid, f: patches.append(f))
+    run_jobs.process({"id": "j", "ref_date": "2026-11-18", "payload": [{"url": "x"}], "config": {"intro": {}}})
+    assert chamadas == [False]
+    assert patches[-1]["status"] == "done" and "whatsapp" not in patches[-1]["config"]
+
+
+def test_job_so_do_html_usa_o_que_ja_esta_guardado(monkeypatch):
+    from clipping import run_jobs, generate
+    patches, vistos = [], []
+    monkeypatch.setattr(run_jobs, "build_from_payload", lambda *a, **k: (_ for _ in ()).throw(AssertionError("não monta Word")))
+    def fake_wa(payload, d, config):
+        vistos.append((d.isoformat(), (config.get("blast_highlights") or {}).get("2026-11-18")))
+        return {"whatsapp": b"<html>" * 10, "whatsapp_error": None, "whatsapp_name": "NEWS - 11182026.html", "items": [], "errors": []}
+    monkeypatch.setattr(generate, "build_whatsapp_from_payload", fake_wa)
+    monkeypatch.setattr(run_jobs, "_upload", lambda *a: None)
+    monkeypatch.setattr(run_jobs, "_sign", lambda path, download=None: f"https://s/{path}?d={download}")
+    monkeypatch.setattr(run_jobs, "patch_job", lambda jid, f: patches.append(f))
+    cfg = {"whatsapp": {"only": True}, "blast_highlights": {"2026-11-18": {"destaques": ["a", "b", "c"]}}}
+    run_jobs.process({"id": "w1", "ref_date": "2026-11-18", "payload": [{"url": "x"}], "config": cfg})
+    assert vistos == [("2026-11-18", {"destaques": ["a", "b", "c"]})]
+    f = patches[-1]
+    assert f["status"] == "done" and f["config"]["whatsapp"]["url"].endswith("?d=NEWS - 11182026.html")
+    assert "docx_path" not in f            # a aba continua mostrando o último WORD como "último gerado"
+
+
+def test_job_so_do_html_sem_html_vira_erro_com_motivo(monkeypatch):
+    from clipping import run_jobs, generate
+    patches = []
+    monkeypatch.setattr(generate, "build_whatsapp_from_payload",
+                        lambda p, d, c: {"whatsapp": None, "whatsapp_error": "Node não encontrado", "items": [], "errors": []})
+    monkeypatch.setattr(run_jobs, "patch_job", lambda jid, f: patches.append(f))
+    run_jobs.process({"id": "w2", "ref_date": "2026-11-18", "payload": [], "config": {"whatsapp": {"only": True}}})
+    assert patches[-1]["status"] == "error" and "Node não encontrado" in patches[-1]["error"]

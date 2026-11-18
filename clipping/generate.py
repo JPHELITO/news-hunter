@@ -114,6 +114,24 @@ def build_from_payload(payload: list[dict], d: date | None = None, fetch: bool =
     return res
 
 
+def build_whatsapp_from_payload(payload: list[dict], d: date | None = None,
+                                config: dict | None = None) -> dict:
+    """Só o HTML do WhatsApp — a ETAPA 3 da aba Clipping (Word → blast → HTML).
+
+    Roda DEPOIS do Word e do blast: os corpos e as traduções já estão guardados em
+    `clipping_bodies` pela geração do Word (nada é raspado de novo nem traduzido de novo) e os
+    3 destaques do blast já estão em `config.blast_highlights[data]`. Nunca levanta exceção.
+    """
+    d = d or date.today()
+    rows = sorted(payload, key=lambda r: r.get("pos", 0))
+    errors: list = []
+    items = [_to_item(r, True, errors) for r in rows]
+    from .whatsapp import build_whatsapp
+    wa = build_whatsapp(items, d, config)
+    return {"whatsapp": wa["html"], "whatsapp_error": wa["error"],
+            "whatsapp_name": f"{clipping_basename(d)}.html", "items": items, "errors": errors}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--payload")
