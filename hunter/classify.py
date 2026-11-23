@@ -137,11 +137,11 @@ TICKER_MAP = {
     # Toronto / ASX — terras raras (cobertura formal desde 2026-10-23)
     "Aclara": "ARA.TO", "Aclara Resources": "ARA.TO",
     "Viridis": "VMM.AX", "Viridis Mining": "VMM.AX",
-    # Toronto / NY — cobre (cobertura formal desde 2026-11-23). A Ero segue pela linha de NY (ERO), como no heatmap.
+    # Toronto — cobre (cobertura formal desde 2026-11-23). As quatro pela linha oficial de Toronto (alvos em C$).
     "Hudbay": "HBM.TO", "Hudbay Minerals": "HBM.TO",
     "Lundin Mining": "LUN.TO",
     "Capstone Copper": "CS.TO",
-    "Ero Copper": "ERO",
+    "Ero Copper": "ERO.TO",
 }
 
 # ───────────────────────────────────────────────────────────────────────────

@@ -117,7 +117,7 @@ QUOTES_LIST = [
     ("B",           "Barrick Mining",    "gold",        "NYSE",  "yahoo", "B"),
     ("HOC.L",       "Hochschild Mining", "gold",        "LSE",   "yahoo", "HOC.L"),
     # ── Copper ───────────────────────────────────────────────────────────
-    ("ERO",         "Ero Copper",        "copper",      "NYSE",  "yahoo", "ERO"),
+    ("ERO.TO",      "Ero Copper",        "copper",      "TSX",   "yahoo", "ERO.TO"),   # Toronto (CAD) desde 23/11/2026: alvo do analista em C$
     ("CS.TO",       "Capstone Copper",   "copper",      "TSX",   "yahoo", "CS.TO"),
     # Hudbay e Lundin pela linha OFICIAL, a de Toronto, em CAD (decisão do usuário, 2026-10-15).
     # A Hudbay vinha pela listagem de NY (HBM, em USD).

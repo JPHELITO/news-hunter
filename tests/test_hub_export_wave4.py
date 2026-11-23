@@ -133,8 +133,9 @@ def test_stock_guide_forma_exata_oculta_so_com_4_campos_e_link_do_modelo():
 
 
 def test_model_url_e_a_constante_do_site_pelo_filtro(monkeypatch):
-    assert len(SG.MODEL_URL) == 18 and SG.MODEL_URL["AUGO"] == SG.MODEL_URL["AURA33"]
+    assert len(SG.MODEL_URL) == 22 and SG.MODEL_URL["AUGO"] == SG.MODEL_URL["AURA33"]   # 18 + cobre (23/11)
     assert SG.MODEL_URL["VALE3"] == SG.MODEL_URL["VALE"] and set(SG.MODEL_URL) >= {"ARA", "VMM", "COPEC"}
+    assert SG.model_url("ERO.TO") == SG.PORTAL + "ERO" and SG.model_url("HBM.TO") == SG.PORTAL + "HBM"
     assert SG.model_url("CMIN3.SA") == SG.PORTAL + "CMIN3"                   # sem o sufixo, como `_short`
     assert SG.model_url("ZZZZ") is None and SG.model_url(None) is None
     monkeypatch.setitem(SG.MODEL_URL, "VALE", "https://mailerurl.mziq.com/ls/click?upn=FICTICIO")

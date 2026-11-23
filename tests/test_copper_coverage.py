@@ -1,5 +1,5 @@
 """Cobre na cobertura formal (2026-11-23): Hudbay (HBM.TO), Lundin Mining (LUN.TO), Capstone Copper (CS.TO)
-e Ero Copper (ERO). Manchetes REAIS do banco (news_articles, 90 dias até 23/11) + as armadilhas de nome."""
+e Ero Copper (ERO.TO — Toronto desde 23/11, alvo em C$). Manchetes REAIS do banco (news_articles, 90 dias até 23/11) + as armadilhas de nome."""
 from hunter.news_take_classifier import (
     COVERED_COMPANY_ALIASES, _MINING_COMPANIES, detect_covered_companies, classify_take,
 )
@@ -104,7 +104,7 @@ class TestCadastro:
         assert m["HUDBAY"] == ("HBM", "HBM.TO", "sm")
         assert m["LUNDIN MINING"] == ("LUN", "LUN.TO", "sm")
         assert m["CAPSTONE COPPER"] == ("CS", "CS.TO", "sm")
-        assert m["ERO COPPER"] == ("ERO", "ERO", "sm")
+        assert m["ERO COPPER"] == ("ERO", "ERO.TO", "sm")
         # o resumo da hora e o hub falam a mesma língua
         assert {c: t for c, (t, _q, _d) in m.items()} == COV
 
@@ -125,7 +125,7 @@ class TestFiltroDeEntrada:
         assert "HBM.TO" in classify("Hudbay Minerals beats estimates")["tickers"]
         assert "LUN.TO" in classify("Lundin Mining sells stake")["tickers"]
         assert "CS.TO" in classify("Capstone Copper raises capex")["tickers"]
-        assert "ERO" in classify("Ero Copper hits record")["tickers"]
+        assert "ERO.TO" in classify("Ero Copper hits record")["tickers"]
         assert classify("Hudbay Minerals beats estimates")["sector"] == "mining"
 
     def test_reuters_slug(self):

@@ -449,9 +449,9 @@
         "updatedAt": null
       },
       {
-        "ticker": "ERO",
+        "ticker": "ERO.TO",
         "name": "Ero Copper",
-        "exchange": "NYSE",
+        "exchange": "TSX",
         "price": null,
         "changePct": null,
         "changeAbs": null,

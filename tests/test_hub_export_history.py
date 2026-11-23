@@ -52,11 +52,11 @@ ONLY = "history,history-index"
 # o KNOWN da market.html (origin/main f636222, linhas 778-801), sem os `@`: a lista do site
 SITE_KNOWN = (["AURA33.SA", "SUZB3.SA", "VALE3.SA", "GMEXICOB.MX", "CMIN3.SA", "SCCO", "KLBN11.SA",
                "TX", "CSNA3.SA", "CMPC.SN", "USIM5.SA", "RANI3.SA", "GGBR4.SA", "COPEC.SN", "CS.TO",
-               "ERO", "HBM.TO", "LUN.TO", "ARA.TO", "VMM.AX"]
+               "ERO.TO", "HBM.TO", "LUN.TO", "ARA.TO", "VMM.AX"]
               + ["CSNA3.SA", "GGBR4.SA", "GGB", "MT", "NUE", "TX", "USIM5.SA", "CMC", "GOAU4.SA", "STLD"]
               + ["VALE", "CMIN3.SA", "FMG.AX", "RIO", "BHP", "AAL.L", "CAP.SN", "BRAP3.SA"]
               + ["AUGO", "ARIS", "BVN", "AEM", "B", "HOC.L"]
-              + ["ERO", "SCCO", "GMEXICOB.MX", "CS.TO", "B", "HBM.TO", "LUN.TO"]
+              + ["ERO.TO", "SCCO", "GMEXICOB.MX", "CS.TO", "B", "HBM.TO", "LUN.TO"]
               + ["MEI.AX", "VMM.AX", "ARA.TO"]
               + ["SW", "IP", "SUZB3.SA", "KLBN11.SA", "RANI3.SA", "CMPC.SN", "COPEC.SN", "UPM.HE",
                  "STERV.HE"]

@@ -14,11 +14,11 @@ HM_MAX = 20     # teto de cartões = a grade 4×5
 
 G_COVERAGE = ["AUGO", "SUZB3.SA", "VALE", "GMEXICOB.MX", "CMIN3.SA", "SCCO", "KLBN11.SA", "TX",
               "CSNA3.SA", "CMPC.SN", "USIM5.SA", "RANI3.SA", "GGBR4.SA", "COPEC.SN",
-              "CS.TO", "ERO", "HBM.TO", "LUN.TO", "ARA.TO", "VMM.AX"]
+              "CS.TO", "ERO.TO", "HBM.TO", "LUN.TO", "ARA.TO", "VMM.AX"]
 G_STEEL = ["CSNA3.SA", "GGBR4.SA", "GGB", "MT", "NUE", "TX", "USIM5.SA", "CMC", "GOAU4.SA", "STLD"]
 G_IRON = ["VALE", "CMIN3.SA", "FMG.AX", "RIO", "BHP", "AAL.L", "CAP.SN", "BRAP3.SA"]
 G_GOLD = ["AUGO", "ARIS", "BVN", "AEM", "B", "HOC.L"]
-G_COPPER = ["ERO", "SCCO", "GMEXICOB.MX", "CS.TO", "B", "HBM.TO", "LUN.TO"]
+G_COPPER = ["ERO.TO", "SCCO", "GMEXICOB.MX", "CS.TO", "B", "HBM.TO", "LUN.TO"]
 G_RARE = ["MEI.AX", "VMM.AX", "ARA.TO"]
 G_PP = ["SW", "IP", "SUZB3.SA", "KLBN11.SA", "RANI3.SA", "CMPC.SN", "COPEC.SN", "UPM.HE", "STERV.HE"]
 G_INDEX = ["GDX", "SPX", "MATB11.SA", "NASDAQ", "IBOV", "SPTSX", "ASX200", "MEXBOL", "IPSA",
@@ -76,7 +76,7 @@ FALLBACK_TZ = "America/Sao_Paulo"
 # ordem do G_COVERAGE da Market), depois os índices, depois os pares (na ordem do KNOWN do site).
 MARKET_COVERAGE = ["AURA33.SA", "SUZB3.SA", "VALE3.SA", "GMEXICOB.MX", "CMIN3.SA", "SCCO",
                    "KLBN11.SA", "TX", "CSNA3.SA", "CMPC.SN", "USIM5.SA", "RANI3.SA", "GGBR4.SA",
-                   "COPEC.SN", "CS.TO", "ERO", "HBM.TO", "LUN.TO", "ARA.TO", "VMM.AX"]
+                   "COPEC.SN", "CS.TO", "ERO.TO", "HBM.TO", "LUN.TO", "ARA.TO", "VMM.AX"]
 MARKET_PEERS = ["GGB", "MT", "NUE", "CMC", "GOAU4.SA", "STLD",                  # aço
                 "VALE", "FMG.AX", "RIO", "BHP", "AAL.L", "CAP.SN", "BRAP3.SA",  # minério
                 "AUGO", "ARIS", "BVN", "AEM", "B", "HOC.L",                     # ouro

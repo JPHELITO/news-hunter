@@ -116,7 +116,7 @@
           "pt-br": "Cobre",
           "en-us": "Copper"
         },
-        "tickers": ["ERO", "SCCO", "GMEXICOB.MX", "CS.TO", "HBM.TO", "LUN.TO"]
+        "tickers": ["ERO.TO", "SCCO", "GMEXICOB.MX", "CS.TO", "HBM.TO", "LUN.TO"]
       },
       {
         "id": "rare_earths",
@@ -298,7 +298,7 @@
     {
       "code": "ERO COPPER",
       "ticker": "ERO",
-      "quote": "ERO",
+      "quote": "ERO.TO",
       "desk": "sm"
     }
   ]

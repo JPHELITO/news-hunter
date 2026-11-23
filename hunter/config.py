@@ -50,7 +50,7 @@ COMPANIES_INTL = [
     "Aclara", "Aclara Resources", "Viridis", "Viridis Mining",
     "Lynas", "MP Materials", "Serra Verde", "Brazilian Rare Earths", "Meteoric Resources",
     "Iluka", "Arafura", "USA Rare Earth", "Neo Performance", "Vulcan Elements", "Noveon", "Ucore",
-    # Cobre — cobertura formal desde 2026-11-23 (Hudbay HBM.TO, Lundin LUN.TO, Capstone CS.TO, Ero ERO).
+    # Cobre — cobertura formal desde 2026-11-23 (Hudbay HBM.TO, Lundin LUN.TO, Capstone CS.TO, Ero ERO.TO).
     # "Lundin", "Capstone" e "Ero" sozinhos são AMBÍGUOS → só capitalizados (hunter/filter.py, _AMBIGUOUS_CASED).
     # Ativos só os de nome inequívoco (Chapada/Candelaria/Constancia/Tucumã/Vicuña são lugar, bicho ou palavra).
     "Hudbay", "Hudbay Minerals", "Lundin", "Lundin Mining", "Capstone", "Capstone Copper",

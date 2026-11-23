@@ -97,7 +97,7 @@ PULSE_CO = (
     ("ACLARA", "ARA", "ARA.TO", "sm"), ("VIRIDIS", "VMM", "VMM.AX", "sm"),
     # cobre — cobertura formal desde 23/11/2026 (ticker de tela = o _short do heatmap)
     ("HUDBAY", "HBM", "HBM.TO", "sm"), ("LUNDIN MINING", "LUN", "LUN.TO", "sm"),
-    ("CAPSTONE COPPER", "CS", "CS.TO", "sm"), ("ERO COPPER", "ERO", "ERO", "sm"),
+    ("CAPSTONE COPPER", "CS", "CS.TO", "sm"), ("ERO COPPER", "ERO", "ERO.TO", "sm"),
 )
 
 
