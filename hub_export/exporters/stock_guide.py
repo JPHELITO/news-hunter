@@ -83,7 +83,8 @@ MODEL_URL = {code: PORTAL + slug for code, slug in (
     ("VALE", "VALE"), ("VALE3", "VALE"), ("CMIN3", "CMIN3"), ("GMEXICOB", "GMEXICOB"), ("SCCO", "SCCO"),
     ("AUGO", "AURA33"), ("AURA33", "AURA33"), ("CSNA3", "CSNA3"), ("GGBR4", "GGBR4"), ("TX", "TX"),
     ("USIM5", "USIM5"), ("SUZB3", "SUZB3"), ("KLBN11", "KLBN11"), ("RANI3", "RANI3"), ("CMPC", "CMPC"),
-    ("COPEC", "COPEC"), ("ARA", "ARA"), ("VMM", "VMM"))}
+    ("COPEC", "COPEC"), ("ARA", "ARA"), ("VMM", "VMM"),
+    ("HBM", "HBM"), ("LUN", "LUN"), ("CS", "CS"), ("ERO", "ERO"))}           # cobre (23/11/2026)
 _SUFFIX = re.compile(r"\.(SA|SN|MX|L|HE|AX|F|TO)$")         # `_short` do site (stock-guide.html:375)
 _NUM_TEXT = re.compile(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?")
 
