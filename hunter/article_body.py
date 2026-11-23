@@ -124,6 +124,31 @@ def _fetch_cvm_body(url: str, timeout: int = 60):
     return body[:MAX_CHARS], {"ok": True, "method": "cvm_pdf", "chars": len(body), "reason": "ok"}
 
 
+# ── comunicados das 4 de cobre de Toronto pela TMX Money (hunter/tmx_news.py, 2026-11-23) ───────────
+# A página money.tmx.com/en/quote/<SÍMBOLO>/news/<id> é montada por JavaScript (o HTML não tem o texto);
+# o comunicado inteiro vem do mesmo GraphQL público, campo `story` (HTML do newswire).
+_TMX_URL_RE = re.compile(r"^https://money\.tmx\.com/en/quote/[A-Z0-9.]+/news/(\d+)")
+_TMX_STORY_Q = "query s($id: String!) { s: getNewsStoryById(newsid: $id) { headline story } }"
+
+
+def _fetch_tmx_body(newsid: str, timeout: int = 15):
+    try:
+        r = requests.post("https://app-money.tmx.com/graphql", json={"query": _TMX_STORY_Q, "variables": {"id": newsid}},
+                          headers={**UA, "Content-Type": "application/json"}, timeout=timeout)
+        story = ((((r.json() or {}).get("data") or {}).get("s") or {}).get("story") or "") if r.status_code == 200 else ""
+    except Exception as e:  # noqa: BLE001
+        return None, {"ok": False, "method": "tmx", "chars": 0, "reason": f"tmx: {e}"}
+    import html as _html
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>|<link[^>]*>", " ", story)
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[ \t\xa0]+", " ", _html.unescape(text))
+    text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
+    if len(text) < MIN_VALID:
+        return None, {"ok": False, "method": "tmx", "chars": len(text), "reason": "tmx: sem texto"}
+    return text[:MAX_CHARS], {"ok": True, "method": "tmx", "chars": len(text), "reason": "ok"}
+
+
 def fetch_body(url: str, source: str | None = None, timeout: int = 12):
     """Retorna (body|None, meta). meta = {ok, method, chars, reason}.
 
@@ -134,6 +159,9 @@ def fetch_body(url: str, source: str | None = None, timeout: int = 12):
         return None, {"ok": False, "method": None, "chars": 0, "reason": "sem url"}
     if "rad.cvm.gov.br" in url:
         return _fetch_cvm_body(url)
+    m = _TMX_URL_RE.match(url)
+    if m:
+        return _fetch_tmx_body(m.group(1))
     if source in NO_BODY_SOURCES:
         return None, {"ok": False, "method": None, "chars": 0, "reason": "fonte sem corpo (compartilhada)"}
     if is_paywalled(url):

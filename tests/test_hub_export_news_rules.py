@@ -38,7 +38,7 @@ def utc(s: str) -> datetime:
 # ── 1) os conjuntos do site ─────────────────────────────────────────────────────────────────────
 def test_conjuntos_iguais_aos_do_site():
     assert R.LABEL_ALIAS == {
-        "CVM": "CVM filing", "ASX": "ASX filing", "Bloomberg.com": "Bloomberg",
+        "CVM": "CVM filing", "ASX": "ASX filing", "TMX": "TSX filing", "Bloomberg.com": "Bloomberg",
         "Reuters Brasil": "Reuters", "Kallanish Commodities": "Kallanish",
         "Kallanish Steel": "Kallanish", "Shanghai Metals Market": "SMM",
         "World Steel Association": "World Steel", "O Estado de S. Paulo": "Estadão",
@@ -48,10 +48,11 @@ def test_conjuntos_iguais_aos_do_site():
         "S&P Platts", "Platts", "Notícias de Mineração", "IBRAM", "ANM", "Brasil Mineral",
         "Mining.com", "Australian Mining", "SMM", "GMK Center", "Siderurgia Brasil", "SteelRadar",
         "Instituto Aço Brasil", "ASX filing", "Aclara Resources", "Fastmarkets Insights",
-        "Northern Miner", "Financial Times", "Poços Já"}
+        "Northern Miner", "Financial Times", "Poços Já",
+        "TSX filing", "Reporte Minero", "Rumbo Minero", "Energiminas", "Portal Minero"}
     assert R.PP_SOURCES == {"Fastmarkets", "PaperAge", "Portal Celulose", "ABTCP",
                             "China Pulp & Paper", "Papnews", "Ibá"}
-    assert R.PRIMARY_SOURCES == {"CVM", "ASX", "Aclara Resources"}
+    assert R.PRIMARY_SOURCES == {"CVM", "ASX", "Aclara Resources", "TMX"}
     assert len(R.PULSE_CO) == 20 and len({c for c, *_ in R.PULSE_CO}) == 20
 
 

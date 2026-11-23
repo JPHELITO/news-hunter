@@ -28,6 +28,7 @@ except ImportError:            # pragma: no cover - Python < 3.9
 LABEL_ALIAS = {
     "CVM": "CVM filing",   # comunicado oficial da empresa (hunter/cvm_filings.py)
     "ASX": "ASX filing",   # anúncio sensível a preço (hunter/asx_announcements.py)
+    "TMX": "TSX filing",   # comunicado das 4 de cobre de Toronto (hunter/tmx_news.py, 23/11/2026)
     "Bloomberg.com": "Bloomberg", "Reuters Brasil": "Reuters",
     "Kallanish Commodities": "Kallanish", "Kallanish Steel": "Kallanish",
     "Shanghai Metals Market": "SMM", "World Steel Association": "World Steel",
@@ -44,10 +45,12 @@ SM_SOURCES = frozenset({
     "Instituto Aço Brasil",
     # terras raras (Aclara/Viridis, 26/10/2026)
     "ASX filing", "Aclara Resources", "Fastmarkets Insights", "Northern Miner", "Financial Times",
-    "Poços Já"})
+    "Poços Já",
+    # cobre (23/11/2026)
+    "TSX filing", "Reporte Minero", "Rumbo Minero", "Energiminas", "Portal Minero"})
 PP_SOURCES = frozenset({"Fastmarkets", "PaperAge", "Portal Celulose", "ABTCP", "China Pulp & Paper",
                         "Papnews", "Ibá"})
-PRIMARY_SOURCES = frozenset({"CVM", "ASX", "Aclara Resources"})
+PRIMARY_SOURCES = frozenset({"CVM", "ASX", "Aclara Resources", "TMX"})
 DESKS = ("sm", "pp", "nr")
 
 

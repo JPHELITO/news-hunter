@@ -82,4 +82,18 @@ SOURCES = [
     {"label": "Northern Miner",        "url": "https://www.northernminer.com/?s=rare+earth&feed=rss2", "filter": False},  # ~0,8/dia, matéria do mesmo dia
     {"label": "Financial Times",       "url": "https://www.ft.com/rare-earths?format=rss",           "filter": False},  # ~1/semana, só título + linha fina
     {"label": "Poços Já",              "url": "https://pocosja.com.br/tag/terras-raras/feed/",        "filter": False},  # Poços de Caldas: licença, comitê, movimentos
+
+    # ══ COBRE — Hudbay, Lundin, Capstone, Ero (cobertas desde 2026-11-23) ═══════════════════════════
+    # Varredura de 23/11/2026 (60 dias): quem cita as quatro é a imprensa da América Latina, não a do Canadá
+    # (Globe and Mail, Financial Post, BNN: ~0). Os comunicados vêm da TMX (hunter/tmx_news.py) e a Reporte
+    # Minero pelo sitemap (hunter/sitemap_scrapers.py). Rumbo Minero pela ETIQUETA de cada empresa = estreita
+    # → aceita tudo. NÃO usar a busca (/feed/?s=): o WordPress casa qualquer palavra ("Copper", "Mining") e
+    # devolveu Petroperú/Golden Minerals para "Ero Copper". Energiminas e Portal Minero = gerais → keyword
+    # (pega também Southern Peru/Tía María quando citam nossos nomes), sem "antofagasta" (filter.py).
+    {"label": "Rumbo Minero",          "url": "https://www.rumbominero.com/tag/hudbay/feed/",         "filter": False},  # Peru: Constancia, Pecoy
+    {"label": "Rumbo Minero",          "url": "https://www.rumbominero.com/tag/lundin-mining/feed/",  "filter": False},  # Vicuña, guidance
+    {"label": "Rumbo Minero",          "url": "https://www.rumbominero.com/tag/capstone-copper/feed/", "filter": False},
+    {"label": "Rumbo Minero",          "url": "https://www.rumbominero.com/tag/ero-copper/feed/",     "filter": False},
+    {"label": "Energiminas",           "url": "https://energiminas.com/feed/",                        "filter": True},   # Peru, ~8,6/dia (Hudbay/Constancia)
+    {"label": "Portal Minero",         "url": "https://www.portalminero.com/feed",                    "filter": True},   # Chile, ~5/dia (Candelaria, Mantoverde)
 ]

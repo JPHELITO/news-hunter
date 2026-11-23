@@ -151,12 +151,122 @@ def _scrape_sitemap(src: dict) -> list[RawArticle]:
     return arts
 
 
+# ── Sitemap MENSAL sem título + filtro pelo endereço (2026-11-23) ─────────────────────────────────────
+# Para site sem RSS cujo sitemap só traz <loc> + <lastmod>: o endereço (slug) diz do que é a matéria, então
+# só o que casa `slug_re` é baixado, e o título sai do og:title da página. Cache em memória: o hunt-loop roda
+# a cada 5 min e a mesma matéria fica 72 h na janela — cada página é baixada uma vez por processo.
+#
+# Reporte Minero (Chile): a melhor imprensa para Lundin (Candelaria, Caserones, Vicuña) e Capstone (Mantoverde,
+# Mantos Blancos, Santo Domingo) — medido em 23/11: ~18 posts/dia no site, ~1/dia citando as duas pelo endereço
+# (28 em 60 dias), contra 0 nos canadenses (Globe and Mail, Financial Post, BNN). Sem RSS (/feed devolve HTML).
+# Fora: as seções de responsabilidade social e vídeo (programa de bolsistas, sinalização de estrada…).
+MONTHLY_SLUG_SOURCES = [
+    {
+        "label": "Reporte Minero",
+        "domain": "reporteminero.cl",
+        "url_fmt": "https://www.reporteminero.cl/sitemap/{y}/{m:02d}/sitemap-pt-post.xml",
+        "slug_re": re.compile(
+            r"lundin|capstone|hudbay|ero-copper|candelaria|caserones|mantoverde|mantos-blancos|"
+            r"santo-domingo|vicuna|josemaria|filo-del-sol|pinto-valley|constancia"),
+        "skip_re": re.compile(r"/noticia/(responsabilidad-social|videos)/"),
+        "title_suffix_re": re.compile(r"\s+[-|–]\s+Reporte Minero.*$"),
+        "max_pages": 12,
+    },
+]
+_PAGE_TITLE_CACHE: dict[str, tuple[str, str]] = {}
+_OG_RE = {k: re.compile(r'<meta[^>]+property=["\']og:' + k + r'["\'][^>]+content=["\']([^"\']*)', re.I)
+          for k in ("title", "description")}
+
+
+def _months_to_read(now: datetime) -> list[tuple[int, int]]:
+    """O mês corrente e, nos 3 primeiros dias, também o anterior (a janela de 72 h atravessa a virada)."""
+    out = [(now.year, now.month)]
+    if now.day <= 3:
+        out.append((now.year - 1, 12) if now.month == 1 else (now.year, now.month - 1))
+    return out
+
+
+def parse_monthly_sitemap(content: bytes, src: dict, now: datetime | None = None) -> list[tuple[str, datetime]]:
+    """(endereço, data) das matérias na janela cujo endereço casa o filtro da fonte. (Testável puro.)"""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=WINDOW_HOURS)
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError as e:
+        log.warning("Sitemap [%s] XML inválido: %s", src["label"], e)
+        return []
+    out = []
+    for url_el in root:
+        if _localname(url_el.tag) != "url":
+            continue
+        loc = lastmod = None
+        for child in url_el.iter():
+            ln = _localname(child.tag)
+            if ln == "loc" and not loc:
+                loc = (child.text or "").strip()
+            elif ln == "lastmod" and not lastmod:
+                lastmod = (child.text or "").strip()
+        if not loc:
+            continue
+        slug = loc.rstrip("/").rsplit("/", 1)[-1].lower()
+        if not src["slug_re"].search(slug) or src["skip_re"].search(loc):
+            continue
+        pub = _parse_date(lastmod)
+        if pub is None or pub < cutoff:
+            continue
+        out.append((loc, pub))
+    return out
+
+
+def _page_title(url: str, src: dict) -> tuple[str, str]:
+    if url in _PAGE_TITLE_CACHE:
+        return _PAGE_TITLE_CACHE[url]
+    status, content = _http_get(url)
+    if status != 200 or not content:
+        return "", ""
+    import html as _html
+    text = content.decode("utf-8", errors="replace")
+    got = {}
+    for k, rx in _OG_RE.items():
+        m = rx.search(text)
+        got[k] = " ".join(_html.unescape(m.group(1)).split()) if m else ""
+    title = src["title_suffix_re"].sub("", got["title"]).strip()
+    _PAGE_TITLE_CACHE[url] = (title, got["description"][:400])
+    return _PAGE_TITLE_CACHE[url]
+
+
+def _scrape_monthly(src: dict, now: datetime | None = None) -> list[RawArticle]:
+    now = now or datetime.now(timezone.utc)
+    hits: list[tuple[str, datetime]] = []
+    for y, m in _months_to_read(now):
+        url = src["url_fmt"].format(y=y, m=m)
+        status, content = _http_get(url)
+        if status != 200 or not content:
+            log.warning("Sitemap [%s] HTTP %d: %s", src["label"], status, url)
+            continue
+        hits.extend(parse_monthly_sitemap(content, src, now))
+    out: list[RawArticle] = []
+    for loc, pub in sorted(set(hits), key=lambda x: x[1], reverse=True)[: src["max_pages"]]:
+        title, desc = _page_title(loc, src)
+        if len(title) < 12:
+            continue
+        out.append(RawArticle(url=loc, domain=src["domain"], source_name=src["label"], title=title,
+                              snippet=desc, published_at=pub, found_at=now, needs_filter=False))
+    log.info("Sitemap [%s] -> %d artigos (endereço casou: %d)", src["label"], len(out), len(hits))
+    return out
+
+
 def collect_sitemap_sources() -> list[RawArticle]:
-    """Coleta todas as fontes com news-sitemap."""
+    """Coleta todas as fontes com news-sitemap (+ as de sitemap mensal filtrado pelo endereço)."""
     out: list[RawArticle] = []
     for src in SITEMAP_SOURCES:
         try:
             out.extend(_scrape_sitemap(src))
+        except Exception as e:
+            log.warning("Sitemap [%s] falhou: %s", src.get("label"), e)
+    for src in MONTHLY_SLUG_SOURCES:
+        try:
+            out.extend(_scrape_monthly(src))
         except Exception as e:
             log.warning("Sitemap [%s] falhou: %s", src.get("label"), e)
     return out

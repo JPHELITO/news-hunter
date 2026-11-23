@@ -63,7 +63,8 @@ COV = {"VALE": "VALE3", "CSN": "CSNA3", "CMIN": "CMIN3", "GERDAU": "GGBR4", "USI
 ALL_TICKERS = set(COV.values())
 # "asx" e "aclara resources" (2026-10-26): anúncio da bolsa australiana e comunicado no site da Aclara
 # são fonte primária, como os da CVM.
-TIER1 = ("platts", "fastmarkets", "valor", "cvm", "b3", "reuters", "bloomberg", "asx", "aclara resources")
+TIER1 = ("platts", "fastmarkets", "valor", "cvm", "b3", "reuters", "bloomberg", "asx", "aclara resources",
+         "tmx")   # 2026-11-23: comunicados das 4 de cobre de Toronto (TMX Money)
 _STOP = set("""a an the of to in on for at by with from and or as is are be its it this that after amid over
 o a os as de da do das dos em no na nos nas por para com e ou que se um uma ao aos à às sobre após diz""".split())
 

@@ -38,6 +38,20 @@ SOURCE_FILTER_RULES: dict[str, dict] = {
     "ASX": {
         "pass_through": True,
     },
+    # Comunicados das 4 de cobre de Toronto pela TMX Money (hunter/tmx_news.py, 2026-11-23): já filtrados
+    # na origem (só a manchete que cita a empresa do ticker). Fonte primária como a CVM: aceita tudo.
+    "TMX": {
+        "pass_through": True,
+    },
+    # Imprensa de mineração do Peru e do Chile (cobre, 2026-11-23): "Antofagasta" é a mineradora (keyword)
+    # mas, lá, é sobretudo a REGIÃO — medido em 23/11, a maior parte do que passava era só a região
+    # ("Cartera de inversión minera chilena…", "Parque Eólico Horizonte…"). Nessas duas, não conta.
+    "Energiminas": {
+        "ignore_keywords": ["antofagasta"],
+    },
+    "Portal Minero": {
+        "ignore_keywords": ["antofagasta"],
+    },
     # SMM (metal.com): site SÓ de metais → "cobre"/"ouro" soltos são sempre o metal. Fora dela
     # são falso amigo ("o seguro cobre", "medalha de ouro"), por isso não estão em ALL_KEYWORDS.
     # Medido em 29/09/2026: 19 matérias de cobre publicadas, só 4 entraram; de ouro, 15 e 2
@@ -183,9 +197,13 @@ def _matches(article: RawArticle) -> list[str]:
     """Keywords que bateram no título + snippet (+ as extra_keywords da fonte)."""
     text = f"{article.title} {article.snippet}"
     found = _match_text(text)
-    extra = SOURCE_FILTER_RULES.get(article.source_name, {}).get("extra_keywords")
+    rules = SOURCE_FILTER_RULES.get(article.source_name, {})
+    extra = rules.get("extra_keywords")
     if extra:
         found = sorted(set(found) | {m.group(0).lower() for m in _extra_pattern(tuple(extra)).finditer(text)})
+    ignore = rules.get("ignore_keywords")
+    if ignore:
+        found = [k for k in found if k not in ignore]
     return found
 
 

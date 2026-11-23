@@ -319,6 +319,16 @@ def fetch_all() -> list[RawArticle]:
     except Exception as e:
         log.warning("ASX falhou: %s", e)
 
+    # 1f) Comunicados das 4 de cobre de Toronto (Hudbay, Lundin, Capstone, Ero) pela TMX Money — fonte
+    #     primária como a CVM/ASX; [] se o GraphQL da TMX mudar ou cair. Nunca derruba o hunt.
+    try:
+        from .tmx_news import collect_tmx_news
+        tmx_items = collect_tmx_news()
+        all_articles.extend(tmx_items)
+        log.info("TMX: %d comunicados", len(tmx_items))
+    except Exception as e:
+        log.warning("TMX falhou: %s", e)
+
     # 2) Feeds RSS
     with ThreadPoolExecutor(max_workers=6) as ex:
         futures = {ex.submit(_fetch_one, src): src for src in SOURCES}

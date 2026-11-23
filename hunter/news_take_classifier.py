@@ -810,7 +810,8 @@ def _gate_is_tight(source: str) -> bool:
 # 2026-09-02: "cvm" = comunicados oficiais das cobertas (fato relevante etc., via Market Watch) —
 # fonte PRIMÁRIA; entra sempre. 2026-10-26: "asx" = anúncios sensíveis a preço da Viridis e dos
 # pares de terras raras (hunter/asx_announcements.py), pela mesma razão.
-_ALWAYS_INCLUDE_SOURCES = frozenset({"s&p platts", "fastmarkets", "cvm", "asx"})
+# 2026-11-23: "tmx" = comunicados das 4 de cobre de Toronto (hunter/tmx_news.py), idem.
+_ALWAYS_INCLUDE_SOURCES = frozenset({"s&p platts", "fastmarkets", "cvm", "asx", "tmx"})
 
 # Fontes INSTITUCIONAIS (agência reguladora / associação): quase tudo é nota administrativa —
 # curso de formação, nota à imprensa, encontro, edital de contêineres. Medido em 30 dias
