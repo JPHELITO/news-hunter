@@ -12,7 +12,7 @@ heatmap     grupos constantes do site + a configuração do /admin aplicada como
             `hidden`; `coverage` = linhas `in_coverage` por `sort_order` (e símbolo), só os
             papéis conhecidos; sem nenhuma → o grupo constante. O grupo `coverage` recebe essa lista.
 commodityGroups  do RPC `get_commodity_groups`, só os visíveis, por `sort_order`.
-coveredCompanies (Onda 1b, Apêndice E.8; aditivo, `schemaVersion` continua 1) as 16 empresas do
+coveredCompanies (Onda 1b, Apêndice E.8; aditivo, `schemaVersion` continua 1) as 20 empresas do
             classificador de notícias, na ordem do `_PULSE_CO` do site: `{code, ticker, quote,
             desk}` (constante em news_reference). Serve às etiquetas do feed, ao Market Pulse e ao
             "All S&M"/"All P&P" dos relatórios. A chave é `code` (`token` é chave proibida).

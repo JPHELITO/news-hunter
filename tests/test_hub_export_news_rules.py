@@ -52,7 +52,7 @@ def test_conjuntos_iguais_aos_do_site():
     assert R.PP_SOURCES == {"Fastmarkets", "PaperAge", "Portal Celulose", "ABTCP",
                             "China Pulp & Paper", "Papnews", "Ibá"}
     assert R.PRIMARY_SOURCES == {"CVM", "ASX", "Aclara Resources"}
-    assert len(R.PULSE_CO) == 16 and len({c for c, *_ in R.PULSE_CO}) == 16
+    assert len(R.PULSE_CO) == 20 and len({c for c, *_ in R.PULSE_CO}) == 20
 
 
 @pytest.mark.parametrize("source, domain, esperado", [

@@ -58,7 +58,8 @@ TAKES_BUDGET_SHARE = 0.80                 # projeto dos takes só entra abaixo d
 COV = {"VALE": "VALE3", "CSN": "CSNA3", "CMIN": "CMIN3", "GERDAU": "GGBR4", "USIMINAS": "USIM5",
        "TERNIUM": "TX", "AURA": "AURA33", "SOUTHERN COPPER": "SCCO", "GRUPO MEXICO": "GMEXICOB",
        "SUZANO": "SUZB3", "KLABIN": "KLBN11", "IRANI": "RANI3", "CMPC": "CMPC", "COPEC": "COPEC",
-       "ACLARA": "ARA", "VIRIDIS": "VMM"}   # terras raras (cobertura formal desde 2026-10-23)
+       "ACLARA": "ARA", "VIRIDIS": "VMM",   # terras raras (cobertura formal desde 2026-10-23)
+       "HUDBAY": "HBM", "LUNDIN MINING": "LUN", "CAPSTONE COPPER": "CS", "ERO COPPER": "ERO"}   # cobre (2026-11-23)
 ALL_TICKERS = set(COV.values())
 # "asx" e "aclara resources" (2026-10-26): anúncio da bolsa australiana e comunicado no site da Aclara
 # são fonte primária, como os da CVM.

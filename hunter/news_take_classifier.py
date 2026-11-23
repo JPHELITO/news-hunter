@@ -97,6 +97,40 @@ COVERED_COMPANY_ALIASES: dict[str, list[str]] = {
         "viridis mining e minerals", "viridis resources", "asx vmm",
         "projeto colossus", "colossus project", "colossus rare earth", "colossus rare earths",
     ],
+    # Cobre — cobertura formal desde 2026-11-23: mineradoras de cobre listadas em Toronto, VENDEDORAS de
+    # concentrado (≠ SCCO/GMexico, integradas). Nomes ambíguos só como NOME PRÓPRIO (_PROPER_NOUN_RE):
+    # "lundin" (Lundin Gold/Energy/Oil e a família), "capstone" (palavra comum; Capstone Green Energy,
+    # Capstone Infrastructure…), "ero" (sigla). Ativos só na forma qualificada quando o nome sozinho é
+    # outra coisa: "constancia" (constância), "candelaria" (cidade/festa), "chapada" (Chapada Diamantina,
+    # dos Veadeiros…), "sauva" (a formiga — praga do eucalipto, sai em P&P), "vicuna" (o bicho), "santo
+    # domingo" (a capital), "caraiba"/"tucuma"/"xavantina" (municípios), "snow lake" (Snow Lake Resources,
+    # outra empresa), "copper world"/"copper mountain" (expressão comum / estação de esqui).
+    "HUDBAY": [
+        "hudbay", "hudbay minerals", "hudbay minerals inc", "tsx hbm", "nyse hbm",
+        "constancia mine", "mina constancia", "unidad minera constancia", "constancia copper",
+        "copper world project", "proyecto copper world", "copper world mine", "copper world complex",
+        "copper mountain mine", "lalor mine", "snow lake operations",
+    ],
+    "LUNDIN MINING": [
+        "lundin", "lundin mining", "lundin mining corp", "lundin mining corporation", "tsx lun",
+        "candelaria mine", "mina candelaria", "minera candelaria", "candelaria copper", "complejo candelaria",
+        "caserones", "minera lumina copper", "lumina copper",
+        "mina de chapada", "mina chapada", "chapada mine", "chapada copper", "mineracao maraca",
+        "projeto sauva", "sauva project", "deposito sauva",
+        "vicuna corp", "vicuna project", "proyecto vicuna", "projeto vicuna", "vicuna district",
+        "distrito vicuna", "josemaria", "filo del sol",
+    ],
+    "CAPSTONE COPPER": [
+        "capstone", "capstone copper", "capstone copper corp", "capstone mining", "tsx cs",
+        "mantoverde", "mantos blancos", "pinto valley",
+        "santo domingo project", "proyecto santo domingo", "santo domingo copper",
+    ],
+    "ERO COPPER": [
+        "ero", "ero copper", "ero copper corp", "tsx ero", "nyse ero",
+        "mineracao caraiba", "caraiba operations", "operacoes caraiba", "operacao caraiba", "complexo caraiba",
+        "projeto tucuma", "tucuma project", "tucuma operation", "operacao tucuma", "mina de tucuma",
+        "nx gold", "xavantina operations", "mina de xavantina", "operacao xavantina",
+    ],
 }
 
 # Players da indústria que NÃO são da cobertura, mas cujas notícias o analista
@@ -450,7 +484,7 @@ def normalize_text(text: str) -> str:
 # Contam como a EMPRESA só escritos como NOME PRÓPRIO no texto original (ver _PROPER_NOUN_RE).
 # (O ticker "tx" da Ternium foi REMOVIDO da lista de aliases — colide com "TX" =
 #  Texas e o contexto setorial não desambigua em notícia de aço dos EUA.)
-_AMBIGUOUS_ALIAS_WORDS = frozenset({"vale", "aura", "aclara"})
+_AMBIGUOUS_ALIAS_WORDS = frozenset({"vale", "aura", "aclara", "lundin", "capstone", "ero"})
 
 # NOME PRÓPRIO no texto ORIGINAL — maiúscula preservada, que é como a empresa é escrita (2026-10-20).
 # A regra anterior ("vale" + qualquer palavra do setor em qualquer ponto do texto) errava dos dois lados,
@@ -475,11 +509,26 @@ _PROPER_NOUN_RE: dict[str, re.Pattern] = {
     # "aclara" = verbo em espanhol ("Codelco aclara que…"): só Aclara/ACLARA como nome próprio e nunca
     # seguido do que vem depois do verbo (que/a/el/la/su…).
     "aclara": re.compile(r"(?<![\w.'’])(?:Aclara|ACLARA)(?!\w)(?!\s+(?i:que|a|al|el|la|lo|los|las|su|sus|como|si|en|por|sobre)\b)"),
+    # Cobre (2026-11-23). "Lundin" sozinho na imprensa de mineração = a Lundin Mining ("Lundin cuts copper
+    # outlook…", "Lundin tem forte 3T…"); a Lundin Gold e as outras do grupo sempre vêm com o sobrenome.
+    "lundin": re.compile(r"(?<![\w.'’])(?:Lundin|LUNDIN)(?!\w)(?!\s+(?i:gold|energy|energia|oil|petroleum|"
+                         r"group|grupo|family|fam[ií]lia|foundation|funda[cç][aã]o|africa|mining\s+foundation)\b)"),
+    # "Capstone" maiúsculo = a mineradora ("Capstone cuts copper outlook…"); "capstone" minúsculo é o
+    # substantivo comum ("the capstone of…") e as homônimas vêm com o sobrenome.
+    "capstone": re.compile(r"(?<![\w.'’])(?:Capstone|CAPSTONE)(?!\w)(?!\s+(?i:green|turbine|infrastructure|"
+                           r"partners|holding|holdings|capital|investment|investments|dental|therapeutics|"
+                           r"companies|logistics|headwaters|project|course|award)\b)"),
+    # "Ero"/"ERO" = a Ero Copper ("Ero tem lucro…"); nunca colado num número/hífen (código de peça, sigla).
+    "ero": re.compile(r"(?<![\w.'’\-])(?:Ero|ERO)(?![\w\-])"),
 }
 _PROPER_NOUN_NOT_AFTER: dict[str, re.Pattern] = {
     "vale": re.compile(r"(?:^|[^\w])(?:o|um|no|num|pelo|ao|do|dum|os|nos|pelos|aos|dos)\s+$", re.I),
     "aura": re.compile(r"(?:^|[^\w])(?:uma|numa|an)\s+$", re.I),
     "aclara": re.compile(r"(?!x)x"),   # nada a vetar antes do nome
+    # a família (Lukas, Adam, Ian…) não é a empresa; o CEO da Lundin Mining (Jack Lundin) é
+    "lundin": re.compile(r"(?:^|[^\w])(?:lukas|adam|ian|ashley|william|harry)\s+$", re.I),
+    "capstone": re.compile(r"(?:^|[^\w])(?:the|a|an|its|as)\s+$", re.I),
+    "ero": re.compile(r"(?!x)x"),
 }
 
 
@@ -920,7 +969,8 @@ _PP_TOPICS = frozenset([
 _COPPER_GOLD_TOPICS = frozenset(["copper", "gold", "silver", "nickel", "aluminum", "zinc"])
 
 _STEEL_COMPANIES = frozenset(["GERDAU", "TERNIUM", "USIMINAS", "CSN"])
-_MINING_COMPANIES = frozenset(["VALE", "CMIN", "SOUTHERN COPPER", "GRUPO MEXICO", "AURA", "ACLARA", "VIRIDIS"])
+_MINING_COMPANIES = frozenset(["VALE", "CMIN", "SOUTHERN COPPER", "GRUPO MEXICO", "AURA", "ACLARA", "VIRIDIS",
+                               "HUDBAY", "LUNDIN MINING", "CAPSTONE COPPER", "ERO COPPER"])
 _PP_COMPANIES     = frozenset(["SUZANO", "IRANI", "CMPC", "KLABIN", "COPEC"])
 
 

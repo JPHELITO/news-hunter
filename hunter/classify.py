@@ -71,6 +71,8 @@ SECTOR_KEYWORDS = {
         "Grupo México", "Antofagasta", "Glencore", "First Quantum",
         "Aclara", "Viridis", "Lynas", "MP Materials", "Serra Verde",   # terras raras (2026-10-23)
         "Iluka", "Arafura", "Meteoric Resources", "Neo Performance", "Vulcan Elements", "Noveon", "Ucore",
+        "Hudbay", "Lundin Mining", "Capstone Copper", "Ero Copper",    # cobre (2026-11-23)
+        "Mineração Caraíba", "Mantoverde", "Mantos Blancos", "Pinto Valley", "Caserones",
     },
     "pp": {
         # produtos celulose
@@ -135,6 +137,11 @@ TICKER_MAP = {
     # Toronto / ASX — terras raras (cobertura formal desde 2026-10-23)
     "Aclara": "ARA.TO", "Aclara Resources": "ARA.TO",
     "Viridis": "VMM.AX", "Viridis Mining": "VMM.AX",
+    # Toronto / NY — cobre (cobertura formal desde 2026-11-23). A Ero segue pela linha de NY (ERO), como no heatmap.
+    "Hudbay": "HBM.TO", "Hudbay Minerals": "HBM.TO",
+    "Lundin Mining": "LUN.TO",
+    "Capstone Copper": "CS.TO",
+    "Ero Copper": "ERO",
 }
 
 # ───────────────────────────────────────────────────────────────────────────

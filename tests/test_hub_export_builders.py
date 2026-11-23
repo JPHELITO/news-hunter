@@ -299,14 +299,15 @@ def test_loop_e_cli_dao_o_mesmo_arquivo():
 
 
 def test_config_empresas_cobertas_do_classificador():
-    """Apêndice E.8: as 16 do `_PULSE_CO` (index.html:2268-2276), na ordem, com `code` (e não
+    """Apêndice E.8: as 20 do `_PULSE_CO` (index.html:2268-2276), na ordem, com `code` (e não
     `token`, chave proibida); o mesmo mapa que o resumo da hora usa (hunter/digest.py COV)."""
     from hunter import digest
     src, _ = hunt_sources()
     cos = config.build(src)["coveredCompanies"]
     assert [c["code"] for c in cos] == ["VALE", "CSN", "CMIN", "GERDAU", "USIMINAS", "TERNIUM",
                                         "AURA", "SOUTHERN COPPER", "GRUPO MEXICO", "SUZANO",
-                                        "KLABIN", "IRANI", "CMPC", "COPEC", "ACLARA", "VIRIDIS"]
+                                        "KLABIN", "IRANI", "CMPC", "COPEC", "ACLARA", "VIRIDIS",
+                                        "HUDBAY", "LUNDIN MINING", "CAPSTONE COPPER", "ERO COPPER"]
     assert all(list(c) == ["code", "ticker", "quote", "desk"] for c in cos)
     assert cos[0] == {"code": "VALE", "ticker": "VALE3", "quote": "VALE3.SA", "desk": "sm"}
     assert {c["code"]: c["ticker"] for c in cos} == digest.COV

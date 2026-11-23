@@ -276,6 +276,30 @@
       "ticker": "VMM",
       "quote": "VMM.AX",
       "desk": "sm"
+    },
+    {
+      "code": "HUDBAY",
+      "ticker": "HBM",
+      "quote": "HBM.TO",
+      "desk": "sm"
+    },
+    {
+      "code": "LUNDIN MINING",
+      "ticker": "LUN",
+      "quote": "LUN.TO",
+      "desk": "sm"
+    },
+    {
+      "code": "CAPSTONE COPPER",
+      "ticker": "CS",
+      "quote": "CS.TO",
+      "desk": "sm"
+    },
+    {
+      "code": "ERO COPPER",
+      "ticker": "ERO",
+      "quote": "ERO",
+      "desk": "sm"
     }
   ]
 }

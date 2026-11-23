@@ -116,6 +116,10 @@ _AMBIGUOUS_CASED: dict[str, tuple[str, ...]] = {
     "sigma": ("Sigma", "SIGMA"),
     "cba":   ("CBA",),
     "rani":  ("RANI",),
+    # cobre (2026-11-23): "Lundin" = também Lundin Gold/família; "capstone" = palavra comum; "ero" = sigla
+    "lundin":   ("Lundin", "LUNDIN"),
+    "capstone": ("Capstone", "CAPSTONE"),
+    "ero":      ("Ero", "ERO"),
 }
 
 

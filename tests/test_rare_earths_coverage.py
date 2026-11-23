@@ -61,7 +61,7 @@ class TestCobertas:
     def test_as_duas_sao_mineracao_e_a_cobertura_tem_16(self):
         assert {"ACLARA", "VIRIDIS"} <= _MINING_COMPANIES
         assert set(COVERED_COMPANY_ALIASES) >= {"ACLARA", "VIRIDIS"}
-        assert len(COVERED_COMPANY_ALIASES) == 16
+        assert len(COVERED_COMPANY_ALIASES) == 20   # 16 + cobre (Hudbay, Lundin, Capstone, Ero) desde 23/11
 
 
 class TestTopicoTerrasRaras:
@@ -116,4 +116,4 @@ class TestTickers:
     def test_resumo_da_hora(self):
         assert COV["ACLARA"] == "ARA" and COV["VIRIDIS"] == "VMM"
         assert {"ARA", "VMM"} <= ALL_TICKERS
-        assert len(COV) == 16
+        assert len(COV) == 20

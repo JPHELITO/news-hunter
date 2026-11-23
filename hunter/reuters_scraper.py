@@ -49,7 +49,8 @@ _RELEVANT_KW = re.compile(
     r"vale-sa|bhp|rio-tinto|anglo-american|fortescue|glencore|"
     r"gerdau|usiminas|csn|suzano|klabin|ternium|arcelormittal|nucor|"
     r"rare-earths?|critical-minerals?|neodymium|dysprosium|terbium|ndpr|"
-    r"lynas|mp-materials|aclara|viridis|iluka|arafura|serra-verde|meteoric-resources"
+    r"lynas|mp-materials|aclara|viridis|iluka|arafura|serra-verde|meteoric-resources|"
+    r"hudbay|lundin-mining|lundin|capstone-copper|ero-copper"   # cobre (cobertura desde 2026-11-23)
     r")\b",
     re.I,
 )
