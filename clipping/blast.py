@@ -409,20 +409,23 @@ def _regras_da_escolha(k: int, n: int) -> tuple:
 def _ingles(pt: list, en: list) -> tuple[list, str]:
     """Os destaques em inglês para o e-mail: (lista, de onde veio).
 
-    1º o que a IA escreveu NA MESMA chamada (nenhuma chamada a mais); se veio torto (faltando
-    ou com outro número de itens), tradução do Google — sem IA, sem cota, já usada no clipping.
-    Nada aqui levanta exceção: sem inglês, o e-mail sai sem a seção de destaques."""
-    en = [x for x in (en or []) if str(x).strip()]
-    if pt and len(en) == len(pt):
-        return en, "ia"
+    1º o que veio junto (da IA, na MESMA chamada, ou o que o analista editou na aba); com o
+    mesmo número de itens, só os VAZIOS são traduzidos — o resto é respeitado. Número de itens
+    diferente = a posição não é confiável, e tudo é traduzido. Tradução = Google, sem IA e sem
+    cota. Nada aqui levanta exceção: sem inglês, o e-mail sai sem a seção de destaques."""
     if not pt:
         return [], ""
+    en = list(en or [])
+    alvo = [str(x or "").strip() for x in en] if len(en) == len(pt) else [""] * len(pt)
+    if all(alvo):
+        return alvo, "ia"
     try:
         from deep_translator import GoogleTranslator
         tr = GoogleTranslator(source="pt", target="en")
-        out = [str(tr.translate(x) or "").strip().rstrip(";.").strip() for x in pt]
+        out = [a or str(tr.translate(x) or "").strip().rstrip(";.").strip() for a, x in zip(alvo, pt)]
         if all(out):
-            log.info("blast: a IA não mandou o inglês certo (%d de %d) — traduzido pelo Google", len(en), len(pt))
+            log.info("blast: %d de %d destaque(s) em inglês traduzido(s) pelo Google",
+                     sum(1 for a in alvo if not a), len(pt))
             return out, "google"
     except Exception as e:
         log.warning("blast: sem destaques em inglês (%s)", e)

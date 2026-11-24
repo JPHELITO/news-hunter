@@ -169,11 +169,14 @@ def build_all_from_payload(payload: list[dict], d: date | None = None,
                      "take": it.take, "pin": r.get("pin"), "body": it.body}
                     for r, it in zip(rows, items)]
         bl = highlights(noticias, n=n)
-    else:   # "destaques por IA" desligado: usa os já carimbados para a data, se houver
+    else:   # sem IA: os destaques JÁ carimbados para a data — é o caminho do "Atualizar HTML e e-mail"
+        # depois de o analista EDITAR os destaques na aba (ou do "destaques por IA" desligado)
+        from .blast import _ingles
         st = ((config.get("blast_highlights") or {}).get(d.isoformat()) or {})
-        bl = {"destaques": list(st.get("destaques") or []),
-              "destaques_en": list(st.get("destaques_en") or []), "en_fonte": "",
-              "provedor": st.get("provedor"), "erro": None if st else "sem IA e sem destaques do dia"}
+        pt = [x for x in (st.get("destaques") or []) if str(x).strip()]
+        en, fonte = _ingles(pt, list(st.get("destaques_en") or []))   # inglês faltando → Google, sem IA
+        bl = {"destaques": pt, "destaques_en": en, "en_fonte": fonte if fonte != "ia" else "analista",
+              "provedor": st.get("provedor"), "erro": None if pt else "sem IA e sem destaques do dia"}
 
     # o HTML lê os destaques de `config.blast_highlights[data]` — põe os NOVOS lá (cópia local)
     cfg_html = dict(config)

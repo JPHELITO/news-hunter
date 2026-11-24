@@ -263,7 +263,8 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
             lis.append(f'<tr><td width="22" valign="top" style="width:22px;padding:14px 0 14px 0">'
                        f'<p {_txt(15, T["orange"], "bold", 24)}>&mdash;</p></td>'
                        f'<td valign="top" style="padding:14px 0 14px 0;{"" if i == len(hl)-1 else "border-bottom:1px solid " + T["line"]}">'
-                       f'<p {_txt(15, T["text"], lh=24)}>{_e(x)}</p></td></tr>')
+                       # data-hl: a prévia da aba Clipping troca este texto AO VIVO quando o analista edita
+                       f'<p data-hl="{i}" {_txt(15, T["text"], lh=24)}>{_e(x)}</p></td></tr>')
         rows.append(f'<tr><td class="px" style="padding:4px {PAD}px 0 {PAD}px">'
                     f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
                     f'style="border-collapse:collapse">{"".join(lis)}</table></td></tr>')

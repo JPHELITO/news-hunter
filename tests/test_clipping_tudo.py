@@ -272,6 +272,34 @@ class TestJobTudo:
             generate.build_all_from_payload([{"url": items[0].url, "pos": 0}], D, velho)
         assert visto["hl"] == [] and visto["en"] == []
 
+    def test_atualizar_sem_ia_usa_o_texto_editado_pelo_analista(self):
+        """'Atualizar HTML e e-mail' na aba = job com tudo.ia=false: NÃO chama a IA e usa os
+        destaques carimbados (editados) da data — português no HTML, inglês no e-mail. Inglês
+        vazio num item = só aquele item é traduzido (Google, sem IA)."""
+        items = [_item(0)]
+        cfg = {"tudo": {"on": True, "ia": False},
+               "blast_highlights": {"2026-11-24": {"destaques": ["Editado 1", "Editado 2"],
+                                                   "destaques_en": ["Edited 1", ""], "editado": True}}}
+        visto = {}
+
+        def wa(its, d, c):
+            visto["hl"] = whatsapp.news_model(its, d, c)["highlights"]
+            return {"html": None, "error": None, "model": None, "fonts": None}
+        tr = mock.Mock()
+        tr.return_value.translate.side_effect = lambda s: "EN " + s
+        with mock.patch.object(generate, "_to_item", side_effect=lambda r, f, e: items[0]), \
+             mock.patch.object(generate, "build_docx", return_value=b"DOCX"), \
+             mock.patch.object(blast, "highlights", side_effect=AssertionError("não podia chamar a IA")), \
+             mock.patch("deep_translator.GoogleTranslator", tr), \
+             mock.patch.object(whatsapp, "build_whatsapp", side_effect=wa), \
+             mock.patch.object(email_brand, "build_brand_email",
+                               side_effect=lambda *a, **k: visto.__setitem__("en", a[6]) or
+                               {"eml": b"E", "html": "<html></html>", "error": None}):
+            res = generate.build_all_from_payload([{"url": items[0].url, "pos": 0}], D, cfg)
+        assert visto["hl"] == ["Editado 1", "Editado 2"]
+        assert visto["en"] == ["Edited 1", "EN Editado 2"]           # só o vazio foi traduzido
+        assert res["blast"]["destaques"] == ["Editado 1", "Editado 2"]
+
     def test_process_desvia_para_o_job_unico_e_devolve_pelos_caminhos_de_sempre(self):
         res = {"docx": b"D", "eml": b"E", "docx_name": "NEWS - 11242026.docx", "eml_name": "NEWS - 11242026.eml",
                "html": "<html></html>", "html_name": "NEWS - 11242026.html", "whatsapp": b"<html>w</html>",
