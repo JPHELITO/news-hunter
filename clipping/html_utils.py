@@ -437,6 +437,25 @@ def dom_items_to_html(items_json: str) -> str:
     return _strip_related_html(result)
 
 
+# Marcador que o plugin Site Kit (Google) põe no FIM do texto de posts WordPress — em geral
+# como comentário HTML (<!--[googlesitekit-end-of-content]-->). Tudo depois dele não é corpo.
+_SITEKIT_END_RE = re.compile(r"googlesitekit-end-of-content", re.I)
+
+
+def _cut_from(node, container) -> None:
+    """Remove ``node`` e tudo o que vem DEPOIS dele dentro de ``container``.
+
+    Sobe nível a nível até o container tirando os irmãos seguintes — então o texto que
+    está ANTES do marcador no mesmo parágrafo fica (só sai o que vem depois)."""
+    cur = node
+    while cur is not None and cur is not container:
+        parent = cur.parent
+        for sib in list(cur.next_siblings):
+            sib.extract()
+        cur = parent
+    node.extract()
+
+
 def extract_article_container(soup, url: str = ""):
     """Retorna o elemento BeautifulSoup com o corpo do artigo, com lógica por domínio.
 
@@ -461,29 +480,55 @@ def extract_article_container(soup, url: str = ""):
     domain = urlparse(url).netloc.lower() if url else ""
 
     if domain in ("www.mining.com", "mining.com"):
-        # Estrutura mining.com:
+        # Estrutura mining.com — DOIS temas (o seletor tenta o novo e cai no antigo):
+        #
+        # • Tema "mdc-2026" (no ar desde ~19/11/2026):
+        #   article.single-article > section  (h1 título + linha fina)   — NÃO incluir
+        #                          > section  (autor | data)             — NÃO incluir
+        #                          > section  (Categories)               — NÃO incluir
+        #                          > section  (foto de capa + legenda)   — NÃO incluir
+        #                          > section.the-content  (texto real, com os gráficos)
+        #                          > section  ("Comments" / "No comments yet.") — NÃO incluir
+        #   O texto termina no marcador <!--[googlesitekit-end-of-content]--> do Site Kit.
+        #   ⚠️ Sem este seletor o container sumia e a extração caía no <article> inteiro:
+        #   o corpo saía com o título repetido, a data, a foto de capa e, no fim,
+        #   "[googlesitekit-end-of-content]" + "Comments" + "No comments yet." (24/11/2026).
+        #
+        # • Tema antigo (até ~18/11/2026):
         #   article > div.post-inner-content > div.content  (texto real)
         #                                    > div.more-news   (seção "More News" — NÃO incluir)
         #                                    > div.share       (barra social)
         #                                    > section.comment-section
-        # Estratégia dupla:
-        #   1. Seletor específico div.content (irmão do more-news, não contém ele)
-        #   2. Corte por sentinel: remove tudo a partir do primeiro elemento
-        #      cujo texto começa com "More News" (salvaguarda para variações)
-        container = soup.select_one("div.post-inner-content .content")
+        container = (
+            soup.select_one("article.single-article section.the-content")
+            or soup.select_one("section.the-content")
+            or soup.select_one("div.post-inner-content .content")
+        )
         if container:
+            # Passa 0 — fim do texto = marcador do Site Kit. Corta o marcador e tudo o que
+            # vem DEPOIS dele (em cada nível até o container: o texto antes dele fica). Depois
+            # tira os outros comentários HTML: o sanitizador os escreveria como texto.
+            from bs4 import Comment as _Comment
+            _mark = container.find(string=_SITEKIT_END_RE)
+            if _mark is not None:
+                _cut_from(_mark, container)
+            for _c in container.find_all(string=lambda s: isinstance(s, _Comment)):
+                _c.extract()
+
             # Passa 1 — remove ruídos por seletor CSS
             for tag in container.select(
                 "div.more-news, section.comment-section, div.share,"
-                " .ad-block, .ad-slot, figure.wp-block-embed,"
+                " #comments, #respond, .comment-respond, [class*='mdc-comment'],"
+                " .ad-block, .ad-slot, .ad-zone, figure.wp-block-embed,"
                 " div.d-flex.justify-content-center"
             ):
                 tag.decompose()
 
-            # Passa 2 — corte por sentinel "More News" (qualquer elemento de bloco
-            # cujo texto comece com essa expressão sinaliza início da seção indesejada)
-            _MORE_NEWS_RE = re.compile(
-                r"^\s*more\s+news\b", re.IGNORECASE
+            # Passa 2 — corte por sentinel (salvaguarda para variações): dali para frente
+            # não é mais corpo. "More News…" (tema antigo) ou um bloco que é INTEIRO
+            # "Comments" / "No comments yet." (área de comentários, tema novo).
+            _END_SENTINEL_RE = re.compile(
+                r"^\s*(?:more\s+news\b|comments\s*$|no\s+comments\s+yet\b)", re.IGNORECASE
             )
             sentinel_found = False
             for child in list(container.children):
@@ -491,7 +536,7 @@ def extract_article_container(soup, url: str = ""):
                     child.extract()
                     continue
                 text = getattr(child, "get_text", lambda **_: "")(" ", strip=True)
-                if _MORE_NEWS_RE.match(text):
+                if _END_SENTINEL_RE.match(text):
                     sentinel_found = True
                     child.extract()
 
