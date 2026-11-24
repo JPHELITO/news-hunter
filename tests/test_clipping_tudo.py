@@ -392,3 +392,12 @@ class TestUploadComNovaTentativa:
             with pytest.raises(RuntimeError):
                 run_jobs._upload("a/b.html", b"x", "text/html")
         assert post.call_count == 3
+
+    def test_link_assinado_tambem_tenta_de_novo(self):
+        ok = self._resp(200); ok.json.return_value = {"signedURL": "/object/sign/b/a.html?token=t"}
+        with mock.patch.object(run_jobs, "_env", return_value=("https://s", "k")), \
+             mock.patch("time.sleep"), \
+             mock.patch.object(run_jobs.requests, "post",
+                               side_effect=[run_jobs.requests.exceptions.ReadTimeout(), ok]) as post:
+            u = run_jobs._sign("a.html")
+        assert post.call_count == 2 and u.endswith("token=t")

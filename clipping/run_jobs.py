@@ -99,12 +99,27 @@ def _upload(path: str, data: bytes, content_type: str) -> None:
 
 
 def _sign(path: str, download: str | None = None) -> str:
+    """Link assinado. Mesma proteção do `_upload` (24/11/2026: com a rede da nuvem lenta, o link
+    do HTML do WhatsApp esgotou o tempo logo depois de o arquivo subir, e o HTML ficou sem link)."""
+    import time
     url, key = _env()
-    r = requests.post(f"{url}/storage/v1/object/sign/{BUCKET}/{_enc(path)}",
-                      headers=_h(key, {"Content-Type": "application/json"}),
-                      json={"expiresIn": SIGN_TTL}, timeout=30)
-    if not r.ok:
-        raise RuntimeError(f"sign {path} -> {r.status_code} {r.text[:200]}")
+    r, erro = None, ""
+    for tentativa in range(3):
+        try:
+            r = requests.post(f"{url}/storage/v1/object/sign/{BUCKET}/{_enc(path)}",
+                              headers=_h(key, {"Content-Type": "application/json"}),
+                              json={"expiresIn": SIGN_TTL}, timeout=30)
+        except requests.RequestException as e:
+            r, erro = None, type(e).__name__
+        else:
+            if r.ok or r.status_code < 500:
+                break
+            erro = f"{r.status_code}"
+        if tentativa < 2:
+            log.warning("sign %s falhou (%s) — tento de novo", path, erro)
+            time.sleep(3 * (tentativa + 1))
+    if r is None or not r.ok:
+        raise RuntimeError(f"sign {path} -> {erro or (r.status_code, r.text[:200])}")
     signed = r.json()["signedURL"]            # ex.: /object/sign/<bucket>/<path>?token=...
     out = f"{url}/storage/v1{signed}"
     if download:
