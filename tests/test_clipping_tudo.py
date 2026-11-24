@@ -248,6 +248,30 @@ class TestJobTudo:
         assert res["docx"] == b"DOCX" and res["eml"] == b"EML-NOVO"
         assert "2026-11-24" not in visto["cfg_html"]["blast_highlights"]
 
+    def test_destaque_velho_nunca_entra_no_html_nem_no_email(self):
+        """Pergunta do usuário (24/11): o botão espera os destaques NOVOS? Sim — e se a IA falhar,
+        o HTML e o e-mail saem SEM destaques, nunca com os de ontem nem com os de uma rodada
+        anterior do mesmo dia."""
+        items = [_item(0)]
+        velho = {"blast_highlights": {"2026-11-23": {"destaques": ["DE ONTEM"], "destaques_en": ["YESTERDAY"]},
+                                      "2026-11-24": {"destaques": ["DE HOJE CEDO"], "destaques_en": ["EARLIER"]}},
+                 "tudo": {"on": True}}
+        visto = {}
+
+        def wa(its, d, cfg):
+            visto["hl"] = whatsapp.news_model(its, d, cfg)["highlights"]
+            return {"html": None, "error": None, "model": None, "fonts": None}
+        falhou = {"destaques": [], "destaques_en": [], "en_fonte": "", "provedor": None, "erro": "lotado"}
+        with mock.patch.object(generate, "_to_item", side_effect=lambda r, f, e: items[0]), \
+             mock.patch.object(generate, "build_docx", return_value=b"DOCX"), \
+             mock.patch.object(blast, "highlights", return_value=falhou), \
+             mock.patch.object(whatsapp, "build_whatsapp", side_effect=wa), \
+             mock.patch.object(email_brand, "build_brand_email",
+                               side_effect=lambda *a, **k: visto.__setitem__("en", a[6]) or
+                               {"eml": b"E", "html": "<html></html>", "error": None}):
+            generate.build_all_from_payload([{"url": items[0].url, "pos": 0}], D, velho)
+        assert visto["hl"] == [] and visto["en"] == []
+
     def test_process_desvia_para_o_job_unico_e_devolve_pelos_caminhos_de_sempre(self):
         res = {"docx": b"D", "eml": b"E", "docx_name": "NEWS - 11242026.docx", "eml_name": "NEWS - 11242026.eml",
                "html": "<html></html>", "html_name": "NEWS - 11242026.html", "whatsapp": b"<html>w</html>",
