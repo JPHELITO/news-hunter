@@ -614,17 +614,59 @@
 
   // ═══════════════ 6. TEXTO RICO DO ANALISTA (sanitizado) ═══════════════════
   // Aceita só b/strong/i/em/u/a/br vindos do editor; o resto vira texto.
-  R.cleanRich = function (html) {
+  // `opts.cores` (24/11/2026, só o recado do clipping): mantém a COR que o analista escolheu no
+  // editor da aba Clipping (o Word e o e-mail já mantinham; aqui ela sumia). Cor quase preta ou
+  // quase branca sai — sumiria num dos dois temas (o HTML abre escuro) — e vira a cor do texto.
+  // Sem a opção, nada muda (Reports e o resto continuam exatamente como eram).
+  function _corLegivel(attrs) {
+    var m = /(?:^|[\s;"'])color\s*:\s*(#[0-9a-f]{3}(?:[0-9a-f]{3})?|rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\))/i.exec(attrs || '') ||
+            /\scolor\s*=\s*["']?(#[0-9a-f]{3}(?:[0-9a-f]{3})?)/i.exec(attrs || '');
+    if (!m) return '';
+    var c = m[1].toLowerCase(), r, g, b;
+    if (c.charAt(0) === '#') {
+      if (c.length === 4) c = '#' + c[1] + c[1] + c[2] + c[2] + c[3] + c[3];
+      r = parseInt(c.substr(1, 2), 16); g = parseInt(c.substr(3, 2), 16); b = parseInt(c.substr(5, 2), 16);
+    } else {
+      var n = c.match(/\d+/g); r = +n[0]; g = +n[1]; b = +n[2];
+      if (r > 255 || g > 255 || b > 255) return '';
+      c = '#' + [r, g, b].map(function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+    }
+    var lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return (lum < 0.25 || lum > 0.85) ? '' : c;
+  }
+  R.cleanRich = function (html, opts) {
+    var cores = !!(opts && opts.cores);
     var s = String(html == null ? '' : html);
     s = s.replace(/<(script|style)[\s\S]*?<\/\1>/gi, '');
     s = s.replace(/<br\s*\/?>/gi, '\u0001BR\u0001')
       .replace(/<\/(div|p)>\s*<(div|p)[^>]*>/gi, '\u0001BR\u0001')
       .replace(/<(div|p)[^>]*>/gi, '').replace(/<\/(div|p)>/gi, '');
     var keep = [];
-    s = s.replace(/<(\/?)(b|strong|i|em|u)\b[^>]*>/gi, function (_, sl, t) {
-      t = t.toLowerCase(); t = t === 'strong' ? 'b' : t === 'em' ? 'i' : t;
-      keep.push('<' + sl + t + '>'); return '\u0002' + (keep.length - 1) + '\u0002';
-    });
+    if (cores) {
+      // a cor pode vir em <span>/<font> OU no próprio <b>/<i>/<u> (o execCommand do editor pinta o
+      // elemento que já envolve a seleção). Pilha por tag: o fechamento sabe se abriu uma cor.
+      var pilha = [];
+      s = s.replace(/<(\/?)(b|strong|i|em|u|span|font)\b([^>]*)>/gi, function (_, sl, t, at) {
+        t = t.toLowerCase(); t = t === 'strong' ? 'b' : t === 'em' ? 'i' : t === 'font' ? 'span' : t;
+        var out;
+        if (!sl) {
+          var c = _corLegivel(at);
+          pilha.push({ t: t, c: !!c });
+          out = (t === 'span' ? '' : '<' + t + '>') + (c ? '<span style="color:' + c + '">' : '');
+        } else {
+          var k = -1;
+          for (var j = pilha.length - 1; j >= 0; j--) { if (pilha[j].t === t) { k = j; break; } }
+          var e = k >= 0 ? pilha.splice(k, 1)[0] : { t: t, c: false };
+          out = (e.c ? '</span>' : '') + (t === 'span' ? '' : '</' + t + '>');
+        }
+        keep.push(out); return '\u0002' + (keep.length - 1) + '\u0002';
+      });
+    } else {
+      s = s.replace(/<(\/?)(b|strong|i|em|u)\b[^>]*>/gi, function (_, sl, t) {
+        t = t.toLowerCase(); t = t === 'strong' ? 'b' : t === 'em' ? 'i' : t;
+        keep.push('<' + sl + t + '>'); return '\u0002' + (keep.length - 1) + '\u0002';
+      });
+    }
     s = s.replace(/<a\b[^>]*?href\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/gi, function (_, __, h1, h2) {
       var h = (h1 || h2 || '').trim();
       if (!/^(https?:|mailto:)/i.test(h)) { keep.push('<a>'); return '\u0002' + (keep.length - 1) + '\u0002'; }
@@ -1777,7 +1819,7 @@
     ordered.forEach(function (it) { if (it.source && sources.indexOf(it.source) < 0) sources.push(it.source); });
     return documentHTML({
       kind: 'news', texts: T, fonts: fonts, sections: sections, calm: !!(opts && opts.calm), mainPre: filterPre,
-      note: M.intro_html ? R.cleanRich(M.intro_html) : '',
+      note: M.intro_html ? R.cleanRich(M.intro_html, { cores: true }) : '',   // a cor do editor vale aqui também
       sourceNote: 'News: ' + (sources.join(', ') || 'third-party sources') + '. Summaries and free translations of third-party content for our clients; the original articles prevail. Our take (+ positive, = neutral, − negative) is Itaú BBA’s view.'
     });
   };
