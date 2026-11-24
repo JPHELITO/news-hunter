@@ -218,8 +218,11 @@ def test_traducao_tenta_o_segundo_gemini_do_projeto_dedicado_antes_do_glm(monkey
     monkeypatch.setenv("GEMINI_API_KEY", "kt")
     monkeypatch.delenv("CLIPPING_TRANSLATE_CHAIN", raising=False)
     cadeia = build._translate_chain()
-    assert [c["key"] for c in cadeia] == ["kc", "kc", "kz", "kt"]
+    # 24/11/2026: + 2 modelos do Google no projeto dedicado (3.5-flash, 3-flash) antes do GLM;
+    # o Gemini compartilhado (cota dos takes) segue por último. Groq só com a chave dela.
+    assert [c["key"] for c in cadeia] == ["kc", "kc", "kc", "kc", "kz", "kt"]
     assert cadeia[1]["model"] == M2 != cadeia[0]["model"]
+    assert len({c["model"] for c in cadeia[:4]}) == 4               # 4 modelos diferentes
 
 
 def test_traducao_sem_chave_dedicada_continua_como_antes(monkeypatch):

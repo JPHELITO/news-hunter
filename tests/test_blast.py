@@ -59,11 +59,13 @@ class TestEscolhaDoProvedor:
         assert _ordem(carga2)[0] == "gemini_takes"
 
     def test_pool_sobrecarregado_sai_da_disputa(self):
-        """Os dois Gemini quase no teto -> a vez é da Z.AI, e não de um Gemini apertado."""
+        """Os dois Gemini titulares quase no teto -> saem (e o 2º modelo do clipping, que conta
+        pelo mesmo projeto). A vez é de OUTRO modelo do Google, com cota própria (24/11/2026);
+        a Z.AI, lenta, continua por último."""
         carga = {**ZERADO, "gemini_clipping": 490, "gemini_takes": 495}
         ordem = _ordem(carga)
-        assert ordem[0] == "zai"
-        assert "gemini_clipping" not in ordem and "gemini_takes" not in ordem
+        assert ordem[0] == "gemini_extra1" and ordem[-1] == "zai"
+        assert not {"gemini_clipping", "gemini_takes", "gemini_clipping_b"} & set(ordem)
 
     def test_lento_fica_por_ultimo_mesmo_ocioso(self):
         """A Z.AI leva ~1 min por chamada; folga de cota não paga o analista esperando."""
@@ -71,8 +73,9 @@ class TestEscolhaDoProvedor:
 
     def test_todos_apertados_usa_o_menos_pior_em_vez_de_desistir(self):
         """Blast sem destaque é aceitável; blast que nem tenta, não."""
-        carga = {"gemini_clipping": 500, "gemini_takes": 500, "zai": 900}
-        ordem = _ordem(carga)
+        carga = {"gemini_clipping": 500, "gemini_takes": 500, "gemini_takes_b": 500, "zai": 900}
+        with mock.patch.object(blast, "EXTRA_GEMINI", []):    # sem os modelos extras do Google
+            ordem = _ordem(carga)
         assert len(ordem) == 1 and ordem[0] == "zai"      # 10% livre é a maior folga restante
 
     def test_provedor_sem_chave_nao_entra(self):

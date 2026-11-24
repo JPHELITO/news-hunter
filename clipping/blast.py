@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -57,8 +58,23 @@ CAPACIDADE = {
     # 24/11/2026: o 3.1 deu "503 high demand" nos dois projetos e o blast caiu na Z.AI (1m41s),
     # enquanto o resumo da hora, que já usava o 3.5 de reserva, passou na mesma manhã.
     "gemini_clipping_b": 500,
+    "gemini_takes_b":    500,  # 2º modelo no projeto dos takes (o robô dos takes só usa de reserva)
+    "groq":             1000,  # outra EMPRESA (não é Google): 1.000 pedidos/dia, 8 mil tokens/min
     "zai":            1000,    # ocioso, porém LENTO (55-66s por chamada)
 }
+# Os OUTROS modelos do Google entram como portas extras (`gemini_extra1`, `gemini_extra2`…): cada
+# MODELO tem a sua própria lotação e a sua própria cota grátis. Sem contador — usamos 1 a 3 por dia.
+
+# ── POR QUE TANTAS PORTAS (24/11/2026, 2 de 3 "Gerar tudo" da tarde saíram SEM destaques) ──────
+# 15:37 e 16:14 BRT: o Google respondia "503 high demand" no 3.1-flash-lite E no 3.5-flash-lite,
+# nos DOIS projetos (lotação do Google — nossa cota estava em 15%), e a Z.AI, último degrau, dava
+# "429" porque o robô dos takes tinha caído nela pelo mesmo motivo. A cadeia tentou 5 vezes em ~30 s
+# e DESISTIU. No mesmo horário o robô dos takes conseguia respostas do 3.5-flash-lite (ele insiste),
+# e às 16:40 o 3.5-flash e o 3-flash-preview responderam de primeira. Lição: lotação do Google
+# passa; desistir em 30 s, não. Ver `highlights` (insiste em voltas por até PACIENCIA_S).
+EXTRA_GEMINI = [m.strip() for m in os.environ.get(
+    "BLAST_EXTRA_GEMINI", "gemini-3.5-flash,gemini-3-flash-preview").split(",") if m.strip()]
+GROQ_MODEL = os.environ.get("BLAST_GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def _carga_hoje() -> dict:
@@ -83,12 +99,19 @@ def _carga_hoje() -> dict:
     t0 = quote(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0,
                                                   microsecond=0).isoformat())
     try:
+        from hunter.llm_take import PROVIDERS as _P
+        gem_b = (_P.get("gemini_b") or {}).get("model") or "gemini-3.5-flash-lite"
+    except Exception:
+        gem_b = "gemini-3.5-flash-lite"
+    try:
         r = requests.get(f"{url}/rest/v1/news_articles?select=take_llm_model"
                          f"&take_llm_at=gte.{t0}&limit=5000", headers=h, timeout=20)
         r.raise_for_status()
         for row in r.json():
             m = str(row.get("take_llm_model") or "")
-            if m.startswith("gemini"):
+            if m == gem_b:                       # a cota do Google é POR MODELO
+                carga["gemini_takes_b"] += 1
+            elif m.startswith("gemini"):
                 carga["gemini_takes"] += 1
             elif m.startswith("glm"):
                 carga["zai"] += 1
@@ -110,11 +133,22 @@ FOLGA_MINIMA = float(os.environ.get("BLAST_FOLGA_MINIMA", "0.20"))
 # Erro medido de cada família em 2026-08-06 (% de julgamento claramente errado, nas fontes
 # curadas): gemini 0,8% · mistral 4,7% · glm ~25%. Menor é melhor.
 # A Mistral saiu em 2026-10-21: conta grátis com limite zero, passou a exigir cartão.
-QUALIDADE = {"gemini_clipping": 0, "gemini_takes": 0, "gemini_clipping_b": 1, "zai": 2}
+# Os modelos extras do Google ficam DEPOIS do titular (3.1-flash-lite, o que escreve os destaques
+# desde setembro) e ANTES do 2º modelo lite; Groq e Z.AI são as portas fora do Google.
+QUALIDADE = {"gemini_clipping": 0, "gemini_takes": 0, "gemini_extra": 0.5,
+             "gemini_clipping_b": 1, "gemini_takes_b": 1, "groq": 2, "zai": 3}
 
-# Lotação do Google (5xx) costuma passar em segundos: o robô dos takes tenta de novo e passa
-# (24/11 09:33 UTC, mesmo minuto em que o blast desistiu). Uma nova tentativa por provedor.
-RETENTAR_5XX_S = float(os.environ.get("BLAST_RETENTAR_S", "4"))
+# INSISTIR, em voltas por todas as portas, até alguém responder (24/11/2026 — ver o topo).
+# Normal: a 1ª porta responde em segundos e nada disto aparece. Google lotado: o robô passa por
+# todas, espera um pouco e passa de novo, por até PACIENCIA_S. A aba espera junto (até 16 min).
+PACIENCIA_S = float(os.environ.get("BLAST_PACIENCIA_S", "420"))
+ESPERAS_S = (10, 20, 30, 45, 60)             # entre uma volta e outra; depois fica em 60
+# Porta que NÃO EXISTE ou recusa a CHAVE não é tentada de novo (não é lotação, não passa sozinha).
+# 413 = pedido grande demais para aquela porta (Groq).
+FECHA_PORTA = {400, 401, 403, 404, 413}
+
+_agora = time.monotonic                      # trocáveis nos testes (relógio falso)
+_dormir = time.sleep
 
 
 def escolher_provedores() -> list:
@@ -144,18 +178,35 @@ def escolher_provedores() -> list:
     gem_b = (_P.get("gemini_b") or {}).get("model") or "gemini-3.5-flash-lite"
     zai = (_P.get("zai") or {}).get("model") or "glm-4.5-flash"
 
+    clip_key = os.environ.get("CLIPPING_TRANSLATE_KEY", "")
+    takes_key = os.environ.get("GEMINI_API_KEY", "")
     defs = {
         "gemini_clipping": {"rotulo": "gemini (projeto clipping)", "kind": "gemini", "lento": False,
-                            "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""), "model": gem},
+                            "key": clip_key, "model": gem},
         "gemini_takes":    {"rotulo": "gemini (projeto takes)", "kind": "gemini", "lento": False,
-                            "key": os.environ.get("GEMINI_API_KEY", ""), "model": gem},
+                            "key": takes_key, "model": gem},
+    }
+    # outros modelos do Google no projeto do clipping (cada modelo = lotação e cota próprias)
+    for i, m in enumerate(x for x in EXTRA_GEMINI if x not in (gem, gem_b)):
+        defs[f"gemini_extra{i + 1}"] = {"rotulo": f"gemini {m} (projeto clipping)", "kind": "gemini",
+                                        "lento": False, "key": clip_key, "model": m,
+                                        "qualidade": "gemini_extra", "timeout": 60}
+    defs.update({
         "gemini_clipping_b": {"rotulo": "gemini 2º modelo (projeto clipping)", "kind": "gemini",
-                              "lento": False, "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""),
-                              "model": gem_b},
+                              "lento": False, "key": clip_key, "model": gem_b},
+        "gemini_takes_b": {"rotulo": "gemini 2º modelo (projeto takes)", "kind": "gemini",
+                           "lento": False, "key": takes_key if gem_b != gem else "", "model": gem_b},
+        # outra empresa: não cai junto com o Google. Teto de 8 mil tokens POR MINUTO → recebe as
+        # notícias com o texto encurtado (`prompt_max`); o gpt-oss "pensa" antes de responder, e
+        # esse pensamento conta no teto → esforço baixo e saída limitada.
+        "groq": {"rotulo": "groq (gpt-oss)", "kind": "openai", "lento": False,
+                 "key": os.environ.get("GROQ_API_KEY", ""), "model": GROQ_MODEL,
+                 "url": "https://api.groq.com/openai/v1/chat/completions", "timeout": 60,
+                 "prompt_max": 14000, "extra": {"reasoning_effort": "low", "max_tokens": 2000}},
         "zai":             {"rotulo": "z.ai (GLM)", "kind": "openai", "lento": True,
                             "key": os.environ.get("ZAI_API_KEY", ""), "model": zai,
-                            "url": "https://api.z.ai/api/paas/v4/chat/completions"},
-    }
+                            "url": "https://api.z.ai/api/paas/v4/chat/completions", "timeout": 150},
+    })
     carga = _carga_hoje()
 
     def _folga(nome):
@@ -175,7 +226,7 @@ def escolher_provedores() -> list:
         folgados = sorted(vivos, key=lambda it: -_folga(it[0]))[:1]
 
     ordem = sorted(folgados, key=lambda it: (1 if it[1]["lento"] else 0,
-                                             QUALIDADE.get(it[0], 9),
+                                             QUALIDADE.get(it[1].get("qualidade") or it[0], 9),
                                              -_folga(it[0])))
     log.info("blast: carga de hoje %s -> ordem %s", carga, [n for n, _ in ordem])
     return [dict(d, nome=n, folga=round(_folga(n), 3)) for n, d in ordem]
@@ -255,24 +306,25 @@ def _chamar(cfg: dict, prompt: str):
                     "highlights_en": {"type": "ARRAY", "items": {"type": "STRING"}}},
                     "required": ["destaques"]}},
         }
-        r = requests.post(url, json=payload, timeout=90,
+        r = requests.post(url, json=payload, timeout=cfg.get("timeout", 90),
                           headers={"x-goog-api-key": cfg["key"], "Content-Type": "application/json"})
         cfg["_status"] = r.status_code
         if not r.ok:
-            log.warning("blast: %s HTTP %s", cfg["rotulo"], r.status_code)
+            log.warning("blast: %s HTTP %s %s", cfg["rotulo"], r.status_code, _motivo(r))
             return None
         raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
     else:
         payload = {"model": cfg["model"], "temperature": 0.2,
                    "response_format": {"type": "json_object"},
                    "messages": [{"role": "system", "content": SYSTEM},
-                                {"role": "user", "content": prompt}]}
-        r = requests.post(cfg["url"], json=payload, timeout=150,
+                                {"role": "user", "content": prompt}],
+                   **(cfg.get("extra") or {})}
+        r = requests.post(cfg["url"], json=payload, timeout=cfg.get("timeout", 150),
                           headers={"Authorization": f"Bearer {cfg['key']}",
                                    "Content-Type": "application/json"})
         cfg["_status"] = r.status_code
         if not r.ok:
-            log.warning("blast: %s HTTP %s", cfg["rotulo"], r.status_code)
+            log.warning("blast: %s HTTP %s %s", cfg["rotulo"], r.status_code, _motivo(r))
             return None
         raw = r.json()["choices"][0]["message"]["content"]
 
@@ -292,12 +344,26 @@ def _chamar(cfg: dict, prompt: str):
     from hunter.llm_take import _text_items     # texto solto no lugar da lista não vira letras
     destaques = [d.strip().rstrip(";.").strip() for d in _text_items(out.get("destaques"))]
     destaques = [d for d in destaques if d]
-    if not destaques:
-        return None
     en = [d.strip().rstrip(";.").strip() for d in _text_items(out.get("highlights_en"))]
+    if not destaques and out.get("destaques") != []:
+        return None                         # veio lixo no lugar das frases: é falha, não resposta
+    # lista VAZIA de verdade ([]) é uma resposta ("nada relevante hoje"), não uma falha — volta
+    # vazia e quem chama decide (pergunta a mais um modelo antes de aceitar)
     res = _Destaques(destaques)
-    res.en = [d for d in en if d]
+    res.en = [d for d in en if d] if destaques else []
     return res
+
+
+def _motivo(r) -> str:
+    """O começo da explicação do erro (para o registro: '429 concurrency', '503 high demand'…)."""
+    try:
+        j = r.json()
+        e = j.get("error") if isinstance(j, dict) else None
+        if isinstance(e, dict):
+            return str(e.get("message") or e.get("code") or "")[:140]
+        return str(e or j)[:140]
+    except Exception:
+        return (getattr(r, "text", "") or "")[:140]
 
 
 class _Destaques(list):
@@ -352,19 +418,20 @@ def _linha(n: dict, corpo_max: int = CORPO_MAX_CHARS) -> str:
     return cab + "\n    " + corpo
 
 
-def _montar_noticias(noticias: list) -> str:
+def _montar_noticias(noticias: list, prompt_max: int | None = None) -> str:
     """
-    O bloco de notícias do prompt, respeitando o teto total.
+    O bloco de notícias do prompt, respeitando o teto total (`prompt_max`; a Groq usa um menor).
 
     Encolhe o corpo de TODAS por igual em vez de cortar as últimas fora: uma notícia que
     some do prompt não pode ser escolhida, e quem decide o que é relevante é a IA — não a
     ordem em que o analista arrastou os itens.
     """
+    teto = prompt_max or PROMPT_MAX_CHARS
     corpo_max = CORPO_MAX_CHARS
     while True:
         bloco = "\n".join(_linha(x, corpo_max) for x in noticias)
-        if len(bloco) <= PROMPT_MAX_CHARS or corpo_max <= 300:
-            if len(bloco) > PROMPT_MAX_CHARS:
+        if len(bloco) <= teto or corpo_max <= 300:
+            if len(bloco) > teto:
                 log.warning("blast: %d notícias estouram o teto mesmo com corpo curto — "
                             "vou mandar %d caracteres", len(noticias), len(bloco))
             return bloco
@@ -486,13 +553,17 @@ def highlights(noticias: list, n: int = 3) -> dict:
     uma frase para cada e só escolhe o que sobrar (nenhuma ★ = ela escolhe as três, como antes).
     A ordem das ★ é a ordem em que ele clicou, e é a ordem no blast.
 
-    UMA chamada traz as duas línguas (português p/ o WhatsApp, inglês p/ o e-mail). Lotação do
-    Google (5xx) ganha UMA nova tentativa; se o MODELO segue lotado, os outros projetos com o
-    mesmo modelo são pulados (a lotação é do modelo no Google, não do nosso projeto) e a vez
-    passa ao 2º modelo, antes da Z.AI, que é lenta.
+    UMA chamada traz as duas línguas (português p/ o WhatsApp, inglês p/ o e-mail).
+
+    INSISTE (24/11/2026): passa por TODAS as portas (Gemini titular nos 2 projetos, outros modelos
+    do Google, o 2º modelo lite, Groq e Z.AI) e, se nenhuma responder, espera um pouco (10 s, 20 s,
+    30 s, 45 s, 60 s…) e passa de novo — por até `PACIENCIA_S` (7 min). Lotação do Google e "429"
+    da Z.AI passam sozinhos; desistir em 30 s, como antes, foi o que deixou o clipping sem
+    destaques. Porta que não existe ou recusa a chave (`FECHA_PORTA`) sai da roda. Resposta
+    VAZIA ("nada relevante") de dois modelos diferentes é aceita como resposta.
 
     Nunca levanta exceção: o blast tem de sair mesmo sem IA — sem destaque ele ainda entrega
-    preços e manchetes, que é a maior parte do valor. Seção vazia é prevista no formato.
+    preços e manchetes. Quem chama (a aba) avisa em VERMELHO quando não houver destaque.
     """
     vazio = {"destaques": [], "destaques_en": [], "en_fonte": "", "provedor": None}
     if not noticias:
@@ -500,42 +571,71 @@ def highlights(noticias: list, n: int = 3) -> dict:
     noticias = [dict(x) for x in noticias]          # não mexe no dicionário de quem chamou
     k = _normalizar_pins(noticias, n)
     marcadas, limite = _regras_da_escolha(k, n)
-    prompt = INSTRUCAO.format(n=n, marcadas=marcadas, limite=limite,
-                              noticias=_montar_noticias(noticias))
-    erro = "nenhum provedor configurado"
-    lotados: set = set()                             # modelos que o Google recusou 2× (5xx)
-    for cfg in escolher_provedores():
-        if cfg.get("model") in lotados:
-            log.info("blast: pulo %s — o modelo %s está lotado no Google agora", cfg["rotulo"], cfg["model"])
-            continue
-        log.info("blast: pedindo %d destaques a %s (folga %.0f%%, %d marcada(s) pelo analista)",
-                 n, cfg["rotulo"], cfg["folga"] * 100, k)
-        got = None
-        for tentativa in (1, 2):
+    prompts: dict = {}
+
+    def _prompt(cfg):
+        teto = cfg.get("prompt_max") or PROMPT_MAX_CHARS
+        if teto not in prompts:
+            prompts[teto] = INSTRUCAO.format(n=n, marcadas=marcadas, limite=limite,
+                                             noticias=_montar_noticias(noticias, teto))
+        return prompts[teto]
+
+    portas = escolher_provedores()
+    if not portas:
+        return {**vazio, "erro": "nenhum provedor configurado"}
+    t0 = _agora()
+    fechadas: set = set()
+    vazias: list = []                                # quem respondeu "nada relevante"
+    ultimo: dict = {}                                # rótulo -> o que aconteceu na última vez
+    volta = 0
+    while True:
+        volta += 1
+        for cfg in portas:
+            if cfg["nome"] in fechadas or cfg["rotulo"] in vazias:
+                continue
+            if volta > 1 and _agora() - t0 > PACIENCIA_S:
+                break
+            log.info("blast: pedindo %d destaques a %s (volta %d, folga %.0f%%, %d marcada(s) pelo analista)",
+                     n, cfg["rotulo"], volta, cfg["folga"] * 100, k)
             cfg.pop("_status", None)
             try:
-                got = _chamar(cfg, prompt)
-            except Exception as e:
-                erro = f"{cfg['rotulo']}: {type(e).__name__}"
+                got = _chamar(cfg, _prompt(cfg))
+            except Exception as e:                    # tempo esgotado, rede: passa, tenta na volta seguinte
                 log.warning("blast: %s levantou %s", cfg["rotulo"], e)
-                got = None
-                break
+                ultimo[cfg["rotulo"]] = type(e).__name__
+                continue
             st = cfg.get("_status") or 0
-            if got or not (500 <= st < 600) or tentativa == 2:
-                if not got and 500 <= st < 600:
-                    lotados.add(cfg.get("model"))
-                break
-            log.info("blast: %s lotado (HTTP %s) — tento de novo em %.0fs", cfg["rotulo"], st, RETENTAR_5XX_S)
-            import time
-            time.sleep(RETENTAR_5XX_S)
-        if got:
-            pt = list(got)[:n]
-            # só resposta de IA de verdade (`_Destaques`) passa pelo inglês; lista crua (testes,
-            # código antigo) fica sem — e o teste não sai fazendo tradução pela internet
-            en, fonte = (_ingles(pt, list(got.en or [])[:n]) if isinstance(got, _Destaques)
-                         else ([], ""))
-            return {"destaques": pt, "destaques_en": en, "en_fonte": fonte,
-                    "provedor": cfg["rotulo"], "erro": None}
-        if not erro.startswith(cfg["rotulo"] + ":"):
-            erro = f"{cfg['rotulo']} nao devolveu destaques"
-    return {**vazio, "erro": erro}
+            if got is not None and len(got) == 0:
+                vazias.append(cfg["rotulo"])
+                ultimo[cfg["rotulo"]] = "nada relevante"
+                if len(vazias) >= 2:                  # dois modelos concordam: hoje não há destaque
+                    return {**vazio, "erro": "a IA não achou destaque relevante ("
+                            + " e ".join(vazias) + ")"}
+                continue
+            if got:
+                pt = list(got)[:n]
+                # só resposta de IA de verdade (`_Destaques`) passa pelo inglês; lista crua (testes,
+                # código antigo) fica sem — e o teste não sai fazendo tradução pela internet
+                en, fonte = (_ingles(pt, list(got.en or [])[:n]) if isinstance(got, _Destaques)
+                             else ([], ""))
+                seg = _agora() - t0
+                if volta > 1 or seg > 60:
+                    log.info("blast: destaques por %s na volta %d, depois de %.0f s", cfg["rotulo"], volta, seg)
+                return {"destaques": pt, "destaques_en": en, "en_fonte": fonte,
+                        "provedor": cfg["rotulo"], "erro": None}
+            ultimo[cfg["rotulo"]] = f"HTTP {st}" if st else "resposta inválida"
+            if st in FECHA_PORTA:
+                fechadas.add(cfg["nome"])
+                log.warning("blast: %s fora desta rodada (HTTP %s não passa sozinho)", cfg["rotulo"], st)
+        abertas = [c for c in portas if c["nome"] not in fechadas and c["rotulo"] not in vazias]
+        espera = ESPERAS_S[min(volta - 1, len(ESPERAS_S) - 1)]
+        if not abertas or _agora() - t0 + espera > PACIENCIA_S:
+            break
+        log.warning("blast: nenhuma IA respondeu na volta %d (%s) — tento de novo em %d s",
+                    volta, ", ".join(f"{r}: {o}" for r, o in ultimo.items()), espera)
+        _dormir(espera)
+    minutos = (_agora() - t0) / 60
+    resumo = ", ".join(f"{r}: {o}" for r, o in ultimo.items()) or "nenhuma resposta"
+    if vazias:                                       # um disse "nada relevante", o resto não respondeu
+        resumo = f"{vazias[0]}: nada relevante · " + resumo
+    return {**vazio, "erro": f"nenhuma IA respondeu em {minutos:.1f} min ({volta} volta(s)) — {resumo}"}

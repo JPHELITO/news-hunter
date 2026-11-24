@@ -736,10 +736,27 @@ def _translate_chain() -> list[dict]:
                                and gem_b_model != gem_model else "", "model": gem_b_model},
         "gemini_shared": {"name": "gemini(compartilhada)", "kind": "gemini",
                           "key": os.environ.get("GEMINI_API_KEY", ""), "model": gem_model},
+        # 24/11/2026: às 15:38–16:16 BRT o 3.1 e o 3.5-flash-lite davam "503 high demand" e a Z.AI
+        # "429" → a CMPC saiu em português no e-mail. Outros modelos do Google (lotação e cota
+        # próprias) e a Groq (outra empresa) entram como portas a mais — o mesmo remédio dos destaques.
+        "gemini_dedicated_flash": {"name": "gemini(dedicada, flash)", "kind": "gemini",
+                                   "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""),
+                                   "model": os.environ.get("CLIPPING_TRANSLATE_MODEL_FLASH", "gemini-3.5-flash"),
+                                   "timeout": 60},
+        "gemini_dedicated_flash3": {"name": "gemini(dedicada, 3-flash)", "kind": "gemini",
+                                    "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""),
+                                    "model": os.environ.get("CLIPPING_TRANSLATE_MODEL_FLASH3", "gemini-3-flash-preview"),
+                                    "timeout": 60},
+        # teto de 8 mil tokens/min: matéria longa demais é recusada (413) e a vez passa adiante
+        "groq": {"name": "groq", "kind": "openai", "key": os.environ.get("GROQ_API_KEY", ""),
+                 "model": os.environ.get("CLIPPING_TRANSLATE_GROQ_MODEL", "openai/gpt-oss-120b"),
+                 "url": "https://api.groq.com/openai/v1/chat/completions", "timeout": 60,
+                 "extra": {"reasoning_effort": "low", "max_tokens": 4000}},
     }
     order = [p.strip() for p in os.environ.get(
-        "CLIPPING_TRANSLATE_CHAIN", "gemini_dedicated,gemini_dedicated_b,zai,gemini_shared").split(",")
-        if p.strip()]
+        "CLIPPING_TRANSLATE_CHAIN",
+        "gemini_dedicated,gemini_dedicated_b,gemini_dedicated_flash,gemini_dedicated_flash3,groq,zai,gemini_shared"
+    ).split(",") if p.strip()]
     return [defs[p] for p in order if p in defs and defs[p]["key"]]
 
 
@@ -768,19 +785,20 @@ def _translate_call(cfg: dict, title: str, para_texts: list[str], source_lang: s
         }
         r = requests.post(url, json=payload,
                           headers={"x-goog-api-key": cfg["key"], "Content-Type": "application/json"},
-                          timeout=90)
+                          timeout=cfg.get("timeout", 90))
         if not r.ok:
             log.warning("clipping: tradução %s HTTP %s", cfg["name"], r.status_code)
             return None
         raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-    else:                                            # OpenAI-compatível (Z.AI)
+    else:                                            # OpenAI-compatível (Z.AI, Groq)
         payload = {"model": cfg["model"], "temperature": 0,
                    "response_format": {"type": "json_object"},   # GLM sem isto às vezes não devolve JSON limpo
                    "messages": [{"role": "system", "content": system},
-                                {"role": "user", "content": user}]}
+                                {"role": "user", "content": user}],
+                   **(cfg.get("extra") or {})}
         r = requests.post(cfg["url"], json=payload,
                           headers={"Authorization": f"Bearer {cfg['key']}",
-                                   "Content-Type": "application/json"}, timeout=90)
+                                   "Content-Type": "application/json"}, timeout=cfg.get("timeout", 90))
         if not r.ok:
             log.warning("clipping: tradução %s HTTP %s", cfg["name"], r.status_code)
             return None
@@ -813,17 +831,28 @@ def _translate_via_llm(title: str, para_texts: list[str], source_lang: str) -> t
     chain = _translate_chain()
     if not chain:
         return None
-    for cfg in chain:
-        try:
-            res = _translate_call(cfg, title, para_texts, source_lang)
-        except Exception as e:
-            log.warning("clipping: tradução %s falhou (%s)", cfg["name"], e)
-            continue
-        if res:
-            log.info("clipping: tradução via %s (%s)", cfg["name"], cfg["model"])
-            return res
-    log.warning("clipping: toda a cadeia de tradução falhou — cai p/ Google")
+    # 2 passadas (24/11/2026): lotação do Google passa em segundos/minutos — uma 2ª volta pela
+    # cadeia, 15 s depois, antes de cair no Google Translate grátis (que da nuvem do GitHub
+    # também recusa). Teto: ~2 voltas por matéria, para o clipping não ficar refém de uma só.
+    for passada in (1, 2):
+        for cfg in chain:
+            try:
+                res = _translate_call(cfg, title, para_texts, source_lang)
+            except Exception as e:
+                log.warning("clipping: tradução %s falhou (%s)", cfg["name"], e)
+                continue
+            if res:
+                log.info("clipping: tradução via %s (%s)%s", cfg["name"], cfg["model"],
+                         " na 2ª passada" if passada == 2 else "")
+                return res
+        if passada == 1:
+            log.warning("clipping: nenhuma IA traduziu na 1ª passada — tento de novo em %d s", _TRANSLATE_RETRY_S)
+            time.sleep(_TRANSLATE_RETRY_S)
+    log.warning("clipping: toda a cadeia de tradução falhou (2 passadas) — cai p/ Google")
     return None
+
+
+_TRANSLATE_RETRY_S = int(os.environ.get("CLIPPING_TRANSLATE_RETRY_S", "15"))
 
 
 def _translate_to_english(title: str, body_html: str, source_lang: str) -> tuple[str, str]:

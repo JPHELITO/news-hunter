@@ -4,9 +4,9 @@ novo numa rodada só — e as duas mudanças no blast que vieram junto:
 
   * a MESMA chamada traz os destaques em português (WhatsApp) e em inglês (e-mail) — nenhuma
     chamada de IA a mais;
-  * lotação do Google (5xx) ganha uma nova tentativa, e um modelo lotado não é tentado de novo
-    em outro projeto (a lotação é do modelo): a vez passa ao 2º modelo do projeto do clipping
-    antes da Z.AI, que é lenta. Em 24/11 o blast caiu na Z.AI (1m41s) por falta disso.
+  * lotação do Google: em vez de desistir em ~30 s (o que deixou 2 "Gerar tudo" da tarde de
+    24/11 sem destaques), a cadeia passa por TODAS as portas (Gemini nos 2 projetos, outros
+    modelos do Google, Groq, Z.AI) e insiste em voltas por até 7 min.
 
 Nada aqui fala com IA, Supabase ou internet: tudo simulado.
 """
@@ -28,6 +28,16 @@ from clipping import blast, email_brand, generate, run_jobs, whatsapp     # noqa
 from clipping.build import ClippingItem                                   # noqa: E402
 
 CHAVES = {"CLIPPING_TRANSLATE_KEY": "k1", "GEMINI_API_KEY": "k2", "ZAI_API_KEY": "k4"}
+
+
+@pytest.fixture(autouse=True)
+def _uma_volta_so(monkeypatch):  # (o conftest já protege a suíte toda; este fica por clareza)
+    """Fora dos testes de insistência: uma volta pelas portas e nenhum sono de verdade. E nenhuma
+    chave da Groq vinda da máquina (quem quer a Groq, põe no teste)."""
+    monkeypatch.setattr(blast, "PACIENCIA_S", 0)
+    monkeypatch.setattr(blast, "_dormir", lambda s: None)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr("clipping.build._TRANSLATE_RETRY_S", 0)
 
 
 @pytest.fixture(autouse=True)
@@ -100,65 +110,157 @@ class TestInglesNaMesmaChamada:
         assert r["destaques_en"] == ["EN a", "EN b"] and r["en_fonte"] == "google"
 
 
-# ── blast: lotação do Google ─────────────────────────────────────────────────────────
+# ── blast: lotação do Google — INSISTIR em vez de desistir (24/11/2026) ────────────────
+#
+# Às 15:37 e 16:14 BRT de 24/11 o "Gerar tudo" saiu SEM destaques: o Google respondia "503 high
+# demand" no 3.1 e no 3.5-flash-lite, nos dois projetos, e a Z.AI "429". A cadeia tentou 5 vezes
+# em ~30 s e desistiu — enquanto o robô dos takes, que insiste, recebia respostas no mesmo horário.
 
-class TestLotacaoDoGoogle:
-    def test_2o_modelo_do_clipping_entra_antes_da_zai(self):
-        with mock.patch.dict("os.environ", CHAVES, clear=False), \
+class _Relogio:
+    """Relógio falso: `dormir` avança o tempo; cada chamada à IA custa `custo` segundos."""
+    def __init__(self, custo=3.0):
+        self.t, self.custo, self.sonos = 0.0, custo, []
+
+    def agora(self):
+        return self.t
+
+    def dormir(self, s):
+        self.sonos.append(s)
+        self.t += s
+
+
+def _insistir(falso, relogio, env=None, paciencia=420, noticias=None):
+    def chamar(cfg, prompt):
+        relogio.t += relogio.custo
+        return falso(cfg, prompt)
+    noticias = noticias or [{"title": "x", "body": "<p>" + "texto " * 2000 + "</p>"}]
+    with mock.patch.dict("os.environ", {**CHAVES, "GROQ_API_KEY": "kg", **(env or {})}, clear=False), \
+         mock.patch.object(blast, "_carga_hoje", return_value=ZERADO), \
+         mock.patch.object(blast, "PACIENCIA_S", paciencia), \
+         mock.patch.object(blast, "_agora", relogio.agora), \
+         mock.patch.object(blast, "_dormir", relogio.dormir), \
+         mock.patch.object(blast, "_chamar", side_effect=chamar):
+        return blast.highlights(noticias, n=3)
+
+
+class TestInsistirAteAlguemResponder:
+    def test_todas_as_portas_em_ordem_de_qualidade(self):
+        with mock.patch.dict("os.environ", {**CHAVES, "GROQ_API_KEY": "kg"}, clear=False), \
              mock.patch.object(blast, "_carga_hoje", return_value=ZERADO):
-            ordem = [p["nome"] for p in blast.escolher_provedores()]
-        assert ordem.index("gemini_clipping_b") > ordem.index("gemini_takes")
-        assert ordem.index("gemini_clipping_b") < ordem.index("zai")
+            portas = blast.escolher_provedores()
+        assert [p["nome"] for p in portas] == [
+            "gemini_clipping", "gemini_takes", "gemini_extra1", "gemini_extra2",
+            "gemini_clipping_b", "gemini_takes_b", "groq", "zai"]
+        modelos = {p["nome"]: p["model"] for p in portas}
+        assert modelos["gemini_extra1"] == "gemini-3.5-flash"
+        assert modelos["gemini_extra2"] == "gemini-3-flash-preview"
+        assert modelos["gemini_takes_b"] == modelos["gemini_clipping_b"] != modelos["gemini_takes"]
 
-    def test_503_ganha_uma_nova_tentativa_no_mesmo_provedor(self):
-        chamados = []
+    def test_normal_a_primeira_responde_e_ninguem_espera(self):
+        rel, chamados = _Relogio(), []
 
         def falso(cfg, prompt):
-            chamados.append(cfg["nome"])
-            if len(chamados) == 1:
-                cfg["_status"] = 503
-                return None
-            cfg["_status"] = 200
+            chamados.append(cfg["nome"]); cfg["_status"] = 200
             return _destaques(["ok"], ["ok"])
-        with mock.patch.dict("os.environ", CHAVES, clear=False), \
-             mock.patch.object(blast, "_carga_hoje", return_value=ZERADO), \
-             mock.patch.object(blast, "RETENTAR_5XX_S", 0), \
-             mock.patch.object(blast, "_chamar", side_effect=falso):
-            r = blast.highlights([{"title": "x"}], n=3)
-        assert chamados == ["gemini_clipping", "gemini_clipping"] and r["destaques"] == ["ok"]
+        r = _insistir(falso, rel)
+        assert chamados == ["gemini_clipping"] and rel.sonos == [] and r["destaques"] == ["ok"]
 
-    def test_modelo_lotado_nao_e_tentado_em_outro_projeto(self):
-        """24/11: 3.1 lotado no projeto do clipping E no dos takes. Pula o dos takes, vai ao 3.5."""
-        chamados = []
+    def test_a_tarde_de_24_11_agora_sai_com_destaques(self):
+        """O que o registro mostrou: 3.1 e 3.5-flash-lite com 503 nos dois projetos, Z.AI com 429.
+        Pessimista: os modelos extras e a Groq TAMBÉM falham na 1ª volta. Na 2ª, o 3.5-flash-lite
+        do projeto dos takes responde — como respondeu ao robô dos takes no mesmo horário."""
+        rel, chamados = _Relogio(), []
 
         def falso(cfg, prompt):
             chamados.append(cfg["nome"])
-            if cfg["nome"] == "gemini_clipping":
-                cfg["_status"] = 503
-                return None
-            cfg["_status"] = 200
-            return _destaques(["ok"], ["ok"])
-        with mock.patch.dict("os.environ", CHAVES, clear=False), \
-             mock.patch.object(blast, "_carga_hoje", return_value=ZERADO), \
-             mock.patch.object(blast, "RETENTAR_5XX_S", 0), \
-             mock.patch.object(blast, "_chamar", side_effect=falso):
-            r = blast.highlights([{"title": "x"}], n=3)
-        assert chamados == ["gemini_clipping", "gemini_clipping", "gemini_clipping_b"]
-        assert r["provedor"].startswith("gemini 2º modelo")
-
-    def test_erro_que_nao_e_lotacao_nao_repete(self):
-        chamados = []
-
-        def falso(cfg, prompt):
-            chamados.append(cfg["nome"])
-            cfg["_status"] = 400
+            volta2 = chamados.count(cfg["nome"]) == 2
+            if cfg["nome"] == "gemini_takes_b" and volta2:
+                cfg["_status"] = 200
+                return _destaques(["Minério sobe"], ["Iron ore up"])
+            cfg["_status"] = 429 if cfg["nome"] == "zai" else 503
             return None
-        with mock.patch.dict("os.environ", CHAVES, clear=False), \
-             mock.patch.object(blast, "_carga_hoje", return_value=ZERADO), \
-             mock.patch.object(blast, "RETENTAR_5XX_S", 0), \
-             mock.patch.object(blast, "_chamar", side_effect=falso):
-            blast.highlights([{"title": "x"}], n=3)
-        assert len(chamados) == len(set(chamados))          # cada provedor uma vez só
+        r = _insistir(falso, rel)
+        assert r["destaques"] == ["Minério sobe"] and r["destaques_en"] == ["Iron ore up"]
+        assert r["provedor"] == "gemini 2º modelo (projeto takes)" and r["erro"] is None
+        assert rel.sonos == [10]                              # esperou 10 s e passou de novo
+        assert len(chamados) == 8 + 6                         # volta 1 inteira + 6 da volta 2
+
+    def test_insiste_ate_a_paciencia_e_conta_o_que_houve(self):
+        rel, chamados = _Relogio(custo=4.0), []
+
+        def falso(cfg, prompt):
+            chamados.append(cfg["nome"])
+            cfg["_status"] = 429 if cfg["nome"] == "zai" else 503
+            return None
+        r = _insistir(falso, rel)
+        assert r["destaques"] == [] and r["provedor"] is None
+        assert "nenhuma IA respondeu" in r["erro"] and "HTTP 503" in r["erro"] and "HTTP 429" in r["erro"]
+        assert rel.sonos[:5] == [10, 20, 30, 45, 60] and set(rel.sonos[5:]) <= {60}
+        assert len(rel.sonos) >= 5                            # muitas voltas, não 30 s
+        assert rel.t <= 420 + 8 * 4.0                         # e não passa da paciência (+ 1 volta)
+
+    def test_porta_que_nao_existe_sai_da_roda(self):
+        """404 (modelo aposentado) e 401/403 (chave) não passam sozinhos: não insiste nessas."""
+        rel, chamados = _Relogio(), []
+
+        def falso(cfg, prompt):
+            chamados.append(cfg["nome"])
+            if cfg["nome"] == "gemini_extra2":
+                cfg["_status"] = 404; return None
+            if cfg["nome"] == "groq":
+                cfg["_status"] = 401; return None
+            if chamados.count("gemini_clipping") == 3 and cfg["nome"] == "gemini_clipping":
+                cfg["_status"] = 200; return _destaques(["ok"], ["ok"])
+            cfg["_status"] = 503; return None
+        r = _insistir(falso, rel)
+        assert r["destaques"] == ["ok"]
+        assert chamados.count("gemini_extra2") == 1 and chamados.count("groq") == 1
+        assert chamados.count("zai") == 2                     # 503/429 = tenta de novo
+
+    def test_rede_que_cai_nao_derruba_e_tenta_na_volta_seguinte(self):
+        rel, chamados = _Relogio(), []
+
+        def falso(cfg, prompt):
+            chamados.append(cfg["nome"])
+            if len(chamados) <= 8:
+                raise TimeoutError("read timeout")
+            cfg["_status"] = 200
+            return _destaques(["ok"], ["ok"])
+        r = _insistir(falso, rel)
+        assert r["destaques"] == ["ok"] and rel.sonos == [10] and len(chamados) == 9
+
+    def test_resposta_vazia_de_dois_modelos_e_aceita_sem_insistir(self):
+        """'Nada relevante hoje' (JSON válido, lista vazia) é resposta: pergunta a mais um modelo e,
+        se ele concorda, aceita — sem ficar 7 min insistindo."""
+        rel, chamados = _Relogio(), []
+
+        def falso(cfg, prompt):
+            chamados.append(cfg["nome"]); cfg["_status"] = 200
+            return _destaques([], [])
+        r = _insistir(falso, rel)
+        assert len(chamados) == 2 and rel.sonos == [] and r["destaques"] == []
+        assert "não achou destaque relevante" in r["erro"]
+
+    def test_groq_recebe_o_texto_encurtado(self):
+        """A Groq aceita 8 mil tokens por minuto: o mesmo pedido, com o texto das notícias menor."""
+        rel, tamanhos = _Relogio(), {}
+
+        def falso(cfg, prompt):
+            tamanhos[cfg["nome"]] = len(prompt)
+            if cfg["nome"] == "groq":
+                cfg["_status"] = 200; return _destaques(["ok"], ["ok"])
+            cfg["_status"] = 503; return None
+        cheio = [{"title": f"notícia {i}", "body": "<p>" + "texto longo " * 400 + "</p>"} for i in range(8)]
+        r = _insistir(falso, rel, noticias=cheio)
+        assert r["provedor"] == "groq (gpt-oss)"
+        assert tamanhos["groq"] < tamanhos["gemini_clipping"]
+        assert tamanhos["groq"] <= 14000 + len(blast.INSTRUCAO) + 800
+
+    def test_o_motivo_do_erro_vai_para_o_registro(self):
+        r = mock.Mock(); r.json.return_value = {"error": {"code": 429, "message": "concurrency limit"}}
+        assert blast._motivo(r) == "concurrency limit"
+        r2 = mock.Mock(); r2.json.side_effect = ValueError(); r2.text = "Too Many Requests"
+        assert blast._motivo(r2) == "Too Many Requests"
 
 
 # ── o e-mail novo ────────────────────────────────────────────────────────────────────

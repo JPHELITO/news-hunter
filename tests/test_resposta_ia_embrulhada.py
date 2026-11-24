@@ -249,7 +249,8 @@ class TestTraducaoDoClipping:
             os.environ.pop("CLIPPING_TRANSLATE_CHAIN", None)      # a ordem padrão da cadeia
             r = build._translate_via_llm("Vale eleva projeção", ["a", "b"], "Portuguese")
         assert r == TRADUCAO_ESPERADA
-        assert chamadas == ["generativelanguage", "generativelanguage", "api.z.ai"]
+        # os 4 modelos do projeto dedicado (24/11/2026: + 3.5-flash e 3-flash), depois o GLM
+        assert chamadas == ["generativelanguage"] * 4 + ["api.z.ai"]
 
 
 # ── 4) Lista mandada como TEXTO SOLTO ────────────────────────────────────────────────
