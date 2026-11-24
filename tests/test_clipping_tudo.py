@@ -362,3 +362,33 @@ class TestGoogleEmLote:
             en, fonte = blast._ingles(["a", "b"], ["A do analista", ""])
         assert en == ["A do analista", "B en"] and fonte == "traducao"
         assert llm.call_args[0][1] == ["b"] and not tr.called
+
+
+class TestUploadComNovaTentativa:
+    """24/11/2026: um 522 do Storage derrubou um job com o Word já pronto."""
+    def _resp(self, code):
+        r = mock.Mock(); r.status_code = code; r.ok = 200 <= code < 300; r.text = "x"
+        return r
+
+    def test_falha_momentanea_tenta_de_novo_e_passa(self):
+        with mock.patch.object(run_jobs, "_env", return_value=("https://s", "k")), \
+             mock.patch("time.sleep"), \
+             mock.patch.object(run_jobs.requests, "post", side_effect=[self._resp(522), self._resp(200)]) as post:
+            run_jobs._upload("a/b.html", b"x", "text/html")
+        assert post.call_count == 2
+
+    def test_pedido_errado_nao_repete(self):
+        with mock.patch.object(run_jobs, "_env", return_value=("https://s", "k")), \
+             mock.patch("time.sleep"), \
+             mock.patch.object(run_jobs.requests, "post", return_value=self._resp(400)) as post:
+            with pytest.raises(RuntimeError):
+                run_jobs._upload("a/b.html", b"x", "text/html")
+        assert post.call_count == 1
+
+    def test_tres_falhas_seguidas_viram_erro(self):
+        with mock.patch.object(run_jobs, "_env", return_value=("https://s", "k")), \
+             mock.patch("time.sleep"), \
+             mock.patch.object(run_jobs.requests, "post", return_value=self._resp(503)) as post:
+            with pytest.raises(RuntimeError):
+                run_jobs._upload("a/b.html", b"x", "text/html")
+        assert post.call_count == 3

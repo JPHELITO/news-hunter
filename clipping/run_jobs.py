@@ -73,12 +73,29 @@ def _enc(path: str) -> str:
 
 
 def _upload(path: str, data: bytes, content_type: str) -> None:
+    """Sobe um arquivo no Storage. Falha MOMENTÂNEA (5xx, tempo esgotado, conexão caída) ganha
+    mais 2 tentativas — 24/11/2026: um "522" do Storage (o servidor não respondeu a tempo) derrubou
+    um job inteiro com o Word já pronto. `x-upsert` faz a nova tentativa ser segura (substitui)."""
+    import time
     url, key = _env()
-    r = requests.post(f"{url}/storage/v1/object/{BUCKET}/{_enc(path)}",
-                      headers=_h(key, {"Content-Type": content_type, "x-upsert": "true"}),
-                      data=data, timeout=90)
-    if not r.ok:
-        raise RuntimeError(f"upload {path} -> {r.status_code} {r.text[:200]}")
+    erro = ""
+    for tentativa in range(3):
+        try:
+            r = requests.post(f"{url}/storage/v1/object/{BUCKET}/{_enc(path)}",
+                              headers=_h(key, {"Content-Type": content_type, "x-upsert": "true"}),
+                              data=data, timeout=90)
+        except requests.RequestException as e:          # tempo esgotado / conexão caída
+            erro = f"{type(e).__name__}"
+        else:
+            if r.ok:
+                return
+            erro = f"{r.status_code} {r.text[:200]}"
+            if r.status_code < 500:                     # 4xx = pedido errado: repetir não adianta
+                break
+        if tentativa < 2:
+            log.warning("upload %s falhou (%s) — tento de novo", path, erro[:60])
+            time.sleep(3 * (tentativa + 1))
+    raise RuntimeError(f"upload {path} -> {erro}")
 
 
 def _sign(path: str, download: str | None = None) -> str:
