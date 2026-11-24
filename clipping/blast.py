@@ -420,17 +420,29 @@ def _ingles(pt: list, en: list) -> tuple[list, str]:
     if all(alvo):
         return alvo, "ia"
     faltam = [i for i, a in enumerate(alvo) if not a]
+    # 1º o TRADUTOR DO CLIPPING (o mesmo das matérias bilíngues: projeto Gemini dedicado, ~7 de
+    # 500/dia) — 1 chamada pequena, só quando falta inglês. 24/11/2026: da nuvem do GitHub o Google
+    # grátis recusou até UM pedido ("too many requests"), por isso ele virou só a reserva.
+    trad, fonte = None, "traducao"
     try:
-        trad = _google_lote([pt[i] for i in faltam])
+        from .build import _translate_via_llm
+        got = _translate_via_llm("Daily highlights", [pt[i] for i in faltam], "Portuguese")
+        if got and len(got[1]) == len(faltam) and all(str(x).strip() for x in got[1]):
+            trad = got[1]
     except Exception as e:
-        log.warning("blast: sem destaques em inglês (%s)", e)
-        return [], ""
+        log.info("blast: tradutor do clipping indisponível (%s) — vou no Google", e)
+    if trad is None:
+        try:
+            trad, fonte = _google_lote([pt[i] for i in faltam]), "google"
+        except Exception as e:
+            log.warning("blast: sem destaques em inglês (%s)", e)
+            return [], ""
     out = list(alvo)
     for i, t in zip(faltam, trad):
         out[i] = str(t or "").strip().rstrip(";.").strip()
     if all(out):
-        log.info("blast: %d de %d destaque(s) em inglês traduzido(s) pelo Google", len(faltam), len(pt))
-        return out, "google"
+        log.info("blast: %d de %d destaque(s) em inglês traduzido(s) (%s)", len(faltam), len(pt), fonte)
+        return out, fonte
     return [], ""
 
 

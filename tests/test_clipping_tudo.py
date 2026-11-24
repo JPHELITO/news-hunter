@@ -20,12 +20,22 @@ from email import policy
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from clipping import blast, email_brand, generate, run_jobs, whatsapp     # noqa: E402
 from clipping.build import ClippingItem                                   # noqa: E402
 
 CHAVES = {"CLIPPING_TRANSLATE_KEY": "k1", "GEMINI_API_KEY": "k2", "ZAI_API_KEY": "k4"}
+
+
+@pytest.fixture(autouse=True)
+def _sem_tradutor_de_verdade():
+    """Nenhum teste daqui chama o tradutor do clipping (IA) de verdade: por padrão ele 'falha' e
+    o código cai no Google (que cada teste simula). Quem quer testar o tradutor, simula por cima."""
+    with mock.patch("clipping.build._translate_via_llm", return_value=None):
+        yield
 ZERADO = {"gemini_clipping": 0, "gemini_takes": 0, "zai": 0}
 D = date(2026, 11, 24)
 
@@ -343,3 +353,12 @@ class TestGoogleEmLote:
         with mock.patch("deep_translator.GoogleTranslator", tr), mock.patch("time.sleep"):
             en, fonte = blast._ingles(["a", "b"], [])
         assert en == ["A", "B"] and tr.return_value.translate.call_count == 2
+
+    def test_tradutor_do_clipping_vem_antes_do_google(self):
+        """Só os itens SEM inglês vão ao tradutor; o que o analista escreveu fica como está."""
+        tr = mock.Mock()
+        with mock.patch("clipping.build._translate_via_llm", return_value=("Daily highlights", ["B en"])) as llm, \
+             mock.patch("deep_translator.GoogleTranslator", tr):
+            en, fonte = blast._ingles(["a", "b"], ["A do analista", ""])
+        assert en == ["A do analista", "B en"] and fonte == "traducao"
+        assert llm.call_args[0][1] == ["b"] and not tr.called
