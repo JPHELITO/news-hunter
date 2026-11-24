@@ -32,18 +32,23 @@ def get_stored_body(url: str) -> dict | None:
     su, key = _supa()
     if not su or not key:
         return None
-    try:
-        import requests
-        r = requests.get(
-            f"{su}/rest/v1/clipping_bodies?url=eq.{quote(url, safe='')}"
-            f"&select=body,translated_title,translated_body,char_len&limit=1",
-            headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
-        if r.ok and r.json():
-            row = r.json()[0]
-            if (row.get("char_len") or 0) > 80:
-                return row
-    except Exception as e:
-        log.debug("get_stored_body(%s): %s", url, e)
+    import requests
+    # 2 tentativas: uma leitura que FALHA (rede da nuvem lenta) parecia "não tem corpo guardado" e
+    # o robô raspava de novo — foi assim que a tradução do Valor de 24/11 se perdeu (ver store_body).
+    for tentativa in range(2):
+        try:
+            r = requests.get(
+                f"{su}/rest/v1/clipping_bodies?url=eq.{quote(url, safe='')}"
+                f"&select=body,translated_title,translated_body,char_len&limit=1",
+                headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=15)
+            if r.ok:
+                rows = r.json()
+                if rows and (rows[0].get("char_len") or 0) > 80:
+                    return rows[0]
+                return None                              # respondeu: não tem (ou só o vazio)
+        except Exception as e:
+            log.warning("get_stored_body(%s): leitura falhou (%s)%s", url[-60:], type(e).__name__,
+                        " — tento de novo" if tentativa == 0 else "")
     return None
 
 
@@ -55,12 +60,18 @@ def store_body(url: str, title: str, source_name: str, body: str,
         return
     try:
         import requests
+        row = {"url": url, "title": title or "", "source_name": source_name or "",
+               "body": body or "", "status": status, "char_len": len(body or "")}
+        # ⚠️ A TRADUÇÃO SÓ VAI QUANDO EXISTE. O upsert (merge) grava as colunas que vierem: mandar ""
+        # apagava a tradução boa. 24/11/2026: uma leitura do cache falhou, o robô raspou o Valor de
+        # novo, a tradução falhou (tradutores lotados) e o "" foi gravado por cima da de manhã.
+        if (translated_title or "").strip():
+            row["translated_title"] = translated_title
+        if (translated_body or "").strip():
+            row["translated_body"] = translated_body
         requests.post(
             f"{su}/rest/v1/clipping_bodies?on_conflict=url",
-            json=[{"url": url, "title": title or "", "source_name": source_name or "",
-                   "body": body or "", "translated_title": translated_title or "",
-                   "translated_body": translated_body or "", "status": status,
-                   "char_len": len(body or "")}],
+            json=[row],
             headers={"apikey": key, "Authorization": f"Bearer {key}",
                      "Content-Type": "application/json",
                      "Prefer": "resolution=merge-duplicates,return=minimal"}, timeout=20)
