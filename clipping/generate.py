@@ -189,12 +189,13 @@ def build_all_from_payload(payload: list[dict], d: date | None = None,
     cfg_html["blast_highlights"] = bh
 
     wa = build_whatsapp(items, d, cfg_html)
+    # e-mail SEM o Word anexado (pedido do usuário, 24/11) — o Word segue no download da aba
     em = build_brand_email(items, d, wa.get("model"), wa.get("html"), wa.get("fonts"), config,
-                           bl.get("destaques_en"), docx, docx_name)
+                           bl.get("destaques_en"))
     if em["eml"]:
         eml, html = em["eml"], em["html"]
-    else:                                   # rede de segurança: o e-mail de antes
-        eml = build_eml_bytes(items, d, docx_bytes=docx, docx_name=docx_name, config=config)
+    else:                                   # rede de segurança: o e-mail de antes (também sem anexo)
+        eml = build_eml_bytes(items, d, docx_bytes=docx, docx_name=docx_name, config=config, attach=False)
         html = build_html(items, d, config, docx_bytes=docx)
     return {"docx": docx, "eml": eml, "docx_name": docx_name, "eml_name": f"{base}.eml",
             "html": html, "html_name": f"{base}.html",

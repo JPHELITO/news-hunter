@@ -14,7 +14,14 @@ motor do Word:
   * o topo (emblema + "Nov 24" vazado + "Daily News") é uma IMAGEM tirada do próprio HTML do
     WhatsApp (o Outlook não faz traço vazado, fonte da web nem SVG);
   * toda <img> com `width=` em atributo (sem isso uma imagem larga corta o texto todo);
-  * coluna fixa de 660px, centralizada (≤ 679px cabe na folha A4 ao imprimir/encaminhar).
+  * coluna FLUIDA (100% da janela — pedido do usuário em 24/11: a coluna fixa de 660px
+    parecia "centralizada" no Outlook). `width=100%` em atributo e estilo, SEM max-width na
+    tabela (o Word converte max-width em largura fixa e a folha corta ao imprimir). O topo é
+    uma foto de 660px alinhada à esquerda numa faixa preta que vai até a borda — a foto sai
+    sem os arcos decorativos, então o preto dela emenda com o da faixa em qualquer largura;
+  * o índice ("Sector headlines") leva à matéria DENTRO do e-mail: link `#storyN` → marca
+    `<a name="storyN">` (só letra+número, o formato de marcador que o Word aceita); cada
+    matéria tem "Back to headlines" de volta.
 """
 from __future__ import annotations
 
@@ -26,7 +33,7 @@ from email import policy
 from email.message import EmailMessage
 from html import escape
 
-from .build import ClippingItem, clipping_basename, intro_has_content, parse_intro_lines, line_text
+from .build import ClippingItem, intro_has_content, parse_intro_lines, line_text
 from .eml import _banner_date, _inline_images, build_plain_text
 
 log = logging.getLogger(__name__)
@@ -100,6 +107,12 @@ def _badge(take: str, T: dict) -> str:
             f'style="width:20px;height:20px;border:1px solid {bd};border-radius:6px;background:{bg};'
             f'font-family:{ARIAL};font-size:13px;line-height:18px;mso-line-height-rule:exactly;'
             f'font-weight:bold;color:{ink};text-align:center">{sym}</td></tr></table>')
+
+
+def _story_anchor(it: dict) -> str:
+    """Nome da marca de destino da matéria. Só letra + número: é o formato de marcador que o
+    Word aceita (o Outlook importa o HTML como documento do Word ao abrir o rascunho)."""
+    return f"story{int(it['i'])}"
 
 
 def _long_date(d: date) -> str:
@@ -244,7 +257,9 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
                 f'<p {_txt(15, "#FF5500", lh=22, extra=f"padding:40px {PAD}px 0 {PAD}px")}>LatAm S&amp;M and P&amp;P</p>'
                 f'<p {_txt(64, "#FF5500", lh=70, extra=f"padding:0 {PAD}px", cls="fd")}>{MON[d.month-1]} {d.day}</p>'
                 f'<p {_txt(36, "#FFFFFF", "bold", 42, f"padding:4px {PAD}px 0 {PAD}px", cls="fd")}>Daily News</p>')
-    rows.append(f'<tr><td bgcolor="{T["band"]}" style="background:{T["band"]};padding:0">{hero}</td></tr>')
+    # a faixa preta vai até a borda da janela; a foto fica à esquerda (o texto dela começa nos
+    # mesmos 24px do corpo) e o preto da foto emenda com o da faixa
+    rows.append(f'<tr><td align="left" bgcolor="{T["band"]}" style="background:{T["band"]};padding:0;text-align:left">{hero}</td></tr>')
     rows.append(f'<tr><td height="22" bgcolor="{T["band"]}" style="height:22px;line-height:22px;font-size:1px;'
                 f'background:{T["band"]}">&nbsp;</td></tr>')
     if theme == "light":   # a faixa preta termina num fio laranja
@@ -298,13 +313,16 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
         for it in [x for x in ordered if x["sector"] == s]:
             head = it["tr_title"] or it["title"]
             sub = f'<p {_txt(12.5, T["mute"], lh=18, extra="padding-top:2px")}>{_e(it["title"])}</p>' if it["tr_title"] else ""
-            link = it.get("url") or ""
-            title = (f'<a href="{_a(link)}" style="color:{T["fg"]};text-decoration:none">{_e(head)}</a>'
-                     if link.startswith("http") else _e(head))
+            # ÍNDICE: o título leva à matéria completa MAIS ABAIXO no próprio e-mail (o link do
+            # site da fonte fica no fim de cada matéria, "Open at …")
+            go = _story_anchor(it)
+            title = f'<a href="#{go}" style="color:{T["fg"]};text-decoration:none">{_e(head)}</a>'
             lis.append(f'<tr><td width="20" valign="top" style="width:20px;padding:13px 0 13px 0">{_badge(it["take"], T)}</td>'
                        f'<td valign="top" style="padding:13px 0 13px 12px;border-bottom:1px solid {T["line"]}">'
                        f'<p {_txt(15, T["fg"], "bold", 21)}>{title}</p>{sub}'
-                       f'<p {_txt(12.5, T["mute"], lh=18, extra="padding-top:4px")}>{_e(it["source"])}</p></td></tr>')
+                       f'<p {_txt(12.5, T["mute"], lh=18, extra="padding-top:4px")}>{_e(it["source"])}'
+                       f'{"&nbsp;&nbsp;&middot;&nbsp;&nbsp;" if it["source"] else ""}'
+                       f'<a href="#{go}" style="color:{T["otext"]};text-decoration:underline">Full story&nbsp;&darr;</a></p></td></tr>')
         rows.append(f'<tr><td class="px" style="padding:0 {PAD}px">'
                     f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
                     f'style="border-collapse:collapse">{"".join(lis)}</table></td></tr>')
@@ -377,12 +395,17 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
             else:
                 body = _blocks_html(it["blocks"], T, it["title"]) or f'<p {_txt(14, T["mute"], lh=22)}>Full text not available — see the source.</p>'
             link = it.get("url") or ""
-            src = (f'<p {_txt(12.5, T["mute"], lh=18, extra="padding-top:2px")}><a href="{_a(link)}" '
-                   f'style="color:{T["mute"]};text-decoration:underline">Open at {_e(it["source"] or "source")}&nbsp;&rsaquo;</a></p>'
-                   if link.startswith("http") else "")
+            back = (f'<a href="#heads" style="color:{T["otext"]};text-decoration:underline">'
+                    f'Back to headlines&nbsp;&uarr;</a>')
+            src = (f'<p {_txt(12.5, T["mute"], lh=18, extra="padding-top:2px")}>'
+                   + (f'<a href="{_a(link)}" style="color:{T["mute"]};text-decoration:underline">'
+                      f'Open at {_e(it["source"] or "source")}&nbsp;&rsaquo;</a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;'
+                      if link.startswith("http") else "")
+                   + f'{back}</p>')
             last = k == len(lst) - 1
+            go = _story_anchor(it)
             rows.append(f'<tr><td class="px" style="padding:24px {PAD}px 0 {PAD}px">'
-                        f'<a name="st-{int(it["i"])}" id="st-{int(it["i"])}"></a>{meta}'
+                        f'<a name="{go}" id="{go}"></a>{meta}'
                         f'<p {_txt(19, T["fg"], "bold", 26, "padding-top:10px")}>{_e(head)}</p>{orig}'
                         f'<div style="padding-top:12px">{body}</div>{src}'
                         f'{"" if last else _rule(T["line"], top=24)}</td></tr>')
@@ -476,8 +499,9 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
             '<div class="WordSection1">'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{T["page"]}" '
             f'style="border-collapse:collapse;background:{T["page"]}"><tr><td align="center" style="padding:0">'
-            f'<table role="presentation" class="col" width="{COL}" cellpadding="0" cellspacing="0" border="0" '
-            f'bgcolor="{T["sheet"]}" style="width:{COL}px;border-collapse:collapse;background:{T["sheet"]}">'
+            # coluna FLUIDA: ocupa a janela do e-mail inteira (nada de max-width aqui — ver o topo)
+            f'<table role="presentation" class="col" width="100%" cellpadding="0" cellspacing="0" border="0" '
+            f'bgcolor="{T["sheet"]}" style="width:100%;border-collapse:collapse;background:{T["sheet"]}">'
             + "".join(r for r in rows if r) +
             '</table></td></tr></table></div></body></html>')
 
@@ -499,8 +523,10 @@ def hero_and_disclaimer(wa_html: str, width: int = COL, pad: int = PAD) -> tuple
                                 reduced_motion="reduce")
             pg = ctx.new_page()
             pg.goto(f.as_uri() + "?shot=1")
+            # sem os arcos decorativos: cortados na borda da foto, viravam um risco solto quando a
+            # faixa preta do e-mail continua à direita (coluna fluida) — sem eles o preto emenda
             pg.add_style_tag(content=f":root{{--pad:{pad}px!important}}.theme-sw{{display:none!important}}"
-                                     ".hero .shapes{opacity:.55}")
+                                     ".hero .shapes{display:none!important}")
             pg.evaluate("document.fonts.ready")
             pg.wait_for_timeout(600)
             bottom = pg.evaluate("(() => { const w = document.querySelector('h1 .word');"
@@ -521,9 +547,9 @@ def hero_and_disclaimer(wa_html: str, width: int = COL, pad: int = PAD) -> tuple
     return png, disc
 
 
-def build_brand_eml(items: list[ClippingItem], html: str, d: date, docx_bytes: bytes | None = None,
-                    docx_name: str | None = None) -> bytes:
-    """Mesmo envelope do e-mail de hoje (assunto, X-Unsent, imagens cid:, Word anexo, CRLF)."""
+def build_brand_eml(items: list[ClippingItem], html: str, d: date) -> bytes:
+    """Mesmo envelope do e-mail antigo (assunto, X-Unsent, imagens cid:, CRLF) — SEM o Word
+    anexado (pedido do usuário em 24/11: o Word continua no botão de download da aba)."""
     msg = EmailMessage()
     msg["Subject"] = (f"*** ITAÚ BBA Daily News: LatAm Steel & Mining, Pulp & Paper "
                       f"- {_banner_date(d)} ***")
@@ -535,16 +561,11 @@ def build_brand_eml(items: list[ClippingItem], html: str, d: date, docx_bytes: b
         part = msg.get_payload()[-1]
         for cid, data, subtype in images:
             part.add_related(data, maintype="image", subtype=subtype, cid=f"<{cid}>")
-    if docx_bytes:
-        msg.add_attachment(docx_bytes, maintype="application",
-                           subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
-                           filename=docx_name or f"{clipping_basename(d)}.docx")
     return msg.as_bytes(policy=policy.SMTP)
 
 
 def build_brand_email(items: list[ClippingItem], d: date, model: dict | None, wa_html: bytes | str | None,
-                      fonts: dict | None, config: dict | None, highlights_en: list | None,
-                      docx_bytes: bytes | None, docx_name: str | None) -> dict:
+                      fonts: dict | None, config: dict | None, highlights_en: list | None) -> dict:
     """O e-mail novo pronto: {"eml": bytes|None, "html": str|None, "error": str|None}.
 
     Nunca levanta exceção — quem chama cai no e-mail antigo (cópia do Word) se vier `eml=None`.
@@ -563,7 +584,7 @@ def build_brand_email(items: list[ClippingItem], d: date, model: dict | None, wa
             except Exception as e:                      # sem a foto do topo: topo em texto
                 log.warning("e-mail novo: topo em texto (foto falhou: %s)", e)
         html = build_brand_html(m, d, hero, disc, theme="light", config=config)
-        eml = build_brand_eml(items, html, d, docx_bytes=docx_bytes, docx_name=docx_name)
+        eml = build_brand_eml(items, html, d)
         return {"eml": eml, "html": html, "error": None}
     except Exception as e:
         log.warning("e-mail novo NÃO gerado (%s) — vai o e-mail antigo", e)

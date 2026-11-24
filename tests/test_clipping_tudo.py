@@ -177,19 +177,46 @@ class TestEmailNovo:
     def _eml(self, en=("Iron ore rose",), cfg=None):
         items = [_item(0), _item(1, "PP", "-")]
         cfg = cfg or {"blast_highlights": {"2026-11-24": {"destaques": ["Minério subiu"]}}}
-        r = email_brand.build_brand_email(items, D, _model(items, cfg), None, None, cfg, list(en),
-                                          b"PK-docx", "NEWS - 11242026.docx")
+        r = email_brand.build_brand_email(items, D, _model(items, cfg), None, None, cfg, list(en))
         assert r["eml"] and not r["error"]
         return r
 
-    def test_envelope_de_rascunho_valido(self):
+    def test_envelope_de_rascunho_valido_e_sem_o_word_anexado(self):
+        """Pedido do usuário (24/11): o e-mail não leva mais o Word anexado."""
         raw = self._eml()["eml"]
         assert not re.search(rb"(?<!\r)\n", raw)                       # CRLF, nunca LF solto
         msg = email.message_from_bytes(raw, policy=policy.default)
         assert msg["X-Unsent"] == "1"
-        assert [p.get_filename() for p in msg.walk() if p.get_filename()] == ["NEWS - 11242026.docx"]
+        assert [p.get_filename() for p in msg.walk() if p.get_filename()] == []
+        assert not any("wordprocessingml" in p.get_content_type() for p in msg.walk())
         html = next(p.get_content() for p in msg.walk() if p.get_content_type() == "text/html")
         assert not re.search(r'<img\b[^>]*src="data:', html)
+
+    def test_coluna_fluida_ocupa_a_janela(self):
+        """Pedido do usuário (24/11): o e-mail preenche a janela inteira, sem coluna fixa no meio.
+        E sem max-width em tabela (o Word converte em largura fixa e a folha corta ao imprimir)."""
+        html = self._eml()["html"]
+        col = re.search(r'<table[^>]*class="col"[^>]*>', html).group(0)
+        assert 'width="100%"' in col and "width:100%" in col
+        for tag in re.findall(r"<table\b[^>]*>", html):
+            assert "max-width" not in tag, tag
+
+    def test_indice_leva_a_materia_dentro_do_email(self):
+        """Pedido do usuário (24/11): 'Sector headlines' é um ÍNDICE — o título leva à matéria
+        completa no próprio e-mail. Cada link interno tem a sua marca, com nome que o Word aceita
+        (só letra + número), e cada matéria volta ao índice."""
+        html = self._eml()["html"]
+        heads = html.split("Sector headlines", 1)[1].split("Full stories", 1)[0]
+        alvos_indice = re.findall(r'href="#([^"]+)"', heads)
+        assert alvos_indice and set(alvos_indice) == {"story0", "story1"}
+        assert not re.search(r'href="https?://', heads)                  # índice não sai do e-mail
+        marcas = set(re.findall(r'<a name="([^"]+)" id="\1"></a>', html))
+        for alvo in set(re.findall(r'href="#([^"]+)"', html)):
+            assert alvo in marcas, alvo                                  # nenhum link interno órfão
+            assert re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", alvo), alvo     # formato de marcador do Word
+        stories = html.split("Full stories", 1)[1]
+        assert stories.count('href="#heads"') == 2                       # "Back to headlines" em cada
+        assert stories.count("Open at") == 2                             # o site da fonte continua lá
 
     def test_destaques_em_ingles_e_nao_em_portugues(self):
         html = self._eml()["html"]
@@ -208,7 +235,7 @@ class TestEmailNovo:
             assert re.search(r'\bwidth="\d+"', tag), tag
 
     def test_falha_vira_eml_none_sem_excecao(self):
-        r = email_brand.build_brand_email([_item()], D, None, None, None, {}, [], b"x", "a.docx")
+        r = email_brand.build_brand_email([_item()], D, None, None, None, {}, [])
         assert r["eml"] is None and r["error"]
 
 
@@ -236,7 +263,8 @@ class TestJobTudo:
              mock.patch.object(blast, "highlights", side_effect=lambda noticias, n=3: (visto.__setitem__("noticias", noticias), bl)[1]), \
              mock.patch.object(whatsapp, "build_whatsapp", side_effect=wa), \
              mock.patch.object(email_brand, "build_brand_email", side_effect=em), \
-             mock.patch.object(generate, "build_eml_bytes", return_value=b"EML-ANTIGO"), \
+             mock.patch.object(generate, "build_eml_bytes",
+                               side_effect=lambda *a, **k: visto.__setitem__("antigo", k) or b"EML-ANTIGO"), \
              mock.patch.object(generate, "build_html", return_value="<html>antigo</html>"):
             res = generate.build_all_from_payload(payload, D, {"tudo": {"on": True}})
         return res, visto
@@ -249,8 +277,9 @@ class TestJobTudo:
         assert [n.get("pin") for n in visto["noticias"]] == [1, None]       # a ★ chega à IA
 
     def test_email_novo_falhou_vai_o_antigo(self):
-        res, _ = self._rodar(email_ok=False)
+        res, visto = self._rodar(email_ok=False)
         assert res["eml"] == b"EML-ANTIGO" and res["email_novo"] is False and res["docx"] == b"DOCX"
+        assert visto["antigo"]["attach"] is False          # a rede de segurança também sai sem anexo
 
     def test_sem_destaque_o_resto_sai_igual(self):
         res, visto = self._rodar(bl={"destaques": [], "destaques_en": [], "en_fonte": "",

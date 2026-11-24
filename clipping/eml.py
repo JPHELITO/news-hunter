@@ -380,7 +380,9 @@ def build_plain_text(items: list[ClippingItem], d: date) -> str:
 def build_eml_bytes(items: list[ClippingItem], d: date | None = None,
                     docx_bytes: bytes | None = None,
                     docx_name: str | None = None,
-                    config: dict | None = None) -> bytes:
+                    config: dict | None = None,
+                    attach: bool = True) -> bytes:
+    """`attach=False`: o .docx só serve de fonte do corpo e NÃO vai anexado (botão "Gerar tudo")."""
     d = d or date.today()
     msg = EmailMessage()
     msg["Subject"] = (f"*** ITAÚ BBA Daily News: LatAm Steel & Mining, Pulp & Paper "
@@ -400,7 +402,7 @@ def build_eml_bytes(items: list[ClippingItem], d: date | None = None,
         for cid, data, subtype in images:
             html_part.add_related(data, maintype="image", subtype=subtype, cid=f"<{cid}>")
 
-    if docx_bytes:
+    if docx_bytes and attach:
         name = docx_name or f"{clipping_basename(d)}.docx"
         msg.add_attachment(
             docx_bytes,
