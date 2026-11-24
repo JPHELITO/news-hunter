@@ -419,17 +419,50 @@ def _ingles(pt: list, en: list) -> tuple[list, str]:
     alvo = [str(x or "").strip() for x in en] if len(en) == len(pt) else [""] * len(pt)
     if all(alvo):
         return alvo, "ia"
+    faltam = [i for i, a in enumerate(alvo) if not a]
     try:
-        from deep_translator import GoogleTranslator
-        tr = GoogleTranslator(source="pt", target="en")
-        out = [a or str(tr.translate(x) or "").strip().rstrip(";.").strip() for a, x in zip(alvo, pt)]
-        if all(out):
-            log.info("blast: %d de %d destaque(s) em inglês traduzido(s) pelo Google",
-                     sum(1 for a in alvo if not a), len(pt))
-            return out, "google"
+        trad = _google_lote([pt[i] for i in faltam])
     except Exception as e:
         log.warning("blast: sem destaques em inglês (%s)", e)
+        return [], ""
+    out = list(alvo)
+    for i, t in zip(faltam, trad):
+        out[i] = str(t or "").strip().rstrip(";.").strip()
+    if all(out):
+        log.info("blast: %d de %d destaque(s) em inglês traduzido(s) pelo Google", len(faltam), len(pt))
+        return out, "google"
     return [], ""
+
+
+def _google_lote(textos: list) -> list:
+    """Google grátis com o MESMO cuidado do clipping (`build._translate_to_english`): UM pedido
+    para todos (linhas separadas por \n), ritmo mínimo entre chamadas e novas tentativas com
+    espera (2, 4, 8 s). Medido em 24/11/2026: da nuvem do GitHub, 3 pedidos seguidos levaram
+    "too many requests" e o e-mail saiu sem os destaques."""
+    import time
+    from deep_translator import GoogleTranslator
+    from .build import _LAST_TRANSLATE, _PACE_S
+    if not textos:
+        return []
+    junto = "\n".join(str(t).replace("\n", " ") for t in textos)
+    erro = None
+    for tentativa in range(4):
+        espera = _PACE_S - (time.time() - _LAST_TRANSLATE[0])
+        if espera > 0:
+            time.sleep(espera)
+        try:
+            r = GoogleTranslator(source="pt", target="en").translate(junto)
+            _LAST_TRANSLATE[0] = time.time()
+            partes = [x.strip() for x in str(r or "").split("\n")]
+            if len(partes) == len(textos) and all(partes):
+                return partes
+            erro = f"o Google devolveu {len(partes)} linha(s) para {len(textos)}"
+        except Exception as e:
+            _LAST_TRANSLATE[0] = time.time()
+            erro = str(e)[:160]
+        if tentativa < 3:
+            time.sleep(2 * (2 ** tentativa))
+    raise RuntimeError(erro or "Google sem resposta")
 
 
 def highlights(noticias: list, n: int = 3) -> dict:

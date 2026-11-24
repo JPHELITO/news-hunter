@@ -81,7 +81,7 @@ class TestInglesNaMesmaChamada:
 
     def test_ingles_torto_vira_traducao_do_google_sem_ia(self):
         tr = mock.Mock()
-        tr.return_value.translate.side_effect = lambda s: "EN " + s
+        tr.return_value.translate.side_effect = lambda s: "\n".join("EN " + x for x in s.split("\n"))
         with mock.patch.dict("os.environ", CHAVES, clear=False), \
              mock.patch.object(blast, "_carga_hoje", return_value=ZERADO), \
              mock.patch.object(blast, "_chamar", return_value=_destaques(["a", "b"], ["só um"])), \
@@ -286,7 +286,7 @@ class TestJobTudo:
             visto["hl"] = whatsapp.news_model(its, d, c)["highlights"]
             return {"html": None, "error": None, "model": None, "fonts": None}
         tr = mock.Mock()
-        tr.return_value.translate.side_effect = lambda s: "EN " + s
+        tr.return_value.translate.side_effect = lambda s: "\n".join("EN " + x for x in s.split("\n"))
         with mock.patch.object(generate, "_to_item", side_effect=lambda r, f, e: items[0]), \
              mock.patch.object(generate, "build_docx", return_value=b"DOCX"), \
              mock.patch.object(blast, "highlights", side_effect=AssertionError("não podia chamar a IA")), \
@@ -317,3 +317,29 @@ class TestJobTudo:
         assert patch["config"]["blast"]["destaques_en"] == ["A"]
         assert patch["config"]["whatsapp"]["url"].endswith("whatsapp.html")
         assert patch["config"]["tudo"]["email_novo"] is True
+
+
+class TestGoogleEmLote:
+    """24/11/2026, prova na nuvem: 3 pedidos seguidos ao Google grátis = "too many requests" e o
+    e-mail saiu sem destaques. Agora é UM pedido para todos, com novas tentativas."""
+    def test_um_pedido_so_para_todos_os_destaques(self):
+        tr = mock.Mock()
+        tr.return_value.translate.side_effect = lambda s: "\n".join("EN " + x for x in s.split("\n"))
+        with mock.patch("deep_translator.GoogleTranslator", tr):
+            en, fonte = blast._ingles(["a", "b", "c"], [])
+        assert en == ["EN a", "EN b", "EN c"] and fonte == "google"
+        assert tr.return_value.translate.call_count == 1
+
+    def test_recusa_do_google_ganha_nova_tentativa(self):
+        tr = mock.Mock()
+        respostas = iter([RuntimeError("too many requests"), "A\nB"])
+
+        def traduz(s):
+            r = next(respostas)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        tr.return_value.translate.side_effect = traduz
+        with mock.patch("deep_translator.GoogleTranslator", tr), mock.patch("time.sleep"):
+            en, fonte = blast._ingles(["a", "b"], [])
+        assert en == ["A", "B"] and tr.return_value.translate.call_count == 2
