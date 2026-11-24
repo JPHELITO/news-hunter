@@ -256,15 +256,19 @@ def render(model: dict, kit: dict) -> str:
 
 
 def build_whatsapp(items: list[ClippingItem], d: date, config: dict | None = None) -> dict:
-    """{"html": bytes|None, "error": str|None, "kit": str} — nunca levanta exceção."""
+    """{"html": bytes|None, "error": str|None, "kit": str, "model": dict|None, "fonts": dict|None}
+    — nunca levanta exceção. `model` e `fonts` voltam para o e-mail novo (email_brand) usar o
+    MESMO modelo, sem baixar as imagens das matérias de novo."""
     t0 = time.time()
+    model = None
     try:
         model = news_model(items, d, config)
         kit = _kit()
         html = render(model, kit)
         log.info("whatsapp: HTML pronto (%d KB, %d itens, imagens %d KB, motor: %s) em %.1fs",
                  len(html.encode("utf-8")) // 1024, len(items), model["_img_bytes"] // 1024, kit["src"], time.time() - t0)
-        return {"html": html.encode("utf-8"), "error": None, "kit": kit["src"]}
+        return {"html": html.encode("utf-8"), "error": None, "kit": kit["src"], "model": model,
+                "fonts": {"display": kit["display"], "body": kit["body"]}}
     except Exception as e:
         log.warning("whatsapp: HTML NÃO gerado (%s) — Word e e-mail seguem normais", e)
-        return {"html": None, "error": str(e)[:300], "kit": ""}
+        return {"html": None, "error": str(e)[:300], "kit": "", "model": model, "fonts": None}

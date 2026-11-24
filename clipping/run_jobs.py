@@ -227,9 +227,56 @@ def process_whatsapp(job: dict) -> None:
                     "config": cfg, "finished_at": _now(), "updated_at": _now()})
 
 
+def process_tudo(job: dict) -> None:
+    """Job do BOTÃO ÚNICO (`config.tudo`): Word + destaques + HTML do WhatsApp + e-mail novo.
+
+    Devolve tudo pelos MESMOS caminhos dos jobs separados — `docx_path`/`eml_path`/
+    `preview_path` nas colunas, os destaques em `config.blast` e o link do HTML em
+    `config.whatsapp` — então a aba lê com o que já sabe ler, e não há SQL novo. Quem carimba os
+    destaques do dia para o Weekly continua sendo o front (como no blast de hoje)."""
+    from .generate import build_all_from_payload
+    jid = job["id"]
+    d = date.fromisoformat(job["ref_date"]) if job.get("ref_date") else date.today()
+    res = build_all_from_payload(job.get("payload") or [], d, job.get("config"))
+    base = f"clippings/{jid}"
+    _upload(f"{base}/{res['docx_name']}", res["docx"], DOCX_CT)
+    _upload(f"{base}/{res['eml_name']}", res["eml"], "message/rfc822")
+    _upload(f"{base}/{res['html_name']}", res["html"].encode("utf-8"), "text/html; charset=utf-8")
+    cfg = _with_whatsapp(job, base, res)
+    cfg["blast"] = {**(cfg.get("blast") or {}), **res["blast"],
+                    "n": len(res["blast"].get("destaques") or []), "at": _now()}
+    cfg["tudo"] = {**(cfg.get("tudo") or {}), "email_novo": res["email_novo"],
+                   "email_error": res["email_error"], "at": _now()}
+    errs = [{"url": u, "reason": r} for (u, r) in (res.get("errors") or [])]
+    patch_job(jid, {
+        "status": "done",
+        "docx_path": _sign(f"{base}/{res['docx_name']}", download=res["docx_name"]),
+        "eml_path": _sign(f"{base}/{res['eml_name']}", download=res["eml_name"]),
+        "preview_path": _sign(f"{base}/{res['html_name']}"),
+        "config": cfg, "error": None, "errors": errs, "finished_at": _now(), "updated_at": _now(),
+    })
+    w = cfg.get("whatsapp") or {}
+    log.info("job %s TUDO: Word ok · %d destaque(s) por %s (inglês: %s) · HTML %s · e-mail %s",
+             jid, len(res["blast"].get("destaques") or []), res["blast"].get("provedor") or "ninguém",
+             res["blast"].get("en_fonte") or "não", f"{w.get('kb')} KB" if w.get("url") else "NÃO",
+             "novo" if res["email_novo"] else f"antigo ({res['email_error']})")
+
+
 def process(job: dict) -> None:
     jid = job["id"]
     payload = job.get("payload") or []
+    # BOTÃO ÚNICO: tudo numa rodada só (24/11/2026)
+    if ((job.get("config") or {}).get("tudo") or {}).get("on"):
+        try:
+            process_tudo(job)
+        except Exception as e:
+            log.exception("job %s ERRO no Gerar tudo", jid)
+            try:
+                patch_job(jid, {"status": "error", "error": str(e)[:500],
+                                "finished_at": _now(), "updated_at": _now()})
+            except Exception:
+                log.exception("falha ao marcar erro no job %s", jid)
+        return
     # Job do HTML do WhatsApp (etapa 3) — só o HTML, com os corpos que o Word já guardou.
     if ((job.get("config") or {}).get("whatsapp") or {}).get("only"):
         try:

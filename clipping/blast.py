@@ -53,6 +53,10 @@ log = logging.getLogger(__name__)
 CAPACIDADE = {
     "gemini_clipping": 500,    # projeto dedicado ao clipping (~7 chamadas/dia)
     "gemini_takes":    500,    # projeto dos takes (~250-280/dia)
+    # 2º modelo NO MESMO projeto do clipping (a cota do Google é POR MODELO). Entrou em
+    # 24/11/2026: o 3.1 deu "503 high demand" nos dois projetos e o blast caiu na Z.AI (1m41s),
+    # enquanto o resumo da hora, que já usava o 3.5 de reserva, passou na mesma manhã.
+    "gemini_clipping_b": 500,
     "zai":            1000,    # ocioso, porém LENTO (55-66s por chamada)
 }
 
@@ -106,7 +110,11 @@ FOLGA_MINIMA = float(os.environ.get("BLAST_FOLGA_MINIMA", "0.20"))
 # Erro medido de cada família em 2026-08-06 (% de julgamento claramente errado, nas fontes
 # curadas): gemini 0,8% · mistral 4,7% · glm ~25%. Menor é melhor.
 # A Mistral saiu em 2026-10-21: conta grátis com limite zero, passou a exigir cartão.
-QUALIDADE = {"gemini_clipping": 0, "gemini_takes": 0, "zai": 2}
+QUALIDADE = {"gemini_clipping": 0, "gemini_takes": 0, "gemini_clipping_b": 1, "zai": 2}
+
+# Lotação do Google (5xx) costuma passar em segundos: o robô dos takes tenta de novo e passa
+# (24/11 09:33 UTC, mesmo minuto em que o blast desistiu). Uma nova tentativa por provedor.
+RETENTAR_5XX_S = float(os.environ.get("BLAST_RETENTAR_S", "4"))
 
 
 def escolher_provedores() -> list:
@@ -133,6 +141,7 @@ def escolher_provedores() -> list:
     """
     from hunter.llm_take import PROVIDERS as _P
     gem = (_P.get("gemini") or {}).get("model") or "gemini-3.1-flash-lite"
+    gem_b = (_P.get("gemini_b") or {}).get("model") or "gemini-3.5-flash-lite"
     zai = (_P.get("zai") or {}).get("model") or "glm-4.5-flash"
 
     defs = {
@@ -140,6 +149,9 @@ def escolher_provedores() -> list:
                             "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""), "model": gem},
         "gemini_takes":    {"rotulo": "gemini (projeto takes)", "kind": "gemini", "lento": False,
                             "key": os.environ.get("GEMINI_API_KEY", ""), "model": gem},
+        "gemini_clipping_b": {"rotulo": "gemini 2º modelo (projeto clipping)", "kind": "gemini",
+                              "lento": False, "key": os.environ.get("CLIPPING_TRANSLATE_KEY", ""),
+                              "model": gem_b},
         "zai":             {"rotulo": "z.ai (GLM)", "kind": "openai", "lento": True,
                             "key": os.environ.get("ZAI_API_KEY", ""), "model": zai,
                             "url": "https://api.z.ai/api/paas/v4/chat/completions"},
@@ -148,7 +160,11 @@ def escolher_provedores() -> list:
 
     def _folga(nome):
         teto = CAPACIDADE.get(nome, 1) or 1
-        return max(0.0, 1.0 - carga.get(nome, 0) / teto)
+        usado = carga.get(nome)
+        if usado is None and nome == "gemini_clipping_b":
+            # sem contador próprio: usa a estimativa do projeto (conservador — mesmo projeto)
+            usado = carga.get("gemini_clipping", 0)
+        return max(0.0, 1.0 - (usado or 0) / teto)
 
     vivos = [(nome, d) for nome, d in defs.items() if d["key"]]
     folgados = [(n, d) for n, d in vivos if _folga(n) >= FOLGA_MINIMA]
@@ -212,7 +228,12 @@ Como escrever:
 - não explique seu raciocínio nem liste o que descartou;
 - NÃO coloque marcador, numeração, ponto e vírgula ou ponto final: só a frase.
 
-Responda SOMENTE com JSON: {{"destaques": ["...", "..."]}}
+Escreva os MESMOS destaques também em INGLÊS, para o e-mail dos clientes (lista "highlights_en"):
+- mesmo conteúdo, mesma ordem e mesmo número de itens da lista em português;
+- números no padrão americano (1,234.5), as mesmas regras de formato (USD XX/ton, YoY, QoQ);
+- inglês de research sell-side, natural — não uma tradução palavra por palavra.
+
+Responda SOMENTE com JSON: {{"destaques": ["...", "..."], "highlights_en": ["...", "..."]}}
 
 NOTÍCIAS:
 {noticias}"""
@@ -230,11 +251,13 @@ def _chamar(cfg: dict, prompt: str):
                 "temperature": 0.2, "maxOutputTokens": 2048,
                 "responseMimeType": "application/json",
                 "responseSchema": {"type": "OBJECT", "properties": {
-                    "destaques": {"type": "ARRAY", "items": {"type": "STRING"}}},
+                    "destaques": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "highlights_en": {"type": "ARRAY", "items": {"type": "STRING"}}},
                     "required": ["destaques"]}},
         }
         r = requests.post(url, json=payload, timeout=90,
                           headers={"x-goog-api-key": cfg["key"], "Content-Type": "application/json"})
+        cfg["_status"] = r.status_code
         if not r.ok:
             log.warning("blast: %s HTTP %s", cfg["rotulo"], r.status_code)
             return None
@@ -247,6 +270,7 @@ def _chamar(cfg: dict, prompt: str):
         r = requests.post(cfg["url"], json=payload, timeout=150,
                           headers={"Authorization": f"Bearer {cfg['key']}",
                                    "Content-Type": "application/json"})
+        cfg["_status"] = r.status_code
         if not r.ok:
             log.warning("blast: %s HTTP %s", cfg["rotulo"], r.status_code)
             return None
@@ -267,7 +291,21 @@ def _chamar(cfg: dict, prompt: str):
         return None
     from hunter.llm_take import _text_items     # texto solto no lugar da lista não vira letras
     destaques = [d.strip().rstrip(";.").strip() for d in _text_items(out.get("destaques"))]
-    return [d for d in destaques if d] or None
+    destaques = [d for d in destaques if d]
+    if not destaques:
+        return None
+    en = [d.strip().rstrip(";.").strip() for d in _text_items(out.get("highlights_en"))]
+    res = _Destaques(destaques)
+    res.en = [d for d in en if d]
+    return res
+
+
+class _Destaques(list):
+    """A lista em português (é o que o blast sempre devolveu) com o inglês PENDURADO em `.en`.
+
+    Uma lista de verdade, de propósito: quem já comparava `_chamar(...) == [...]` continua
+    certo, e o inglês vai junto sem mudar o formato de ninguém."""
+    en: list = []
 
 
 # Quanto de cada notícia vai para a IA. Medido em 2026-09-01: os corpos guardados em
@@ -368,35 +406,88 @@ def _regras_da_escolha(k: int, n: int) -> tuple:
     return MARCADAS.format(k=(f"{k} delas" if k > 1 else "uma delas"), resto=resto), limite
 
 
+def _ingles(pt: list, en: list) -> tuple[list, str]:
+    """Os destaques em inglês para o e-mail: (lista, de onde veio).
+
+    1º o que a IA escreveu NA MESMA chamada (nenhuma chamada a mais); se veio torto (faltando
+    ou com outro número de itens), tradução do Google — sem IA, sem cota, já usada no clipping.
+    Nada aqui levanta exceção: sem inglês, o e-mail sai sem a seção de destaques."""
+    en = [x for x in (en or []) if str(x).strip()]
+    if pt and len(en) == len(pt):
+        return en, "ia"
+    if not pt:
+        return [], ""
+    try:
+        from deep_translator import GoogleTranslator
+        tr = GoogleTranslator(source="pt", target="en")
+        out = [str(tr.translate(x) or "").strip().rstrip(";.").strip() for x in pt]
+        if all(out):
+            log.info("blast: a IA não mandou o inglês certo (%d de %d) — traduzido pelo Google", len(en), len(pt))
+            return out, "google"
+    except Exception as e:
+        log.warning("blast: sem destaques em inglês (%s)", e)
+    return [], ""
+
+
 def highlights(noticias: list, n: int = 3) -> dict:
     """
-    Escreve os destaques. Devolve {'destaques': [...], 'provedor': 'nome', 'erro': None}.
+    Escreve os destaques. Devolve {'destaques': [...], 'destaques_en': [...], 'en_fonte': 'ia'|
+    'google'|'', 'provedor': 'nome', 'erro': None}.
 
     As notícias que o analista marcou com ★ na tela do clipping são OBRIGATÓRIAS: a IA escreve
     uma frase para cada e só escolhe o que sobrar (nenhuma ★ = ela escolhe as três, como antes).
     A ordem das ★ é a ordem em que ele clicou, e é a ordem no blast.
 
+    UMA chamada traz as duas línguas (português p/ o WhatsApp, inglês p/ o e-mail). Lotação do
+    Google (5xx) ganha UMA nova tentativa; se o MODELO segue lotado, os outros projetos com o
+    mesmo modelo são pulados (a lotação é do modelo no Google, não do nosso projeto) e a vez
+    passa ao 2º modelo, antes da Z.AI, que é lenta.
+
     Nunca levanta exceção: o blast tem de sair mesmo sem IA — sem destaque ele ainda entrega
     preços e manchetes, que é a maior parte do valor. Seção vazia é prevista no formato.
     """
+    vazio = {"destaques": [], "destaques_en": [], "en_fonte": "", "provedor": None}
     if not noticias:
-        return {"destaques": [], "provedor": None, "erro": "nenhuma notícia selecionada"}
+        return {**vazio, "erro": "nenhuma notícia selecionada"}
     noticias = [dict(x) for x in noticias]          # não mexe no dicionário de quem chamou
     k = _normalizar_pins(noticias, n)
     marcadas, limite = _regras_da_escolha(k, n)
     prompt = INSTRUCAO.format(n=n, marcadas=marcadas, limite=limite,
                               noticias=_montar_noticias(noticias))
     erro = "nenhum provedor configurado"
+    lotados: set = set()                             # modelos que o Google recusou 2× (5xx)
     for cfg in escolher_provedores():
+        if cfg.get("model") in lotados:
+            log.info("blast: pulo %s — o modelo %s está lotado no Google agora", cfg["rotulo"], cfg["model"])
+            continue
         log.info("blast: pedindo %d destaques a %s (folga %.0f%%, %d marcada(s) pelo analista)",
                  n, cfg["rotulo"], cfg["folga"] * 100, k)
-        try:
-            got = _chamar(cfg, prompt)
-        except Exception as e:
-            erro = f"{cfg['rotulo']}: {type(e).__name__}"
-            log.warning("blast: %s levantou %s", cfg["rotulo"], e)
-            continue
+        got = None
+        for tentativa in (1, 2):
+            cfg.pop("_status", None)
+            try:
+                got = _chamar(cfg, prompt)
+            except Exception as e:
+                erro = f"{cfg['rotulo']}: {type(e).__name__}"
+                log.warning("blast: %s levantou %s", cfg["rotulo"], e)
+                got = None
+                break
+            st = cfg.get("_status") or 0
+            if got or not (500 <= st < 600) or tentativa == 2:
+                if not got and 500 <= st < 600:
+                    lotados.add(cfg.get("model"))
+                break
+            log.info("blast: %s lotado (HTTP %s) — tento de novo em %.0fs", cfg["rotulo"], st, RETENTAR_5XX_S)
+            import time
+            time.sleep(RETENTAR_5XX_S)
         if got:
-            return {"destaques": got[:n], "provedor": cfg["rotulo"], "erro": None}
-        erro = f"{cfg['rotulo']} nao devolveu destaques"
-    return {"destaques": [], "provedor": None, "erro": erro}
+            pt = list(got)[:n]
+            # só resposta de IA de verdade (`_Destaques`) passa pelo inglês; lista crua (testes,
+            # código antigo) fica sem — e o teste não sai fazendo tradução pela internet
+            en, fonte = (_ingles(pt, list(got.en or [])[:n]) if isinstance(got, _Destaques)
+                         else ([], ""))
+            return {"destaques": pt, "destaques_en": en, "en_fonte": fonte,
+                    "provedor": cfg["rotulo"], "erro": None}
+        if not erro.startswith(cfg["rotulo"] + ":"):
+            erro = f"{cfg['rotulo']} nao devolveu destaques"
+    return {**vazio, "erro": erro}

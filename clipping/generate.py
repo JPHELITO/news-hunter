@@ -132,6 +132,74 @@ def build_whatsapp_from_payload(payload: list[dict], d: date | None = None,
             "whatsapp_name": f"{clipping_basename(d)}.html", "items": items, "errors": errors}
 
 
+def build_all_from_payload(payload: list[dict], d: date | None = None,
+                           config: dict | None = None) -> dict:
+    """O BOTÃO ÚNICO da aba Clipping (24/11/2026): Word + destaques do blast + HTML do WhatsApp
+    + e-mail novo, numa rodada só do robô.
+
+    Antes eram 3 cliques e 3 rodadas (Word → blast → HTML), cada uma ligando o robô do zero
+    (20 s a 1 min só para subir). Aqui os corpos são lidos/raspados UMA vez e ficam na memória
+    para o Word, para a IA do blast e para o HTML. A IA continua sendo UMA chamada (português
+    p/ o WhatsApp + inglês p/ o e-mail na mesma resposta).
+
+    Ordem e garantias:
+      1) itens (corpo + tradução) → 2) Word  ← o que já funcionava; nada abaixo derruba isto
+      3) destaques (1 chamada) — sem IA, o resto sai sem a seção de destaques
+      4) HTML do WhatsApp com os destaques NOVOS (português)
+      5) e-mail novo (visual do HTML, destaques em inglês); falhou → e-mail antigo (cópia do Word)
+    """
+    from .blast import highlights
+    from .email_brand import build_brand_email
+    from .whatsapp import build_whatsapp
+
+    d = d or date.today()
+    config = dict(config or {})
+    rows = sorted(payload, key=lambda r: r.get("pos", 0))
+    errors: list = []
+    items = [_to_item(r, True, errors) for r in rows]
+    docx = build_docx(items, d, config)
+    base = clipping_basename(d)
+    docx_name = f"{base}.docx"
+
+    # 3) destaques — com os corpos que acabaram de ser lidos (nada de reler o banco)
+    tudo = config.get("tudo") or {}
+    n = int(tudo.get("n") or 3)
+    if tudo.get("ia", True):
+        noticias = [{"title": it.title, "source_name": it.source_name, "sector": it.sector,
+                     "take": it.take, "pin": r.get("pin"), "body": it.body}
+                    for r, it in zip(rows, items)]
+        bl = highlights(noticias, n=n)
+    else:   # "destaques por IA" desligado: usa os já carimbados para a data, se houver
+        st = ((config.get("blast_highlights") or {}).get(d.isoformat()) or {})
+        bl = {"destaques": list(st.get("destaques") or []),
+              "destaques_en": list(st.get("destaques_en") or []), "en_fonte": "",
+              "provedor": st.get("provedor"), "erro": None if st else "sem IA e sem destaques do dia"}
+
+    # o HTML lê os destaques de `config.blast_highlights[data]` — põe os NOVOS lá (cópia local)
+    cfg_html = dict(config)
+    bh = dict(cfg_html.get("blast_highlights") or {})
+    if bl.get("destaques"):
+        bh[d.isoformat()] = {"destaques": bl["destaques"], "destaques_en": bl.get("destaques_en") or [],
+                             "provedor": bl.get("provedor")}
+    else:
+        bh.pop(d.isoformat(), None)
+    cfg_html["blast_highlights"] = bh
+
+    wa = build_whatsapp(items, d, cfg_html)
+    em = build_brand_email(items, d, wa.get("model"), wa.get("html"), wa.get("fonts"), config,
+                           bl.get("destaques_en"), docx, docx_name)
+    if em["eml"]:
+        eml, html = em["eml"], em["html"]
+    else:                                   # rede de segurança: o e-mail de antes
+        eml = build_eml_bytes(items, d, docx_bytes=docx, docx_name=docx_name, config=config)
+        html = build_html(items, d, config, docx_bytes=docx)
+    return {"docx": docx, "eml": eml, "docx_name": docx_name, "eml_name": f"{base}.eml",
+            "html": html, "html_name": f"{base}.html",
+            "whatsapp": wa.get("html"), "whatsapp_error": wa.get("error"), "whatsapp_name": f"{base}.html",
+            "blast": bl, "email_novo": bool(em["eml"]), "email_error": em["error"],
+            "items": items, "errors": errors}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--payload")
