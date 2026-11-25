@@ -21,7 +21,9 @@ motor do Word:
     sem os arcos decorativos, então o preto dela emenda com o da faixa em qualquer largura;
   * o índice ("Sector headlines") leva à matéria DENTRO do e-mail: link `#storyN` → marca
     `<a name="storyN">` (só letra+número, o formato de marcador que o Word aceita); cada
-    matéria tem "Back to headlines" de volta.
+    matéria tem "Back to headlines" de volta;
+  * 25/11: topo preto mais baixo (só a foto do e-mail — `HERO_COMPACT_CSS`) e as listas do
+    índice e de "Our research" mais juntas (`IDX_GAP`/`PUB_GAP`), para ver tudo de uma vez.
 """
 from __future__ import annotations
 
@@ -41,6 +43,25 @@ log = logging.getLogger(__name__)
 COL = 660                    # largura da coluna (px)
 PAD = 24                     # margem interna esquerda/direita
 IMG_MAX = COL - 2 * PAD      # 612: teto de cada imagem do corpo
+
+# TOPO MAIS BAIXO (pedido do usuário em 25/11: "um pouco menor em comprimento vertical, não muito
+# menor"). Muda só a FOTO do e-mail — o HTML do WhatsApp continua igual: menos ar entre as linhas,
+# o emblema no tamanho que o próprio HTML usa no celular e a data grande um pouco menor.
+# Medido a 660px: foto 349 → 291px; faixa preta inteira 373 → 307px (−18%).
+HERO_COMPACT_CSS = (".topbar{padding-top:14px!important;row-gap:10px!important}"
+                    ".emb{width:54px!important;height:54px!important}"
+                    ".lockup{padding-top:16px!important}"
+                    ".kicker{margin-bottom:6px!important}"
+                    "h1 .period{font-size:98px!important}"
+                    "h1 .word{margin-top:5px!important}")
+HERO_TAIL = 12               # preto da foto depois de "Daily News" (era 14)
+BAND_TAIL = 14               # faixa preta depois da foto (era 22)
+
+# ÍNDICE e "OUR RESEARCH" MAIS JUNTOS (pedido do usuário em 25/11: "um pouco mais próximo um do
+# outro, para ser mais fácil de visualizar todos os headlines" — e o mesmo nos últimos 10
+# relatórios). Medido: manchete 70 → 54px, relatório 117 → 94px.
+IDX_GAP = 7                  # respiro em cima e embaixo de cada manchete do índice (era 13)
+PUB_GAP = 8                  # idem em cada relatório de "Our research" (era 14)
 
 SECTOR = {"NR": "Natural Resources", "SM": "Steel & Mining", "PP": "Pulp & Paper"}
 SHORT = {"NR": "NR", "SM": "S&M", "PP": "P&P"}
@@ -252,16 +273,16 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
         hero = (f'<img class="hero-img" src="data:image/png;base64,{base64.b64encode(hero_png).decode("ascii")}" '
                 f'width="{COL}" height="{hh}" alt="{_a(alt)}" '
                 f'style="display:block;border:0;outline:none;width:{COL}px;height:{hh}px">')
-    else:   # sem a imagem: o mesmo topo em texto (o que o Outlook consegue)
-        hero = (f'<p {_txt(13, "#FFFFFF", "bold", 18, f"padding:22px {PAD}px 0 {PAD}px", cls="fd")}>STEEL &amp; MINING / PULP &amp; PAPER</p>'
-                f'<p {_txt(15, "#FF5500", lh=22, extra=f"padding:40px {PAD}px 0 {PAD}px")}>LatAm S&amp;M and P&amp;P</p>'
-                f'<p {_txt(64, "#FF5500", lh=70, extra=f"padding:0 {PAD}px", cls="fd")}>{MON[d.month-1]} {d.day}</p>'
-                f'<p {_txt(36, "#FFFFFF", "bold", 42, f"padding:4px {PAD}px 0 {PAD}px", cls="fd")}>Daily News</p>')
+    else:   # sem a imagem: o mesmo topo em texto (o que o Outlook consegue), tão baixo quanto a foto
+        hero = (f'<p {_txt(13, "#FFFFFF", "bold", 18, f"padding:16px {PAD}px 0 {PAD}px", cls="fd")}>STEEL &amp; MINING / PULP &amp; PAPER</p>'
+                f'<p {_txt(15, "#FF5500", lh=22, extra=f"padding:24px {PAD}px 0 {PAD}px")}>LatAm S&amp;M and P&amp;P</p>'
+                f'<p {_txt(56, "#FF5500", lh=62, extra=f"padding:0 {PAD}px", cls="fd")}>{MON[d.month-1]} {d.day}</p>'
+                f'<p {_txt(36, "#FFFFFF", "bold", 42, f"padding:2px {PAD}px 0 {PAD}px", cls="fd")}>Daily News</p>')
     # a faixa preta vai até a borda da janela; a foto fica à esquerda (o texto dela começa nos
     # mesmos 24px do corpo) e o preto da foto emenda com o da faixa
     rows.append(f'<tr><td align="left" bgcolor="{T["band"]}" style="background:{T["band"]};padding:0;text-align:left">{hero}</td></tr>')
-    rows.append(f'<tr><td height="22" bgcolor="{T["band"]}" style="height:22px;line-height:22px;font-size:1px;'
-                f'background:{T["band"]}">&nbsp;</td></tr>')
+    rows.append(f'<tr><td height="{BAND_TAIL}" bgcolor="{T["band"]}" style="height:{BAND_TAIL}px;'
+                f'line-height:{BAND_TAIL}px;font-size:1px;background:{T["band"]}">&nbsp;</td></tr>')
     if theme == "light":   # a faixa preta termina num fio laranja
         rows.append(f'<tr><td height="2" bgcolor="{T["orange"]}" style="height:2px;line-height:2px;font-size:2px;background:{T["orange"]}">&nbsp;</td></tr>')
 
@@ -307,20 +328,20 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
         # legenda numa linha própria: lado a lado, no celular a barra sumia espremida
         f'<p {_txt(12.5, T["mute"], lh=18, extra="padding-top:8px")}>{legend}</p></td></tr>')
     for s in secs:
-        rows.append(f'<tr><td class="px" style="padding:22px {PAD}px 2px {PAD}px">'
+        rows.append(f'<tr><td class="px" style="padding:16px {PAD}px 2px {PAD}px">'
                     f'<p {_txt(11.5, T["otext"], "bold", 16, "letter-spacing:1.2px")}>{_e(SECTOR[s].upper())}</p></td></tr>')
         lis = []
         for it in [x for x in ordered if x["sector"] == s]:
             head = it["tr_title"] or it["title"]
-            sub = f'<p {_txt(12.5, T["mute"], lh=18, extra="padding-top:2px")}>{_e(it["title"])}</p>' if it["tr_title"] else ""
+            sub = f'<p {_txt(12.5, T["mute"], lh=17, extra="padding-top:1px")}>{_e(it["title"])}</p>' if it["tr_title"] else ""
             # ÍNDICE: o título leva à matéria completa MAIS ABAIXO no próprio e-mail (o link do
             # site da fonte fica no fim de cada matéria, "Open at …")
             go = _story_anchor(it)
             title = f'<a href="#{go}" style="color:{T["fg"]};text-decoration:none">{_e(head)}</a>'
-            lis.append(f'<tr><td width="20" valign="top" style="width:20px;padding:13px 0 13px 0">{_badge(it["take"], T)}</td>'
-                       f'<td valign="top" style="padding:13px 0 13px 12px;border-bottom:1px solid {T["line"]}">'
-                       f'<p {_txt(15, T["fg"], "bold", 21)}>{title}</p>{sub}'
-                       f'<p {_txt(12.5, T["mute"], lh=18, extra="padding-top:4px")}>{_e(it["source"])}'
+            lis.append(f'<tr><td width="20" valign="top" style="width:20px;padding:{IDX_GAP}px 0 {IDX_GAP}px 0">{_badge(it["take"], T)}</td>'
+                       f'<td valign="top" style="padding:{IDX_GAP}px 0 {IDX_GAP}px 12px;border-bottom:1px solid {T["line"]}">'
+                       f'<p {_txt(15, T["fg"], "bold", 20)}>{title}</p>{sub}'
+                       f'<p {_txt(12.5, T["mute"], lh=17, extra="padding-top:2px")}>{_e(it["source"])}'
                        f'{"&nbsp;&nbsp;&middot;&nbsp;&nbsp;" if it["source"] else ""}'
                        f'<a href="#{go}" style="color:{T["otext"]};text-decoration:underline">Full story&nbsp;&darr;</a></p></td></tr>')
         rows.append(f'<tr><td class="px" style="padding:0 {PAD}px">'
@@ -341,7 +362,7 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
                 y, m, dd = p["date"][:10].split("-")
                 dt = f"{MON[int(m)-1]} {int(dd)}"
             pill = (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate"><tr>'
-                    f'<td style="border:1px solid {T["hair"]};border-radius:10px;padding:2px 8px;font-family:{ARIAL};'
+                    f'<td style="border:1px solid {T["hair"]};border-radius:10px;padding:1px 8px;font-family:{ARIAL};'
                     f'font-size:10.5px;line-height:14px;mso-line-height-rule:exactly;font-weight:bold;letter-spacing:0.5px;'
                     f'color:{T["otext"]}" class="fb">{_e(SHORT.get(p.get("sector"), "S&M"))}</td></tr></table>')
             nm = (f'<a href="{_a(link)}" style="color:{T["fg"]};text-decoration:none">{_e(name)}</a>'
@@ -349,10 +370,10 @@ def build_brand_html(model: dict, d: date, hero_png: bytes | None, disclaimer: d
             meta = [x for x in (dt,) if x]
             open_ = (f' &nbsp;&middot;&nbsp; <a href="{_a(link)}" style="color:{T["otext"]};text-decoration:underline">Open report&nbsp;&rsaquo;</a>'
                      if link.startswith("http") else "")
-            out.append(f'<tr><td style="padding:14px 0 14px 0;border-bottom:1px solid {T["line"]}">{pill}'
-                       f'<p {_txt(15, T["fg"], "bold", 21, "padding-top:7px")}>{nm}</p>'
-                       + (f'<p {_txt(12, T["mute"], lh=17, extra="padding-top:2px")}>{_e(tick)}</p>' if tick else "")
-                       + f'<p {_txt(12, T["mute"], lh=17, extra="padding-top:4px")}>{" ".join(meta)}{open_}</p></td></tr>')
+            out.append(f'<tr><td style="padding:{PUB_GAP}px 0 {PUB_GAP}px 0;border-bottom:1px solid {T["line"]}">{pill}'
+                       f'<p {_txt(15, T["fg"], "bold", 20, "padding-top:4px")}>{nm}</p>'
+                       + (f'<p {_txt(12, T["mute"], lh=16, extra="padding-top:1px")}>{_e(tick)}</p>' if tick else "")
+                       + f'<p {_txt(12, T["mute"], lh=16, extra="padding-top:2px")}>{" ".join(meta)}{open_}</p></td></tr>')
         return out
 
     pubs = pub_rows(model.get("publications"))
@@ -525,13 +546,14 @@ def hero_and_disclaimer(wa_html: str, width: int = COL, pad: int = PAD) -> tuple
             pg.goto(f.as_uri() + "?shot=1")
             # sem os arcos decorativos: cortados na borda da foto, viravam um risco solto quando a
             # faixa preta do e-mail continua à direita (coluna fluida) — sem eles o preto emenda
+            # + HERO_COMPACT_CSS: o topo do e-mail é mais baixo que o do HTML (pedido de 25/11)
             pg.add_style_tag(content=f":root{{--pad:{pad}px!important}}.theme-sw{{display:none!important}}"
-                                     ".hero .shapes{display:none!important}")
+                                     ".hero .shapes{display:none!important}" + HERO_COMPACT_CSS)
             pg.evaluate("document.fonts.ready")
             pg.wait_for_timeout(600)
             bottom = pg.evaluate("(() => { const w = document.querySelector('h1 .word');"
                                  " const r = w.getBoundingClientRect(); return Math.ceil(r.bottom + window.scrollY); })()")
-            png = pg.screenshot(clip={"x": 0, "y": 0, "width": width, "height": bottom + 14})
+            png = pg.screenshot(clip={"x": 0, "y": 0, "width": width, "height": bottom + HERO_TAIL})
             disc = pg.evaluate("""(() => {
               const d = document.querySelector('details.disc'); if (!d) return null;
               const t = e => (e ? e.textContent : '').replace(/\\s+/g, ' ').trim();

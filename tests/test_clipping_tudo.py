@@ -320,6 +320,55 @@ class TestEmailNovo:
         assert stories.count('href="#heads"') == 2                       # "Back to headlines" em cada
         assert stories.count("Open at") == 2                             # o site da fonte continua lá
 
+    def test_indice_e_relatorios_mais_juntos(self):
+        """Pedido do usuário (25/11): manchetes do índice "um pouco mais próximas uma da outra" e o
+        mesmo nos últimos 10 relatórios de "Our research". Medido no motor do Outlook: manchete
+        −23%, relatório −20%. Trava o respiro de cada linha (era 13px e 14px)."""
+        pubs = [{"name": f"Report {k}", "sector": "PP" if k % 2 else "SM", "date": "2026-11-22",
+                 "link": f"https://example.com/r{k}", "companies": ["SUZB3", "KLBN11"]} for k in range(10)]
+        cfg = {"blast_highlights": {"2026-11-24": {"destaques": ["Minério subiu"]}}, "recent_publications": pubs}
+        html = self._eml(cfg=cfg)["html"]
+        heads = html.split("Sector headlines", 1)[1].split("Our research", 1)[0]
+        research = html.split("Our research", 1)[1].split("Full stories", 1)[0]
+        linhas_indice = re.findall(r'style="padding:(\d+)px 0 (\d+)px 12px;border-bottom', heads)
+        assert len(linhas_indice) == 2                                         # uma por manchete
+        assert all(int(a) <= 8 and int(b) <= 8 for a, b in linhas_indice), linhas_indice
+        linhas_rel = re.findall(r'<tr><td style="padding:(\d+)px 0 (\d+)px 0;border-bottom', research)
+        assert len(linhas_rel) == 10                                           # os 10 relatórios
+        assert all(int(a) <= 8 and int(b) <= 8 for a, b in linhas_rel), linhas_rel
+        assert research.count("Open report") == 10                            # nada some ao juntar
+
+    def test_faixa_preta_mais_baixa(self):
+        """Pedido do usuário (25/11): o topo preto "um pouco menor em comprimento vertical". O preto
+        que sobra depois da foto caiu de 22 para 14px — e a foto em si sai mais baixa (teste abaixo)."""
+        html = self._eml()["html"]
+        assert email_brand.BAND_TAIL < 22
+        assert f'height="{email_brand.BAND_TAIL}" bgcolor="#000000"' in html
+        assert 'height="22" bgcolor="#000000"' not in html
+
+    def test_foto_do_topo_sai_mais_baixa_e_o_html_do_whatsapp_nao_muda(self):
+        """A foto do topo é tirada do HTML do WhatsApp com um estilo EXTRA só na hora de fotografar
+        (menos ar, emblema e data um pouco menores): o e-mail fica mais baixo e o HTML que vai para o
+        WhatsApp continua igual. Medido a 660px: foto 349 → 291px."""
+        estilos, cortes = [], []
+        pg = mock.MagicMock()
+        pg.add_style_tag.side_effect = lambda content: estilos.append(content)
+        pg.evaluate.side_effect = lambda js: 279 if "h1 .word" in js else None
+        pg.screenshot.side_effect = lambda clip: cortes.append(clip) or b"png"
+        pw = mock.MagicMock()
+        pw.__enter__.return_value.chromium.launch.return_value.new_context.return_value.new_page.return_value = pg
+        wa = "<html><body><header class='hero'><h1><span class='word'>Daily News</span></h1></header></body></html>"
+        with mock.patch("playwright.sync_api.sync_playwright", return_value=pw):
+            png, _disc = email_brand.hero_and_disclaimer(wa)
+        assert png == b"png"
+        assert len(estilos) == 1 and estilos[0].endswith(email_brand.HERO_COMPACT_CSS)
+        for regra in (".lockup{padding-top:16px", "h1 .period{font-size:98px", ".emb{width:54px"):
+            assert regra in email_brand.HERO_COMPACT_CSS
+        assert cortes[0]["height"] == 279 + email_brand.HERO_TAIL and email_brand.HERO_TAIL < 14
+        assert cortes[0]["width"] == email_brand.COL
+        # o HTML do WhatsApp em si não recebe o estilo do e-mail (é só uma cópia aberta para a foto)
+        assert email_brand.HERO_COMPACT_CSS not in wa
+
     def test_destaques_em_ingles_e_nao_em_portugues(self):
         html = self._eml()["html"]
         assert "Iron ore rose" in html and "Minério subiu" not in html
