@@ -4,7 +4,8 @@
   "updatedAt": "2026-11-12T09:00:00Z",
   "source": {
     "stamp": "2026-11-12T09:00:00Z",
-    "rows": 4
+    "rows": 5,
+    "rule": 2
   },
   "companies": [
     {
@@ -15,6 +16,7 @@
       "sourceFile": "Modelo Ficticio_Sensitivity_FX.xlsx",
       "modelPrice": 11.97,
       "mktcapModel": 50000.5,
+      "mktcapModelNav": null,
       "assumptions": [
         {
           "label": "Avg. Iron Ore Price 2027",
@@ -32,6 +34,7 @@
             "sourceFile": "Modelo Ficticio_Sensitivity_FX.xlsx",
             "modelPrice": 11.97,
             "mktcapModel": 50000.5,
+            "mktcapModelNav": null,
             "assumptions": [
               {
                 "label": "Avg. Iron Ore Price 2027",
@@ -86,6 +89,7 @@
             "sourceFile": "Modelo Ficticio_Sensitivity_FREIGHT.xlsx",
             "modelPrice": 11.9,
             "mktcapModel": 50000.5,
+            "mktcapModelNav": null,
             "assumptions": [
               {
                 "label": "Avg. Iron Ore Price 2027",
@@ -140,6 +144,7 @@
             "sourceFile": "Modelo Ficticio_Sensitivity_COPPER.xlsx",
             "modelPrice": 11.97,
             "mktcapModel": 50000.5,
+            "mktcapModelNav": null,
             "assumptions": [
               {
                 "label": "Avg. Iron Ore Price 2027",
@@ -187,6 +192,102 @@
       ]
     },
     {
+      "code": "HBM",
+      "order": 5,
+      "currency": "USD",
+      "modelDate": "2026-11-22",
+      "sourceFile": "Modelo Ficticio Hudbay_Sensitivity.xlsx",
+      "modelPrice": 16.25,
+      "mktcapModel": 6420.5,
+      "mktcapModelNav": 6388.75,
+      "assumptions": [
+        {
+          "label": "Copper Real-Term Price 2027E (USD/lb)",
+          "value": 5.4
+        },
+        {
+          "label": "Gold Real-Term Price 2027E (USD/oz)",
+          "value": 4400.0
+        },
+        {
+          "label": "(=) Market Cap (USD mn)",
+          "value": 6388.75
+        }
+      ],
+      "sheets": [
+        {
+          "name": "Sensitivity",
+          "analysis": null,
+          "tables": [
+            {
+              "id": "t1",
+              "metric": "ebitda",
+              "year": 2027,
+              "title": "EBITDA 2027E (USD million)",
+              "pairId": null,
+              "colLabel": "Average Gold Real-Term Price 2027E (USD/oz)",
+              "rowLabel": "Average Copper Real-Term Price \n2027E (USD/lb)",
+              "colLevels": [3600.0, 4400.0, 5200.0],
+              "rowLevels": [5.0, 5.4, 5.8],
+              "values": [
+                [18000.0, 22000.0, 26000.0],
+                [19440.0, 23760.0, 28080.0],
+                [20880.0, 25520.0, 30160.0]
+              ]
+            },
+            {
+              "id": "t3",
+              "metric": "fcf",
+              "year": 2027,
+              "title": "FCF Ex-Growth 2027E (USD million)",
+              "pairId": null,
+              "colLabel": "Average Gold Real-Term Price 2027E (USD/oz)",
+              "rowLabel": "Average Copper Real-Term Price \n2027E (USD/lb)",
+              "colLevels": [3600.0, 4400.0, 5200.0],
+              "rowLevels": [5.0, 5.4, 5.8],
+              "values": [
+                [18000.0, 22000.0, 26000.0],
+                [19440.0, 23760.0, 28080.0],
+                [20880.0, 25520.0, 30160.0]
+              ]
+            },
+            {
+              "id": "t4",
+              "metric": "fcf_yield",
+              "year": 2027,
+              "title": "FCF Ex-Growth Yield (%) 2027E",
+              "pairId": "t3",
+              "colLabel": "Average Gold Real-Term Price 2027E (USD/oz)",
+              "rowLabel": "Average Copper Real-Term Price \n2027E (USD/lb)",
+              "colLevels": [3600.0, 4400.0, 5200.0],
+              "rowLevels": [5.0, 5.4, 5.8],
+              "values": [
+                [0.081, 0.09, 0.099],
+                [0.1, 0.108, 0.117],
+                [0.12, 0.127, 0.135]
+              ]
+            },
+            {
+              "id": "t5",
+              "metric": "p_nav",
+              "year": null,
+              "title": "P/NAV (x)",
+              "pairId": null,
+              "colLabel": "Long-Term Gold Price (USD/oz)",
+              "rowLabel": "Long-Term Copper Price (USD/lb)",
+              "colLevels": [3450.0, 4250.0, 5050.0],
+              "rowLevels": [5.2, 5.6, 6.0],
+              "values": [
+                [0.8, 0.9, 1.0],
+                [0.85, 0.95, 1.05],
+                [0.9, 1.0, 1.1]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
       "code": "GGBR4",
       "order": 7,
       "currency": "BRL",
@@ -194,6 +295,7 @@
       "sourceFile": "Modelo Ficticio Gerdau_Sensitivity.xlsx",
       "modelPrice": 24.0,
       "mktcapModel": 47083.25,
+      "mktcapModelNav": null,
       "assumptions": [
         {
           "label": "Avg. FX 2027",
@@ -277,6 +379,7 @@
       "sourceFile": "Modelo Ficticio Aclara_Sensitivity.xlsx",
       "modelPrice": 3.0,
       "mktcapModel": null,
+      "mktcapModelNav": null,
       "assumptions": [],
       "sheets": [
         {

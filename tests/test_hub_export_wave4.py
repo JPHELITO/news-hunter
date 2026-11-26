@@ -7,14 +7,17 @@ O que estes testes TRAVAM, e por quê (o arquivo é PÚBLICO e o envio aparece e
   1) campo a campo: a forma exata de cada arquivo; a empresa oculta só com os 4 campos; `modelUrl` da
      constante pelo filtro de URL; dividend yield em pp; chaves proibidas nunca (`how_pulled`, `updated_by`,
      `external_id`, `ics_seq`, `locked`, `note`, `key`, `where`, as notas internas da sensibilidade, contatos);
-  2) a sensibilidade: só `sens2d` e só as grades que a tela DESENHA (porte de `_s2Sheets` e das análises);
+  2) a sensibilidade: só `sens2d` e só as grades que a tela DESENHA (porte de `_s2Sheets` e das análises),
+     com o conjunto POR EMPRESA do site (o cobre: EBITDA, FCF, FCF yield e P/NAV, sem o EV/EBITDA guardado;
+     as outras empresas iguais) e a base do P/NAV (`mktcapModelNav`) na empresa e na análise;
   3) as flags no dado (O50): cada uma desligada → arquivo vazio e NADA lido; religada → cheio de novo;
      `hub_<chave>` manda;
   4) a cadência: sonda igual → nenhuma leitura cara; sonda mudou → lê; leitura de segurança no prazo (Comp
      Table diária, sensibilidade semanal); a sonda guardada não se repete num erro;
   5) o marcador `source` DENTRO do hash: nova subida idêntica da planilha → 1 envio e depois estável; a
      partida a frio com a cópia publicada igual à sonda não lê o banco; Mindassets parado → a leitura espera
-     (1×/dia às 07 UTC);
+     (1×/dia às 07 UTC); a REGRA de leitura no marcador da sensibilidade: código novo com o banco igual relê
+     no primeiro ciclo do arquivo (runner novo ou o mesmo job), sem `rebuild` à mão;
   6) o calendário: contatos mascarados, rastreadores de e-mail recusados (as 3 formas reais, com endereços
      FICTÍCIOS), `[link]` no texto, `from` sem limite inferior;
   7) o glossário: `where` → rota pela tabela fechada (cobertura dos 15 endereços e das exceções por termo),
@@ -145,12 +148,13 @@ def test_model_url_e_a_constante_do_site_pelo_filtro(monkeypatch):
 def test_sensibilidade_so_sens2d_e_so_as_grades_desenhadas():
     sens, http = build("sg-sensitivity.json")
     assert list(sens) == ["schemaVersion", "generatedAt", "updatedAt", "source", "companies"]
-    assert sens["source"] == {"stamp": "2026-11-12T09:00:00Z", "rows": 4}     # a sonda conta a oculta
-    assert [c["code"] for c in sens["companies"]] == ["VALE", "GGBR4", "ARA"]  # exemplo e oculta fora
+    assert sens["source"] == {"stamp": "2026-11-12T09:00:00Z", "rows": 5,     # a sonda conta a oculta;
+                              "rule": SS.RULE} and SS.RULE == 2               # a regra de leitura, no marcador
+    assert [c["code"] for c in sens["companies"]] == ["VALE", "HBM", "GGBR4", "ARA"]   # exemplo e oculta fora
     grades = {c["code"]: sum(len(sh["tables"]) for sh in c["sheets"]) for c in sens["companies"]}
-    assert grades == F.SENS_DRAWN and SS.tables_count(sens["companies"]) == 12
-    vale, gg, ara = sens["companies"]
-    assert list(vale) == list(SS.COMPANY_KEYS)
+    assert grades == F.SENS_DRAWN and SS.tables_count(sens["companies"]) == 16
+    vale, hbm, gg, ara = sens["companies"]
+    assert list(vale) == list(SS.COMPANY_KEYS) and list(hbm) == list(SS.COMPANY_KEYS)
     assert [sh["analysis"]["id"] for sh in vale["sheets"]] == ["fx", "freight", "copper"]
     assert [t["metric"] for sh in vale["sheets"] for t in sh["tables"]] == ["ebitda", "ev_ebitda"] * 3
     fx = vale["sheets"][0]
@@ -158,6 +162,21 @@ def test_sensibilidade_so_sens2d_e_so_as_grades_desenhadas():
     assert vale["sheets"][1]["analysis"]["modelPrice"] == 11.90             # cada análise com o seu preço
     assert fx["tables"][1]["pairId"] == "fx-t1" and fx["tables"][0]["id"] == "fx-t1"
     assert list(fx["tables"][0]) == list(SS.TABLE_KEYS)
+    # a base do P/NAV: número em milhões ou null, na empresa e na análise (nulo gravado, ausente, valor)
+    assert vale["mktcapModelNav"] is None and fx["analysis"]["mktcapModelNav"] is None
+    assert gg["mktcapModelNav"] is None and ara["mktcapModelNav"] is None
+    assert (hbm["mktcapModel"], hbm["mktcapModelNav"]) == (6420.5, 6388.75)   # como guardado; a trava é do hub
+    # o COBRE: EBITDA, FCF, FCF yield e o P/NAV de longo prazo (sem ano), na ordem do arquivo; o EV/EBITDA
+    # guardado não sai (U18 = a)
+    (aba,) = hbm["sheets"]
+    assert aba["analysis"] is None
+    assert [(t["id"], t["metric"], t["year"]) for t in aba["tables"]] == \
+        [("t1", "ebitda", 2027), ("t3", "fcf", 2027), ("t4", "fcf_yield", 2027), ("t5", "p_nav", None)]
+    pnav = aba["tables"][3]
+    assert pnav["rowLabel"] == "Long-Term Copper Price (USD/lb)" and pnav["colLevels"] == [3450.0, 4250.0, 5050.0]
+    assert aba["tables"][0]["rowLabel"] == "Average Copper Real-Term Price \n2027E (USD/lb)"   # como escrito
+    assert aba["tables"][2]["pairId"] == "t3" and aba["tables"][2]["values"][0] == [0.081, 0.09, 0.099]
+    assert hbm["assumptions"][2] == {"label": "(=) Market Cap (USD mn)", "value": 6388.75}
     # Gerdau: a de 2026 sai (há 2027), a margem nunca, a SEM ano fica; ano em texto vira número
     assert [(t["id"], t["year"]) for t in gg["sheets"][0]["tables"]] == [("t1", 2027), ("t2", 2027),
                                                                          ("t3", 2027), ("t4", None)]
@@ -171,8 +190,14 @@ def test_sensibilidade_so_sens2d_e_so_as_grades_desenhadas():
     assert ara["mktcapModel"] is None and ara["assumptions"] == []
     texto = json.dumps(sens, ensure_ascii=False)
     for interno in ("corrigido à mão", "título original", "VALE3", "premissa conferida", "FCF ÷ yield",
-                    "Exemplo", "Margin", "Dividend", "4255.76", '"corner"', '"kind"', '"panel"'):
+                    "Exemplo", "Margin", "Dividend", "4255.76", '"corner"', '"kind"', '"panel"',
+                    "EV/EBITDA 2027E", "395.06", "29.5", "D12 apontava", "sinais trocados", "omitida",
+                    "refeita à mão"):
         assert interno not in texto, interno
+    # a rede embaixo da lista branca: os consertos à mão do cobre (nomes do banco real) nunca passam
+    rede = forbidden_keys({"tables_omitted": [], "modelPriceOriginal": 1, "model_price_note": "x",
+                           "mktcap_model_nav_note": "x"}, extra=spec_for("sg-sensitivity.json").forbidden)
+    assert len(rede) == 4
     (ler,) = http.supa_calls(SENS_READ)
     assert ler.params["definition->>kind"] == "eq.sens2d" and ler.params["select"] == "id,display_order,definition"
     (sonda,) = http.supa_calls("stock_guide_sensitivities")
@@ -201,9 +226,79 @@ def test_porte_do_corte_da_tela_casos_de_borda():
     assert [(s["name"], s["analysis"]["id"], [x["year"] for x in s["tables"]]) for s in out] == \
         [("s1", "1", [2026]), ("s3", "b", [2027])]                 # a "1" não tem 2027: fica a de 2026
     assert out[0]["analysis"]["label"] is None and out[0]["analysis"]["assumptions"] is None
+    assert out[0]["analysis"]["mktcapModelNav"] is None
     assert SS.company({"definition": {"kind": "grid6", "ticker": "X"}}) is None
     assert SS.company({"definition": {"kind": "sens2d"}}) is None             # sem empresa: fora
     assert SS.company({"definition": "lixo"}) is None
+
+
+def test_conjunto_por_empresa_o_cobre_como_o_site():
+    """`_S2_SHOW_EMPRESA` (stock-guide.html:816-833, a92c19f): o conjunto da empresa vale ANTES do padrão,
+    pelo `String((d.ticker||d.import_ticker)||'').toUpperCase()` — sem aparar, como o site."""
+    def t(metric, year=2027, tid=None):
+        return {"id": tid or metric, "metric": metric, "year": year, "title": "T", "colLevels": [1],
+                "values": [[1]]}
+    cinco = [{"name": "Sensitivity", "tables": [t("ebitda"), t("ev_ebitda"), t("fcf"), t("fcf_yield"),
+                                                t("p_nav", None), t("upside"), t("div_yield")]}]
+    def metricas(code):
+        return [x["metric"] for _, ts in SS.drawn(cinco, code) for x in ts]
+    assert SS.SHOW_COMPANY == {c: SS.SHOW_COPPER for c in ("HBM", "LUN", "CS", "ERO")}
+    for code in ("HBM", "LUN", "CS", "ERO"):
+        assert metricas(code) == ["ebitda", "fcf", "fcf_yield", "p_nav"], code   # sem EV/EBITDA, com P/NAV
+    assert metricas("") == metricas("VALE") == ["ebitda", "ev_ebitda", "fcf", "fcf_yield"]   # o padrão
+    # o código: ticker, senão o import_ticker; em maiúsculas; sem aparar; o ticker manda
+    casos = {("hbm", None): "HBM", ("", "ero"): "ERO", (None, "LUN"): "LUN", (" CS ", None): " CS ",
+             ("VALE", "HBM"): "VALE", (None, None): "", (0, "cs"): "CS", (7, None): "7"}
+    for (tk, imp), esperado in casos.items():
+        assert SS.show_key({"ticker": tk, "import_ticker": imp}) == esperado, (tk, imp)
+    assert SS.show_key("lixo") == "" and SS.show_key({}) == ""
+    def drawn_de(d):
+        return [x["metric"] for s in SS.drawn_sheets({**d, "sheets": cinco}) for x in s["tables"]]
+    assert drawn_de({"ticker": "lun"}) == ["ebitda", "fcf", "fcf_yield", "p_nav"]
+    assert drawn_de({"ticker": " CS "}) == ["ebitda", "ev_ebitda", "fcf", "fcf_yield"]   # como no site
+    # o cobre SEM nenhuma do conjunto dele não cai no padrão nem no da desenvolvedora: aba vazia sai
+    assert SS.drawn([{"name": "a", "tables": [t("ev_ebitda"), t("div_yield")]}], "ERO") == []
+    # "2027 de preferência" vale depois do conjunto: a de 2026 sai, o P/NAV sem ano fica
+    out = SS.drawn([{"name": "a", "tables": [t("ebitda", 2026, "e26"), t("ebitda", 2027, "e27"),
+                                             t("ev_ebitda"), t("p_nav", None)]}], "CS")
+    assert [x["id"] for _, ts in out for x in ts] == ["e27", "p_nav"]
+    # análises: a vista de cada uma guarda o código da empresa (`_s2AnaView`), o conjunto vale nelas
+    d = {"ticker": "HBM", "sheets": [
+        {"name": "a1", "analysis": {"key": "a", "mktcap_model_nav": "7152.68"}, "tables": [t("ev_ebitda"),
+                                                                                           t("p_nav", None)]},
+        {"name": "b1", "analysis": {"key": "b", "mktcap_model_nav": True}, "tables": [t("fcf")]}]}
+    out = SS.drawn_sheets(d)
+    assert [(s["analysis"]["id"], [x["metric"] for x in s["tables"]]) for s in out] == \
+        [("a", ["p_nav"]), ("b", ["fcf"])]
+    assert [s["analysis"]["mktcapModelNav"] for s in out] == [7152.68, None]   # texto numérico vale; bool não
+    c = SS.company({"display_order": 7, "definition": {"kind": "sens2d", "ticker": "HBM",
+                                                       "mktcap_model_nav": "n/d", "sheets": cinco}})
+    assert c["mktcapModelNav"] is None and SS.tables_count([c]) == 4
+
+
+def _sem_conjunto_por_empresa(monkeypatch) -> dict:
+    """O arquivo com o corte da Onda 4 (o código de `a05d19a`: sem `_S2_SHOW_EMPRESA`) e este mesmo banco."""
+    with monkeypatch.context() as m:
+        m.setattr(SS, "SHOW_COMPANY", {})
+        velho, _ = build("sg-sensitivity.json")
+    return velho
+
+
+def test_o_ev_ebitda_do_cobre_nao_sai_e_as_outras_empresas_nao_mudam(monkeypatch):
+    novo, _ = build("sg-sensitivity.json")
+    velho = _sem_conjunto_por_empresa(monkeypatch)
+    cobre = [c for c in novo["companies"] if c["code"] in SS.SHOW_COMPANY]
+    assert [c["code"] for c in cobre] == ["HBM"]
+    metricas = [t["metric"] for c in cobre for sh in c["sheets"] for t in sh["tables"]]
+    assert "ev_ebitda" not in metricas and metricas.count("p_nav") == 1
+    antes = {c["code"]: c for c in velho["companies"]}
+    assert [t["metric"] for sh in antes["HBM"]["sheets"] for t in sh["tables"]] == \
+        ["ebitda", "ev_ebitda", "fcf", "fcf_yield"]                         # o que o arquivo levava até hoje
+    for c in novo["companies"]:
+        if c["code"] not in SS.SHOW_COMPANY:                                # as outras: tudo igual
+            assert c == antes[c["code"]], c["code"]
+    assert [c["code"] for c in novo["companies"]] == [c["code"] for c in velho["companies"]]
+    assert SS.tables_count(novo["companies"]) == SS.tables_count(velho["companies"])   # −1 EV/EBITDA, +1 P/NAV
 
 
 def test_data_sources_forma_e_sem_bastidor():
@@ -415,6 +510,75 @@ def test_partida_a_frio_com_a_copia_publicada_igual_so_a_sonda(tmp_path, caplog)
     http = F.FakeHTTP(published=dict(primeiro.uploads))
     run(http, tmp_path / "d.json", now=datetime(2026, 11, 4, 6, 30, tzinfo=timezone.utc))
     assert reads(http, *SG_READS) == 3 and reads(http, SENS_READ, DS_READ) == 0
+
+
+def _publicado_pelo_codigo_velho(monkeypatch) -> dict:
+    """O sg-sensitivity.json que a Onda 4 publicou com este banco: o corte sem o conjunto do cobre, sem
+    `mktcapModelNav` e com o marcador sem `rule` — e a sonda de hoje bate com ele (o banco não mudou)."""
+    velho = _sem_conjunto_por_empresa(monkeypatch)
+    velho["source"].pop("rule")
+    for c in velho["companies"]:
+        c.pop("mktcapModelNav")
+        for sh in c["sheets"]:
+            if sh["analysis"] is not None:
+                sh["analysis"].pop("mktcapModelNav")
+    return velho
+
+
+def _corte_novo(obj) -> None:
+    hbm = next(c for c in obj["companies"] if c["code"] == "HBM")
+    assert [t["metric"] for sh in hbm["sheets"] for t in sh["tables"]] == ["ebitda", "fcf", "fcf_yield", "p_nav"]
+    assert hbm["mktcapModelNav"] == 6388.75 and obj["source"]["rule"] == SS.RULE
+
+
+def test_releitura_automatica_depois_do_merge_runner_novo(tmp_path, monkeypatch, caplog):
+    """Pesquisa 5-stock-guide §2.4: o banco não muda com o merge, então a sonda bate com a cópia publicada
+    velha — sem a regra no marcador ela viraria semente até a leitura de segurança de segunda. Com a regra,
+    o runner novo relê no primeiro ciclo e manda o corte novo; o runner seguinte semeia da cópia nova."""
+    caplog.set_level(logging.INFO)
+    velho = _publicado_pelo_codigo_velho(monkeypatch)
+    assert velho["source"] == {"stamp": "2026-11-12T09:00:00Z", "rows": 5}         # = a sonda
+    depois = F.NOW + timedelta(hours=7)                                            # fora da janela de segurança
+    http = F.FakeHTTP(published={"sg-sensitivity.json": to_json_bytes(velho)})
+    res = run(http, tmp_path / "a.json", now=depois, only="sg-sensitivity")
+    assert reads(http, SENS_READ) == 1 and len(http.supa_calls("stock_guide_sensitivities")) == 1
+    assert res["sg-sensitivity.json"].action == "enviado"
+    assert not any("nada lido" in r.getMessage() for r in caplog.records)
+    novo = doc(http.uploads["sg-sensitivity.json"])
+    _corte_novo(novo)
+    assert novo["source"] == {**velho["source"], "rule": SS.RULE} and novo["updatedAt"] == velho["updatedAt"]
+    # o runner seguinte: a cópia NOVA serve de semente — nada lido, nada enviado (e o `mktcapModelNav`
+    # sobreviveu à semente: com ele nulo, o hash mudaria e o arquivo iria de novo)
+    http = F.FakeHTTP(published={"sg-sensitivity.json": to_json_bytes(novo)})
+    res = run(http, tmp_path / "b.json", now=depois + timedelta(hours=6), only="sg-sensitivity")
+    assert res["sg-sensitivity.json"].action == "igual" and reads(http, SENS_READ) == 0
+    assert "igual à cópia publicada" in res["sg-sensitivity.json"].reason
+    st = S.load(tmp_path / "b.json")["sgSensitivity"]
+    _corte_novo({"source": st["probe"], "companies": st["data"]})                # o dado semeado, campo a campo
+
+
+def test_releitura_automatica_depois_do_merge_no_mesmo_job(tmp_path, monkeypatch):
+    """O hunt-loop troca o código ENTRE os ciclos do mesmo job (`git reset --hard origin/master` antes de
+    cada iteração) e o estado em $RUNNER_TEMP fica: o dado guardado pelo código velho (marcador sem a regra)
+    não vale — o primeiro ciclo do arquivo relê, sem `rebuild` nem workflow à mão."""
+    velho = _publicado_pelo_codigo_velho(monkeypatch)
+    p = tmp_path / "st.json"
+    run(F.FakeHTTP(), p, only="sg-sensitivity")
+    http = F.FakeHTTP()                                       # controle: com o estado do código novo, nada
+    res = run(http, p, now=F.NOW + timedelta(minutes=60), only="sg-sensitivity")
+    assert res["sg-sensitivity.json"].action == "igual" and reads(http, SENS_READ) == 0
+    st = S.load(p)                                            # o estado que o código velho deixou
+    st["sgSensitivity"].update(probe=dict(velho["source"]), probeNow=dict(velho["source"]),
+                               data=velho["companies"])
+    st["files"]["sg-sensitivity.json"]["hash"] = content_hash(velho)
+    S.save(p, st)
+    http = F.FakeHTTP()
+    res = run(http, p, now=F.NOW + timedelta(minutes=120), only="sg-sensitivity")
+    assert res["sg-sensitivity.json"].action == "enviado" and reads(http, SENS_READ) == 1
+    _corte_novo(doc(http.uploads["sg-sensitivity.json"]))
+    http = F.FakeHTTP()                                       # e depois estável
+    res = run(http, p, now=F.NOW + timedelta(minutes=180), only="sg-sensitivity")
+    assert res["sg-sensitivity.json"].action == "igual" and reads(http, SENS_READ) == 0
 
 
 def test_mindassets_parado_e_sem_semente_a_leitura_espera_e_le_1x_por_dia(tmp_path):
@@ -693,10 +857,10 @@ def test_check_confere_as_sondas_e_as_rpcs_da_onda_4_sem_valores():
     http = F.FakeHTTP()
     linhas = run_checks(SupaReader(F.SUPA_URL, F.SUPA_KEY, http=http), now=F.NOW)
     texto = "\n".join(linhas)
-    assert "sonda stock_guide_sensitivities (sens2d): 4 linha(s), max(updated_at) 2026-11-12T09:00:00Z" in texto
+    assert "sonda stock_guide_sensitivities (sens2d): 5 linha(s), max(updated_at) 2026-11-12T09:00:00Z" in texto
     assert "sonda data_source_status: 4 linha(s), max(checked_at) 2026-11-11T19:46:12Z" in texto
     assert "rpc get_stock_guide_comps (service key): 4 linha(s)" in texto
-    assert "rpc get_stock_guide_sensitivity_tables (service key): 3 linha(s)" in texto   # sem a oculta
+    assert "rpc get_stock_guide_sensitivity_tables (service key): 4 linha(s)" in texto   # sem a oculta
     assert "stock_guide=True" in texto and "data_page=True" in texto
     for valor in ("Vale", "CAP.SN", "how_pulled", "_inbox", F.SUPA_URL, F.SUPA_KEY):
         assert valor not in texto

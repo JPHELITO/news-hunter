@@ -14,9 +14,13 @@ O CICLO DE CADA ARQUIVO (COLD, 60 min):
      ciclo seguinte sem sondar outra vez;
   3. PARTIDA A FRIO (runner novo, ~4,4/dia; nada no estado): a cópia PUBLICADA (Mindassets) cujo marcador é
      igual à sonda vira a semente — zero leitura cara. Marcador = o bloco `source` (stock-guide,
-     sg-sensitivity: `{stamp, companies, peers}` / `{stamp, rows}`, DENTRO do hash: uma nova subida idêntica
-     da planilha regrava os `updated_at`, sai 1 envio a mais e o marcador volta a valer) ou o `checkedAt` + o
-     número de fontes (data-sources). Mindassets PARADO (`PublishedCopies.healthy`) e sem semente que sirva →
+     sg-sensitivity: `{stamp, companies, peers}` / `{stamp, rows, rule}`, DENTRO do hash: uma nova subida
+     idêntica da planilha regrava os `updated_at`, sai 1 envio a mais e o marcador volta a valer) ou o
+     `checkedAt` + o número de fontes (data-sources). No sg-sensitivity o marcador leva também `rule`, a
+     versão da regra de leitura do exportador (`sg_sensitivity.RULE`): código novo com o banco igual (o corte do
+     cobre, 26/11) → nem a cópia publicada velha vira semente nem o dado guardado no estado do runner (o loop
+     troca o código entre os ciclos do mesmo job) vale — o primeiro ciclo do arquivo relê, sem `rebuild` à
+     mão. Mindassets PARADO (`PublishedCopies.healthy`) e sem semente que sirva →
      a leitura espera (`PageWaiting`: o arquivo fica para o ciclo seguinte), salvo uma vez por dia às
      `OUTAGE_HOUR_UTC` — cada runner novo repetiria a leitura cheia (Stock Guide ~10 KB, sensibilidade
      ~57 KB);
@@ -183,7 +187,7 @@ def sensitivity(src) -> dict:
     flags = src.client_flags()
     if flags.get("stock_guide") is not True or flags.get("stock_guide_sensitivity") is not True:
         _reset(st)
-        return {"updatedAt": None, "source": {"stamp": None, "rows": 0}, "companies": []}
+        return {"updatedAt": None, "source": {"stamp": None, "rows": 0, "rule": SS.RULE}, "companies": []}
 
     def probe() -> dict:
         rows, n = src.probe_max("stock_guide_sensitivities", "updated_at", tag="sg-sensitivity:sonda",
@@ -194,7 +198,9 @@ def sensitivity(src) -> dict:
         return SS.companies(src.supa.rpc("get_stock_guide_sensitivity_tables", SS.COLS,
                                          tag="sg-sensitivity", **SS.KIND_FILTER))
 
-    marker = _probe(src, st, probe)
+    # a regra entra DEPOIS da sonda guardada: uma sonda de antes da troca de código continua valendo
+    # (nenhuma chamada a mais), e o marcador com a regra nova não bate com o estado nem com a cópia velha
+    marker = {**_probe(src, st, probe), "rule": SS.RULE}
     companies = _resolve(src, st, SENS_FILE, marker, lambda doc: doc.get("source"), SS.from_published,
                          weekly_mark(src.now, *SENS_SAFETY), read)
     return {"updatedAt": marker["stamp"], "source": marker, "companies": companies}

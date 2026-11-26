@@ -602,10 +602,13 @@ def _sens_table(tid, metric, year, title, *, pair=None, rows=(1.0, 2.0), cols=(1
 
 
 def _analysis(key, label, price):
+    # `mktcap_model_nav` nulo GRAVADO, como o /admin faz em toda análise importada desde 25/11
+    # (sgMergeSens2dAnalysis); no banco de 26/11 só as 4 de cobre têm a chave (as outras: ausente = null)
     return {"key": key, "label": label, "source_file": f"Modelo Ficticio_Sensitivity_{key.upper()}.xlsx",
             "model_date": "2026-11-09", "currency": "USD", "model_price": price, "mktcap_model": 50000.5,
-            "shares_mn": 4255.76, "assumptions": [{"label": "Avg. Iron Ore Price 2027", "value": 97.5},
-                                                  {"label": "Avg. FX 2027", "value": 5.5}],
+            "mktcap_model_nav": None, "shares_mn": 4255.76,
+            "assumptions": [{"label": "Avg. Iron Ore Price 2027", "value": 97.5},
+                            {"label": "Avg. FX 2027", "value": 5.5}],
             "assumptions_note": "premissa conferida", "import_ticker": "VALE3"}
 
 
@@ -616,6 +619,19 @@ def _vale_sheet(key, label, price):
             "tables": [_sens_table(f"{key}-t1", "ebitda", 2027, "Proforma EBITDA 2027 (USD million)"),
                        _sens_table(f"{key}-t2", "ev_ebitda", 2027, "EV/EBITDA 2027 (x)", pair=f"{key}-t1"),
                        _sens_table(f"{key}-t3", "div_yield", 2027, "Dividend Yield 2027 (%)")]}
+
+
+def _cu_table(tid, metric, year, title, *, pair=None, values=None, long_term=False):
+    """Uma grade 3×3 de uma mineradora de cobre (números fictícios): cobre nas linhas × ouro nas colunas,
+    em termos reais de 2027 (o rótulo do cobre com a quebra de linha, como o analista escreveu) ou, no P/NAV,
+    os preços de longo prazo."""
+    if long_term:
+        return _sens_table(tid, metric, year, title, pair=pair, values=values, rows=(5.2, 5.6, 6.0),
+                           cols=(3450.0, 4250.0, 5050.0), col_label="Long-Term Gold Price (USD/oz)",
+                           row_label="Long-Term Copper Price (USD/lb)")
+    return _sens_table(tid, metric, year, title, pair=pair, values=values, rows=(5.0, 5.4, 5.8),
+                       cols=(3600.0, 4400.0, 5200.0), col_label="Average Gold Real-Term Price 2027E (USD/oz)",
+                       row_label="Average Copper Real-Term Price \n2027E (USD/lb)")
 
 
 def _sens(sid, ticker, order, definition, upd):
@@ -667,8 +683,31 @@ SG_SENS = [
                            "sheets": [{"name": "Sensitivity", "tables": [
                                _sens_table("c1", "ebitda", 2027, "EBITDA 2027 (BRL million)")]}]},
           "2026-11-12T09:00:00+00:00"),
+    # COBRE (Hudbay; o molde dos 4 arquivos de 22/11): EBITDA, EV/EBITDA, FCF e FCF yield de 2027 + o P/NAV de
+    # longo prazo (sem ano). A tela desenha o conjunto do cobre (_S2_SHOW_EMPRESA, stock-guide.html:816-820,
+    # a92c19f): o EV/EBITDA fica GUARDADO e não sai; o P/NAV entra. A base do P/NAV (`mktcap_model_nav`, do
+    # quadro "Implicit Cu Prices") a ±1 % da do FCF yield; as notas do conserto à mão nunca saem
+    _sens(18, "HBM", 5, {"kind": "sens2d", "ticker": "HBM", "import_ticker": "HBM", "currency": "USD",
+                         "model_date": "2026-11-22", "source_file": "Modelo Ficticio Hudbay_Sensitivity.xlsx",
+                         "model_price": 16.25, "mktcap_model": 6420.5, "mktcap_model_nav": 6388.75,
+                         "mktcap_model_nav_note": "base do P/NAV refeita à mão (nota interna)",
+                         "shares_mn": 395.06, "panel": "Sensitivity", "model_price_original": 29.5,
+                         "model_price_note": "D12 apontava o preço-alvo (conserto à mão)",
+                         "tables_omitted": [{"title": "Grade fictícia omitida", "why": "sinais trocados no EV"}],
+                         "assumptions": [{"label": "Copper Real-Term Price 2027E (USD/lb)", "value": 5.4},
+                                         {"label": "Gold Real-Term Price 2027E (USD/oz)", "value": 4400.0},
+                                         {"label": "(=) Market Cap (USD mn)", "value": 6388.75}],
+                         "sheets": [{"name": "Sensitivity", "tables": [
+                             _cu_table("t1", "ebitda", 2027, "EBITDA 2027E (USD million)"),
+                             _cu_table("t2", "ev_ebitda", 2027, "EV/EBITDA 2027E (x)", pair="t1"),
+                             _cu_table("t3", "fcf", 2027, "FCF Ex-Growth 2027E (USD million)"),
+                             _cu_table("t4", "fcf_yield", 2027, "FCF Ex-Growth Yield (%) 2027E", pair="t3",
+                                       values=[[0.081, 0.09, 0.099], [0.1, 0.108, 0.117], [0.12, 0.127, 0.135]]),
+                             _cu_table("t5", "p_nav", None, "P/NAV (x)", long_term=True,
+                                       values=[[0.8, 0.9, 1.0], [0.85, 0.95, 1.05], [0.9, 1.0, 1.1]])]}]},
+          "2026-11-11T14:00:00+00:00"),
 ]
-SENS_DRAWN = {"VALE": 6, "GGBR4": 4, "ARA": 2}     # as grades que a tela desenha (as do arquivo)
+SENS_DRAWN = {"VALE": 6, "HBM": 4, "GGBR4": 4, "ARA": 2}     # as grades que a tela desenha (as do arquivo)
 
 
 def _dss(key, label, sector, cadence, state, last, nxt, *, auto=True, text="on schedule (10d)",

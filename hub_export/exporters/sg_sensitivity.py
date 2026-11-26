@@ -1,12 +1,13 @@
 """sg-sensitivity.json (COLD com sonda, conteúdo gzip com nome .json) — PLANO, Apêndice H.2.
 
-    { schemaVersion, generatedAt, updatedAt, source: {stamp, rows},
-      companies: [{ code, order, currency, modelDate, sourceFile, modelPrice, mktcapModel, assumptions,
+    { schemaVersion, generatedAt, updatedAt, source: {stamp, rows, rule},
+      companies: [{ code, order, currency, modelDate, sourceFile, modelPrice, mktcapModel, mktcapModelNav,
+                    assumptions,
                     sheets: [{ name, analysis, tables: [{ id, metric, year, title, pairId, colLabel, rowLabel,
                                                           colLevels, rowLevels, values }] }] }] }
 
 As grades 9×9 que o analista publica no `_Sensitivity.xlsx` de cada modelo e que a aba Sensitivity do site
-DESENHA — hoje 56 (12 empresas; a Vale com 3 análises). Uma linha por empresa, na ordem da RPC
+DESENHA — 72 em 26/11/2026 (16 empresas; a Vale com 3 análises). Uma linha por empresa, na ordem da RPC
 (`display_order`, id).
 
 ORIGEM: a RPC `get_stock_guide_sensitivity_tables()` com a chave de serviço (visão de cliente: a empresa
@@ -14,27 +15,38 @@ oculta já vem de fora), pedida só com `definition->>kind = sens2d` (a RPC devo
 fictícios de junho, no formato antigo — medido em 13/11: o filtro funciona sobre o resultado da RPC); o
 `kind` é conferido de novo aqui. A grade 6-D, a malha antiga e os drivers não são lidos.
 
-QUAIS GRADES (porte de `_s2Sheets`, stock-guide.html:690-707, e de `_s2Analyses`/`_s2AnaView`, 1105-1119,
-origin/main cffdadc):
-  • só EBITDA, EV/EBITDA, FCF e FCF yield; empresa sem nenhuma dessas quatro (a desenvolvedora: Aclara,
-    Viridis) → DCF upside e P/NAV. Margem e dividend yield nunca (as 3 grades guardadas e escondidas — o
-    dividend yield da Vale e o upside/P-NAV da Aura — ficam fora);
+QUAIS GRADES (porte de `_s2Sheets`, stock-guide.html:810-833, e de `_s2Analyses`/`_s2AnaView`, 1282-1296,
+origin/main a92c19f):
+  • o conjunto POR EMPRESA vale antes de tudo (`_S2_SHOW_EMPRESA`, :816-820, pelo código da empresa:
+    `definition.ticker`, ou o `import_ticker` quando ele falta, em maiúsculas e sem aparar, como o site): o
+    COBRE (Hudbay, Lundin, Capstone, Ero) mostra EBITDA, FCF, FCF yield e P/NAV — SEM o EV/EBITDA, que o
+    analista escondeu em 25/11 (U18 = a; a grade continua guardada no banco e não sai);
+  • as outras: só EBITDA, EV/EBITDA, FCF e FCF yield; empresa sem nenhuma dessas quatro (a desenvolvedora:
+    Aclara, Viridis) → DCF upside e P/NAV. Margem e dividend yield nunca (as 3 grades guardadas e escondidas —
+    o dividend yield da Vale e o upside/P-NAV da Aura — ficam fora);
   • "2027 de preferência": se alguma grade mostrável é de 2027, as de outro ano saem; a SEM ano no título
-    ("FCF Ex-Prepayments" da CMIN) fica. O ano compara como o `Number(x.year) === 2027` do JavaScript;
+    ("FCF Ex-Prepayments" da CMIN, o P/NAV de longo prazo do cobre) fica. O ano compara como o
+    `Number(x.year) === 2027` do JavaScript;
   • empresa com ANÁLISES (a Vale: `sheets[].analysis.key` = fx, freight, copper): o corte é feito análise por
-    análise, como a tela (cada análise é uma "vista" com as abas dela); aba sem `analysis` numa empresa que
-    tem análises nunca é desenhada e não sai. Aba sem nenhuma grade mostrável sai.
+    análise, como a tela (cada análise é uma "vista" com as abas dela e o código da empresa); aba sem
+    `analysis` numa empresa que tem análises nunca é desenhada e não sai. Aba sem nenhuma grade mostrável sai.
 CAMPO A CAMPO: da empresa e de cada análise, os campos do modelo que a tela usa — `currency`, `modelDate`,
 `sourceFile` (o cabeçalho do painel), `modelPrice` e `mktcapModel` (a reescrita ao vivo dos múltiplos),
-`assumptions` `[{label, value}]` (o carimbo "base case"); `null` = ausente (a análise vale por cima da empresa
-só onde não é null, como `_s2AnaView`). A chave da análise (`key`, palavra proibida) sai como `id`. Títulos,
-rótulos e níveis como o analista escreveu (memória "não reescrever siglas"). Nunca saem: `kind`, `panel`,
-`import_ticker`, `shares_mn`, `corner`, as notas internas (`title_note`, `title_original`, `label_note`,
-`mktcap_note`, `assumptions_note`), `updated_by` e as grades não desenhadas (o registro proíbe as chaves).
+`mktcapModelNav` (a base do P/NAV do cobre, do quadro "Implicit Cu Prices": milhões, como o banco guarda; a
+trava de ±10 % é do hub, como `_s2Ctx`, :1094-1099), `assumptions` `[{label, value}]` (o carimbo
+"base case"); `null` = ausente (a análise vale por cima da empresa só onde não é null, como `_s2AnaView`). A
+chave da análise (`key`, palavra proibida) sai como `id`. Títulos, rótulos e níveis como o analista escreveu
+(memória "não reescrever siglas"). Nunca saem: `kind`, `panel`, `import_ticker`, `shares_mn`, `corner`, as
+notas internas (`title_note`, `title_original`, `label_note`, `mktcap_note`, `assumptions_note`), os consertos
+à mão do cobre (`model_price_original`, `model_price_note`, `tables_omitted`, `mktcap_model_nav_note`),
+`updated_by` e as grades não desenhadas (o registro proíbe as chaves).
 
-`source` = o MARCADOR da partida a frio (a sonda: contagem e maior `updated_at` das linhas `sens2d` da tabela)
-— DENTRO do hash; `updatedAt` = o carimbo (fora). FLAGS no dado (O50): `stock_guide` ou
-`stock_guide_sensitivity` desligada → `companies: []`, nada lido.
+`source` = o MARCADOR da partida a frio — a sonda (contagem e maior `updated_at` das linhas `sens2d` da
+tabela) + `rule`, a versão da regra de LEITURA (o corte acima e os campos tirados do banco) — DENTRO do hash;
+`updatedAt` = o carimbo (fora). A regra muda sem o banco mudar: sem a versão, a cópia publicada velha bateria
+com a sonda e serviria de semente (e o estado do runner, de dado guardado) até a leitura de segurança de
+segunda-feira. Mudou o corte ou um campo tirado do banco → suba `RULE`: o primeiro ciclo do arquivo relê.
+FLAGS no dado (O50): `stock_guide` ou `stock_guide_sensitivity` desligada → `companies: []`, nada lido.
 """
 from __future__ import annotations
 
@@ -46,22 +58,35 @@ from ..encode import num
 COLS = "id,display_order,definition"
 KIND = "sens2d"
 KIND_FILTER = {"definition->>kind": f"eq.{KIND}"}
-SHOW = frozenset({"ebitda", "ev_ebitda", "fcf", "fcf_yield"})        # _S2_SHOW
-SHOW_DEV = frozenset({"upside", "p_nav"})                            # _S2_SHOW_DEV
-SHOW_YEAR = 2027                                                     # _S2_ANO
+# o corte da tela (stock-guide.html, origin/main a92c19f)
+SHOW = frozenset({"ebitda", "ev_ebitda", "fcf", "fcf_yield"})        # _S2_SHOW, :810
+SHOW_DEV = frozenset({"upside", "p_nav"})                            # _S2_SHOW_DEV, :815
+SHOW_COPPER = frozenset({"ebitda", "fcf", "fcf_yield", "p_nav"})     # _S2_SHOW_COBRE, :819
+SHOW_COMPANY = {"HBM": SHOW_COPPER, "LUN": SHOW_COPPER,              # _S2_SHOW_EMPRESA, :820 — a MESMA
+                "CS": SHOW_COPPER, "ERO": SHOW_COPPER}               # lista mora no site e no hub: uma 5ª
+                                                                     # empresa muda nos três (e sobe RULE)
+SHOW_YEAR = 2027                                                     # _S2_ANO, :821
+# versão da regra de leitura, no marcador `source` (ver o docstring): 1 = a da Onda 4 (sem o campo no
+# arquivo); 2 = o conjunto por empresa (cobre) + `mktcapModelNav` (WP5.1B, 26/11/2026)
+RULE = 2
 COMPANY_KEYS = ("code", "order", "currency", "modelDate", "sourceFile", "modelPrice", "mktcapModel",
-                "assumptions", "sheets")
-META_KEYS = ("currency", "modelDate", "sourceFile", "modelPrice", "mktcapModel", "assumptions")
+                "mktcapModelNav", "assumptions", "sheets")
+META_KEYS = ("currency", "modelDate", "sourceFile", "modelPrice", "mktcapModel", "mktcapModelNav",
+             "assumptions")
 ANALYSIS_KEYS = ("id", "label") + META_KEYS
 SHEET_KEYS = ("name", "analysis", "tables")
 TABLE_KEYS = ("id", "metric", "year", "title", "pairId", "colLabel", "rowLabel", "colLevels", "rowLevels",
               "values")
 ASSUMPTION_KEYS = ("label", "value")
-SOURCE_KEYS = ("stamp", "rows")
+SOURCE_KEYS = ("stamp", "rows", "rule")
 FORBIDDEN = frozenset({"kind", "panel", "import_ticker", "importTicker", "shares_mn", "sharesMn", "corner",
                        "title_note", "titleNote", "title_original", "titleOriginal", "label_note",
                        "labelNote", "mktcap_note", "mktcapNote", "assumptions_note", "assumptionsNote",
-                       "note", "updated_by", "updatedBy", "drivers", "grid", "grid6", "base"})
+                       "note", "updated_by", "updatedBy", "drivers", "grid", "grid6", "base",
+                       # os consertos à mão do cobre (25/11; nomes conferidos no banco em 26/11): o preço do
+                       # D12, a grade omitida e a nota da base do P/NAV da Ero
+                       "model_price_original", "modelPriceOriginal", "model_price_note", "modelPriceNote",
+                       "tables_omitted", "tablesOmitted", "mktcap_model_nav_note", "mktcapModelNavNote"})
 _NUM_TEXT = re.compile(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?")
 
 
@@ -117,6 +142,29 @@ def _js_string(v) -> str | None:
     return json.dumps(v, ensure_ascii=False, sort_keys=True)
 
 
+def _js_truthy(v) -> bool:
+    """A verdade do JavaScript (`a || b`): falsos são null, false, 0, NaN e ""; lista e objeto, mesmo
+    vazios, são verdadeiros."""
+    if v is None or isinstance(v, bool):
+        return bool(v)
+    if isinstance(v, (int, float)):
+        return v == v and v != 0
+    if isinstance(v, str):
+        return v != ""
+    return True
+
+
+def show_key(definition: dict) -> str:
+    """O código com que a tela procura o conjunto da empresa: `String((d&&(d.ticker||d.import_ticker))||'')
+    .toUpperCase()` (stock-guide.html:825) — sem aparar, como lá."""
+    if not isinstance(definition, dict):
+        return ""
+    v = definition.get("ticker")
+    if not _js_truthy(v):
+        v = definition.get("import_ticker")
+    return (_js_string(v) or "").upper() if _js_truthy(v) else ""
+
+
 def _levels(v):
     return [_number(x) for x in v] if isinstance(v, list) else None
 
@@ -142,7 +190,9 @@ def _assumptions(v):
 def _meta(m: dict) -> dict:
     return {"currency": _raw_text(m.get("currency")), "modelDate": _raw_text(m.get("model_date")),
             "sourceFile": _raw_text(m.get("source_file")), "modelPrice": _number(m.get("model_price")),
-            "mktcapModel": _number(m.get("mktcap_model")), "assumptions": _assumptions(m.get("assumptions"))}
+            "mktcapModel": _number(m.get("mktcap_model")),
+            "mktcapModelNav": _number(m.get("mktcap_model_nav")),
+            "assumptions": _assumptions(m.get("assumptions"))}
 
 
 def _table(x: dict) -> dict:
@@ -164,10 +214,14 @@ def _metric(x: dict):
     return m if isinstance(m, str) else None
 
 
-def drawn(sheets: list[dict]) -> list[tuple[dict, list[dict]]]:
-    """Porte de `_s2Sheets`: (aba, as grades que a tela desenha), na ordem, sem as abas vazias."""
-    padrao = any(_metric(x) in SHOW for sh in sheets for x in _tables(sh))
-    show = SHOW if padrao else SHOW_DEV
+def drawn(sheets: list[dict], code: str = "") -> list[tuple[dict, list[dict]]]:
+    """Porte de `_s2Sheets` (stock-guide.html:822-833): (aba, as grades que a tela desenha), na ordem, sem
+    as abas vazias. `code` = `show_key` da empresa: o conjunto dela (`_S2_SHOW_EMPRESA`) vale antes do
+    padrão (:825-826)."""
+    show = SHOW_COMPANY.get(code)
+    if show is None:
+        padrao = any(_metric(x) in SHOW for sh in sheets for x in _tables(sh))
+        show = SHOW if padrao else SHOW_DEV
     shs = [(sh, [x for x in _tables(sh) if _metric(x) in show]) for sh in sheets]
     if any(_is_year(x.get("year")) for _, ts in shs for x in ts):
         shs = [(sh, [x for x in ts if x.get("year") is None or _is_year(x.get("year"))]) for sh, ts in shs]
@@ -182,9 +236,11 @@ def _analysis_key(sh: dict) -> str | None:
 
 
 def drawn_sheets(definition: dict) -> list[dict]:
-    """As abas que a tela desenha de uma empresa — análise por análise quando há análises (`_s2Analyses`)."""
+    """As abas que a tela desenha de uma empresa — análise por análise quando há análises (`_s2Analyses`;
+    a vista de cada uma, `_s2AnaView`, guarda o código da empresa: o conjunto dela vale ali também)."""
     raw = definition.get("sheets")
     sheets = [sh for sh in raw if isinstance(sh, dict)] if isinstance(raw, list) else []
+    code = show_key(definition)
     keys: list[str] = []
     for sh in sheets:
         k = _analysis_key(sh)
@@ -193,11 +249,11 @@ def drawn_sheets(definition: dict) -> list[dict]:
     if keys:
         keep: dict[int, list[dict]] = {}
         for k in keys:
-            for sh, ts in drawn([s for s in sheets if _analysis_key(s) == k]):
+            for sh, ts in drawn([s for s in sheets if _analysis_key(s) == k], code):
                 keep[id(sh)] = ts
         pairs = [(sh, keep[id(sh)]) for sh in sheets if id(sh) in keep]
     else:
-        pairs = drawn(sheets)
+        pairs = drawn(sheets, code)
     out = []
     for sh, ts in pairs:
         a = sh.get("analysis") if keys else None

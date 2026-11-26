@@ -52,7 +52,8 @@ por execução, o índice de cada setor por último:
 Onda 4 (contrato: PLANO.md, Apêndice H) — Stock Guide, Calendar e Data (o Quarterly fica para a 4b, U11):
     stock-guide.json        COLD       Comp Table (16) + Global Peers (18) + rótulos dos anos; RPCs do site,
                                        sonda de 60 min, marcador `source` no hash, fail-closed nas flags
-    sg-sensitivity.json     COLD       as 56 grades `sens2d` que a aba desenha (porte de `_s2Sheets`)
+    sg-sensitivity.json     COLD       as grades `sens2d` que a aba desenha (porte de `_s2Sheets`, com o
+                                       conjunto do cobre: 72 em 26/11) + a base do P/NAV; `rule` no marcador
     data-sources.json       COLD       o frescor das 17 fontes da página Data (sonda em `checked_at`)
     glossary.json           EVENT      o `admin/glossary.json` do site pela API do GitHub, "where" → rota
     calendar.json (aditivo)            + local, descrição e links, pelo filtro de URL e pela máscara (U12),
